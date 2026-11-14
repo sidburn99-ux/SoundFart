@@ -1,5 +1,7 @@
 # Journal de code - SoundFart
 
+> Rôle : journal des versions (historique des changements par version). Statut : **historique** — ne pas lire par défaut ; consulter uniquement pour retracer une version passée (détail dans `JOURNAL_DE_DEVELOPMENT.md`).
+
 ## Etat actuel : v1.4
 
 ### v1.4 - portable only, VB-CABLE manuel, robustesse audio, tests

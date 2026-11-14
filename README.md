@@ -1,5 +1,7 @@
 # SoundFart 💨
 
+> Rôle : présentation du projet (ce que c'est, fonctionnalités, installation rapide). Statut : **actuel**. À consulter : en premier, pour une vue d'ensemble ; détails dans `GUIDE.md` et `SPECIFICATION.md`.
+
 Soundboard Windows pour Discord : joue des sons dans tes appels, enregistre ta voix et le son du PC, importe depuis YouTube. **Application portable** — un seul `SoundFart.exe`, aucune installation.
 
 ## Fonctionnalités

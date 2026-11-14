@@ -1,5 +1,7 @@
 # Plan de test manuel — VM Windows 11 propre (Intégrité de la mémoire activée)
 
+> Rôle : plan de test manuel sur VM Windows propre (10 cas, résultats attendus). Statut : **actuel**, à rejouer après chaque changement audio/packaging. À consulter : avant une release ou après une modif de la chaîne audio.
+
 Pré-requis VM : Windows 11 à jour, « Intégrité de la mémoire » (Core Isolation → Memory integrity) **activée** et vérifiée dans Sécurité Windows → Sécurité de l'appareil → Détails de l'isolation de la mémoire. Compte admin. **Pas de VB-CABLE** au départ. Micro réel ou micro Windows fonctionnel. Discord installé + compte de test (idéalement un 2ᵉ compte sur un 2ᵉ PC/VM pour l'appel à deux).
 
 Copier `dist\SoundFart.exe` **seul** dans un dossier de test (ex. `C:\SoundFart-test\`). Ne rien d'autre à côté au départ.
