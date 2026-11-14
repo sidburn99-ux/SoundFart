@@ -1,5 +1,7 @@
 # SoundFart — Spécification fonctionnelle (pour évaluation par IA)
 
+> Rôle : spécification technique de référence (architecture, flux, IPC, formats). Statut : **actuel** (v1.4.0). À consulter : pour comprendre ou modifier le code ; ne jamais aligner la spec sur le code sans vérification.
+
 > Document de référence décrivant **fidèlement** ce que fait le programme tel qu'implémenté (v1.4.0). Utilisable tel quel comme prompt d'évaluation.
 
 ---

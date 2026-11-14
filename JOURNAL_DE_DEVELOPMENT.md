@@ -1,5 +1,7 @@
 # Journal de développement — SoundFart
 
+> Rôle : journal de bord détaillé du développement (décisions, tests, incidents). Statut : **historique** — ne pas lire par défaut ; `JOURNAL.md` pour la synthèse par version.
+
 Journal de bord du développement. Règle : ne jamais marquer une fonctionnalité comme « testée » si elle ne l'a pas réellement été.
 
 ## État actuel : v1.4

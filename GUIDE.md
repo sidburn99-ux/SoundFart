@@ -1,5 +1,7 @@
 # SoundFart — Guide d'installation et de configuration
 
+> Rôle : guide utilisateur (installation, VB-CABLE, Discord, réglages, dépannage). Statut : **actuel**. À consulter : pour utiliser ou configurer l'application.
+
 SoundFart est une soundboard pour Discord : elle joue tes sons dans un **micro virtuel** que Discord utilise comme entrée micro, pendant que tu les entends dans ton casque.
 
 ## 1. Installer SoundFart
