@@ -68,9 +68,18 @@ function save() {
 window.addEventListener('beforeunload', () => { if (cfg) window.sf.saveConfig(cfg); window.sf.restoreMic(); });
 
 function normalizeCfg(saved) {
-  const c = Object.assign(defaults(), saved || {});
-  c.settings = Object.assign(defaults().settings, c.settings || {});
-  c.ui = Object.assign(defaults().ui, c.ui || {});
+  // JSON.parse cree une propriete '__proto__' propre : Object.assign la
+  // copierait via le setter et remplacerait le prototype de c.
+  const clean = saved && typeof saved === 'object' ? { ...saved } : {};
+  delete clean.__proto__;
+  const c = Object.assign(defaults(), clean);
+  const mergeSub = (base, sub) => {
+    if (!sub || typeof sub !== 'object') return base;
+    const s = { ...sub }; delete s.__proto__;
+    return Object.assign(base, s);
+  };
+  c.settings = mergeSub(defaults().settings, c.settings);
+  c.ui = mergeSub(defaults().ui, c.ui);
   if (!Array.isArray(c.sounds)) c.sounds = [];
   if (!Array.isArray(c.categories)) c.categories = [];
   // purge les entrees invalides et deduplique par id puis par chemin (garde le premier)
@@ -129,9 +138,21 @@ function toast(msg, kind = '') {
   setTimeout(() => t.remove(), 4200);
 }
 
+let modalClose = null;
 function modal(title, body, buttons, opts = {}) {
   const root = $('#modal-root');
-  const close = () => { root.replaceChildren(); document.removeEventListener('keydown', onKey); if (opts.onClose) opts.onClose(); };
+  // Une nouvelle modale remplace l'ancienne : fermer proprement la precedente
+  // pour declencher son onClose (ex. cleanup de l'enregistreur).
+  if (modalClose) { try { modalClose(); } catch {} }
+  let closed = false;
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    root.replaceChildren();
+    document.removeEventListener('keydown', onKey);
+    if (modalClose === close) modalClose = null;
+    if (opts.onClose) opts.onClose();
+  };
   const onKey = (e) => { if (e.key === 'Escape') close(); };
   document.addEventListener('keydown', onKey);
   const box = el('div', { class: 'modal' + (opts.wide ? ' wide' : '') },
@@ -140,6 +161,7 @@ function modal(title, body, buttons, opts = {}) {
     el('div', { class: 'modal-actions' },
       buttons.map((b) => el('button', { class: b.kind || '', text: b.label, onclick: () => b.onclick(close) }))));
   root.replaceChildren(el('div', { class: 'backdrop', onmousedown: (e) => { if (e.target === e.currentTarget) close(); } }, box));
+  modalClose = close;
   return close;
 }
 
@@ -1320,19 +1342,19 @@ async function recorderModal() {
     if (recTimer) { clearInterval(recTimer); recTimer = null; }
     if (offTapDead) offTapDead();
     if (offTapPcm) offTapPcm();
-    // Enregistrement existant (en cours ou onstop en vol) : on laisse onstop
-    // faire la sauvegarde + tout le menage (streams, tap, actx, boutons) —
-    // l'annuler ici perdrait silencieusement l'enregistrement.
-    if (rec) {
-      if (rec.state !== 'inactive') { try { rec.stop(); } catch {} }
-      return;
+    // Enregistrement existant : on laisse onstop faire la sauvegarde + tout le
+    // menage — l'annuler ici perdrait silencieusement l'enregistrement.
+    // Si rec.stop() echoue (ou rec inactif sans onstop a venir), on nettoie
+    // quand meme : micro/tap/contexte ne doivent pas rester allumes.
+    if (rec && rec.state !== 'inactive') {
+      try { rec.stop(); return; } catch { /* onstop ne viendra pas : nettoyage ci-dessous */ }
     }
     streams.forEach((st) => st.getTracks().forEach((t) => t.stop()));
+    streams = [];
     stopLoose();
     killTapNode();
     window.sf.audioTapStop().catch(() => {});
-    if (actx) actx.close().catch(() => {});
-    streams = []; actx = null;
+    if (actx) { actx.close().catch(() => {}); actx = null; }
   };
 
   // Capture l'audio systeme (Discord, musique...) = tout ce qui sort par le peripherique par defaut.

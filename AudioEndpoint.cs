@@ -1,9 +1,13 @@
 // AudioEndpoint - utilitaire SoundFart : liste / lit / change le peripherique audio par defaut Windows.
-// Compile avec csc.exe (framework .NET) au premier usage, dans %APPDATA%\SoundFart\tools\.
+// Compile avec csc.exe (framework .NET) au premier usage, dans tools\ du dossier
+// de donnees (SoundFart-data portable, %APPDATA%\SoundFart en repli).
 // Usage :
 //   AudioEndpoint.exe list                 -> lignes "flow|id|nom" pour les peripheriques actifs
 //   AudioEndpoint.exe get <render|capture>  -> "console=<id>" puis "comm=<id>" du peripherique par defaut
-//   AudioEndpoint.exe set <render|capture> <id> -> definie le peripherique par defaut (roles console + communications)
+//   AudioEndpoint.exe set <render|capture> <id> -> definie le peripherique par defaut (roles console + multimedia + communications)
+//   AudioEndpoint.exe restore <json>        -> restaure depuis un fichier audio-restore.json
+//   AudioEndpoint.exe guard <pid> <json>    -> process detache : attend la mort du parent
+//        (pid + StartTime, anti-reutilisation) puis restaure si le marqueur owner correspond
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
@@ -124,7 +128,8 @@ internal static class AudioEndpoint
                 name = DeviceName(dev);
                 Console.WriteLine((flow == DataFlow.Render ? "render" : "capture") + "|" + id + "|" + name.Replace("\n", " ").Replace("|", "/"));
             }
-            Marshal.Release(pColl);
+            // Pas de Marshal.Release(pColl) : GetObjectForIUnknown a cree un RCW
+            // dont le finaliseur libere la reference (meme convention qu'AudioTap.cs).
         }
     }
 
@@ -212,10 +217,18 @@ internal static class AudioEndpoint
 
     private static int Guard(IMMDeviceEnumerator en, int pid, string restorePath)
     {
-        // Attente de la mort du parent (poll 500 ms).
+        // Attente de la mort du parent (poll 500 ms). On memorise StartTime pour
+        // detecter une reutilisation du PID par un autre processus (comme AudioTap).
+        DateTime startTime;
+        try { startTime = System.Diagnostics.Process.GetProcessById(pid).StartTime; }
+        catch { return 0; }
         for (;;)
         {
-            try { System.Diagnostics.Process.GetProcessById(pid); }
+            try
+            {
+                var proc = System.Diagnostics.Process.GetProcessById(pid);
+                if (proc.StartTime != startTime) return 0; // PID reutilise : ce n'est plus notre parent
+            }
             catch { break; }
             System.Threading.Thread.Sleep(500);
         }

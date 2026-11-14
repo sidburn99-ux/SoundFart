@@ -301,9 +301,9 @@ async function ensureFfmpeg() {
         const dest = ffmpegDir();
         fs.mkdirSync(dest, { recursive: true });
         try {
-          await execFileP('tar', ['-xf', zip, '-C', dest, '*ffmpeg.exe'], { timeout: 180000 });
+          await execFileP('tar', ['-xf', zip, '-C', dest, '*ffmpeg.exe'], { timeout: 180000, windowsHide: true });
         } catch {
-          await execFileP('tar', ['-xf', zip, '-C', dest], { timeout: 300000 });
+          await execFileP('tar', ['-xf', zip, '-C', dest], { timeout: 300000, windowsHide: true });
         }
         const found = findFile(dest, 'ffmpeg.exe');
         if (found && found !== ffmpegPath()) {
@@ -324,7 +324,7 @@ async function ensureFfmpeg() {
 H('media:cut', async (_e, { input, start, end, dir }) => {
   if (typeof input !== 'string' || !path.isAbsolute(input)) throw new Error('chemin source invalide');
   if (!AUDIO_EXT.includes(path.extname(String(input)).toLowerCase())) throw new Error('format audio non supporté');
-  if (!Number.isFinite(+start) || !Number.isFinite(+end) || +end <= +start) throw new Error('bornes de coupe invalides');
+  if (!Number.isFinite(+start) || +start < 0 || !Number.isFinite(+end) || +end <= +start) throw new Error('bornes de coupe invalides');
   const fdir = await ensureFfmpeg();
   const outDir = path.join(storageRoot(dir), 'cuts');
   fs.mkdirSync(outDir, { recursive: true });
@@ -335,7 +335,7 @@ H('media:cut', async (_e, { input, start, end, dir }) => {
   // protocol_whitelist file : ffmpeg ne doit pas suivre de playlist/URL externe
   await execFileP(path.join(fdir, 'ffmpeg.exe'),
     ['-y', '-protocol_whitelist', 'file', '-ss', String(Math.max(0, +start || 0)), '-i', String(input), '-t', String(dur), '-vn', '-c:a', 'libmp3lame', '-q:a', '4', out],
-    { timeout: 600000 });
+    { timeout: 600000, windowsHide: true });
   return out;
 });
 
@@ -380,9 +380,15 @@ function downloadFile(url, dest, onProgress) {
         }
         if (res.statusCode !== 200) { res.resume(); return reject(new Error('HTTP ' + res.statusCode)); }
         const total = parseInt(res.headers['content-length'] || '0', 10);
+        // Borne dure : yt-dlp ~100 Mo, ffmpeg.zip ~80 Mo — au-dela c'est anormal.
+        if (total > 300 * 1024 * 1024) { res.resume(); return reject(new Error('fichier trop volumineux (' + total + ' octets)')); }
         let got = 0;
         const out = fs.createWriteStream(dest);
-        res.on('data', (c) => { got += c.length; if (total) onProgress(got / total); });
+        res.on('data', (c) => {
+          got += c.length;
+          if (got > 300 * 1024 * 1024) { req.destroy(new Error('téléchargement trop volumineux')); return; }
+          if (total) onProgress(got / total);
+        });
         res.on('error', (e) => { out.destroy(); reject(e); });
         res.pipe(out);
         out.on('finish', () => out.close(resolve));
@@ -413,10 +419,14 @@ async function downloadVerified({ url, dest, sumsUrl, match, onProgress }) {
     await downloadFile(sumsUrl, sumsTmp);
     const sums = fs.readFileSync(sumsTmp, 'utf-8');
     try { fs.unlinkSync(sumsTmp); } catch {}
-    const expected = sums.split(/\r?\n/).map((l) => l.trim().split(/\s+/)).find((p) => p.length === 2 && p[1] === match);
+    const lines = sums.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    const pair = lines.map((l) => l.split(/\s+/)).find((p) => p.length === 2 && p[1] === match);
+    // gyan.dev publie un hash nu sans nom de fichier (une seule ligne).
+    const bare = lines.length === 1 && /^[0-9a-f]{64}$/i.test(lines[0]) ? lines[0] : null;
+    const expected = pair ? pair[0] : bare;
     if (!expected) throw new Error('somme introuvable pour ' + match);
     const actual = await sha256File(dest);
-    if (actual !== expected[0].toLowerCase()) throw new Error('SHA-256 mismatch pour ' + match);
+    if (actual !== expected.toLowerCase()) throw new Error('SHA-256 mismatch pour ' + match);
     log('[dl] SHA-256 verifie: ' + match);
   } catch (e) {
     try { fs.unlinkSync(dest); } catch {}
@@ -435,7 +445,7 @@ async function ytdlpInstalledVersion() {
     if (meta && meta.version) return meta.version;
   } catch {}
   try {
-    const { stdout } = await execFileP(ytdlpPath(), ['--version'], { timeout: 15000 });
+    const { stdout } = await execFileP(ytdlpPath(), ['--version'], { timeout: 15000, windowsHide: true });
     const v = String(stdout).trim().split(/\s+/)[0];
     return /^\d{4}\.\d{2}\.\d{2}$/.test(v) ? v : null;
   } catch { return null; }
@@ -469,12 +479,14 @@ async function maybeUpdateYtDlp(force = false) {
     if (!force && meta.at && Date.now() - meta.at < YTDLP_UPDATE_MS) return false;
     const { stdout } = await execFileP('powershell.exe', ['-NoProfile', '-Command',
       `(Invoke-RestMethod -Uri 'https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest' -Headers @{'User-Agent'='SoundFart'}).tag_name`],
-      { timeout: 20000 });
+      { timeout: 20000, windowsHide: true });
     const latest = String(stdout).trim();
     if (!/^\d{4}\.\d{2}\.\d{2}$/.test(latest)) return false;
     const current = (await ytdlpInstalledVersion()) || YTDLP_VERSION;
     fs.writeFileSync(ytdlpMetaFile(), JSON.stringify({ version: current, at: Date.now() })); // horodate la verification
-    if (latest === current) return false;
+    // Format AAAA.MM.JJ : comparaison lexicale = chronologique. Ne jamais
+    // "mettre a jour" vers une version plus ancienne que celle installee.
+    if (latest <= current) return false;
     log('[yt] mise a jour yt-dlp ' + current + ' -> ' + latest);
     try {
       await installYtDlp(latest);
@@ -504,12 +516,18 @@ async function ensureYtDlp() {
 
 function runYt(args, onProgress) {
   return new Promise((resolve, reject) => {
-    const p = spawn(ytdlpPath(), args);
+    const p = spawn(ytdlpPath(), args, { windowsHide: true });
     let err = '', done = false;
     // Timeout global : un yt-dlp fige ne doit pas pendre le telechargement
     // indefiniment (le timeout inactivite de downloadVerified ne s'applique pas ici).
     const timer = setTimeout(() => { done = true; try { p.kill(); } catch {} reject(new Error('yt-dlp : délai dépassé (2 min)')); }, 120000);
-    p.stderr.on('data', (d) => { if (err.length < 65536) err += d; });
+    // yt-dlp ecrit la progression sur stderr (pas stdout).
+    p.stderr.on('data', (d) => {
+      const s = String(d);
+      const m = /\[download\]\s+([\d.]+)%/.exec(s);
+      if (m) onProgress(parseFloat(m[1]));
+      if (err.length < 65536) err += d;
+    });
     p.stdout.on('data', (d) => {
       const m = /\[download\]\s+([\d.]+)%/.exec(String(d));
       if (m) onProgress(parseFloat(m[1]));
@@ -533,7 +551,7 @@ H('yt:info', async (_e, url) => {
   if (!validHttpUrl(url)) throw new Error('URL invalide');
   await ensureYtDlp();
   ytProgress(-1);
-  const { stdout } = await execFileP(ytdlpPath(), ['--dump-single-json', '--no-playlist', '--no-warnings', url], { maxBuffer: 64 * 1024 * 1024, timeout: 120000 });
+  const { stdout } = await execFileP(ytdlpPath(), ['--dump-single-json', '--no-playlist', '--no-warnings', url], { maxBuffer: 64 * 1024 * 1024, timeout: 120000, windowsHide: true });
   const j = JSON.parse(stdout);
   return { title: j.title || '', duration: j.duration || 0, url: j.webpage_url || url };
 });
@@ -618,7 +636,7 @@ async function doCompileCs(csName, exeBase) {
   try { fs.unlinkSync(tmpOut); } catch {}
   // compilation vers un nom temporaire puis renommage : un echec ne laisse jamais
   // un exe partiel qui aurait l'air valide
-  await execFileP(csc, ['/nologo', '/target:exe', '/platform:anycpu', '/out:' + tmpOut, cs], { timeout: 60000 });
+  await execFileP(csc, ['/nologo', '/target:exe', '/platform:anycpu', '/out:' + tmpOut, cs], { timeout: 60000, windowsHide: true });
   if (!fs.existsSync(tmpOut)) throw new Error('compilation ' + csName + ' sans exe produit');
   try { fs.renameSync(tmpOut, target); } catch { fs.copyFileSync(tmpOut, target); }
   try { fs.unlinkSync(tmpOut); } catch {}
@@ -639,7 +657,7 @@ async function ensureAudioTool() {
 }
 
 function audioExec(tool, args) {
-  return execFileSync(tool, args, { encoding: 'utf8', timeout: 15000 });
+  return execFileSync(tool, args, { encoding: 'utf8', timeout: 15000, windowsHide: true });
 }
 
 // parseEndpoints/parseGet/findCableCapture viennent de lib/audio-utils.js.
@@ -716,7 +734,7 @@ H('audio:autoSetup', async (_e, { enabled, cableLabel }) => {
     // detache restaure le micro a la mort du parent. Sans effet si fermeture propre
     // (restoreFile deja supprime) ou si un autre SoundFart a repris la bascule (owner).
     try {
-      const g = spawn(tool, ['guard', String(process.pid), restoreFile()], { detached: true, stdio: 'ignore' });
+      const g = spawn(tool, ['guard', String(process.pid), restoreFile()], { detached: true, stdio: 'ignore', windowsHide: true });
       g.unref();
     } catch (e) { log('[mic-guard] spawn: ' + e.message, 'warn'); }
     return { ok: true, changed: true, device: target.name };
@@ -789,7 +807,7 @@ H('audio:tapStart', async () => {
   try {
     const tool = await ensureAudioTap();
     if (!tool) return { ok: false, err: 'composant audio natif indisponible : ' + (lastToolErr || 'compilation impossible') };
-    if (audioTapProc && audioTapProc.exitCode === null) return { ok: true };
+    if (audioTapProc && audioTapProc.exitCode === null && !audioTapFailed) return { ok: true };
     // Un tapStop vient peut-etre de tuer l'ancien processus sans que 'exit' soit encore arrive :
     // on attend sa sortie avant d'en respawn un (sinon deux AudioTap ecriraient dans le cable).
     if (audioTapKilling) {
@@ -800,7 +818,7 @@ H('audio:tapStart', async () => {
     // args[1] = pid du parent : AudioTap s'auto-termine si ce process meurt (anti-orphelin).
     // Mode « pcm » : PCM float32 stereo 48 kHz sur stdout -> relaie au renderer pour
     // l'enregistreur, SANS passer par le cable (evite l'echo Discord dans le micro).
-    const proc = spawn(tool, ['CABLE Input', String(process.pid), '0', '', 'pcm'], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const proc = spawn(tool, ['CABLE Input', String(process.pid), '0', '', 'pcm'], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
     audioTapProc = proc;
     audioTapFailed = false;
     proc.stdout.on('data', (chunk) => {
@@ -832,6 +850,9 @@ H('audio:tapStart', async () => {
     proc.on('error', () => {
       if (audioTapProc !== proc) return;
       audioTapFailed = true; audioTapKilling = false; tapPcmRem = Buffer.alloc(0);
+      // 'exit' n'est pas garanti apres 'error' : sans ca audioTapProc resterait
+      // non-null et les tapStart suivants mentiraient ok:true a jamais.
+      audioTapProc = null;
     });
     await new Promise((r) => setTimeout(r, 700));
     if (!audioTapProc || audioTapProc.exitCode !== null || audioTapFailed)
@@ -857,13 +878,13 @@ H('audio:tapStop', () => {
 // devicechange. Ici on ne garde que la bascule micro (cableLabel -> endpoint).
 
 // Watchdog : re-verifie periodiquement que l'entree par defaut est toujours sur le cable.
-// Couvre le cas ou Discord (ou un peripherique) demarre/change le defaut pendant que
-// SoundFart tourne — la bascule est re-appliquee automatiquement.
+// Si l'entree a ete modifiee hors SoundFart (utilisateur ou app tierce), la
+// surveillance est suspendue pour la session — jamais de re-bascule forcee.
 // Executions serialisees (watchdogBusy), jamais de execFileSync (ne bloque pas les
 // raccourcis globaux). Si l'entree est modifiee hors SoundFart, on considere que
 // c'est un choix de l'utilisateur : la surveillance est suspendue pour la session
 // (reglage « surveillance micro » pour la reactiver au prochain lancement).
-const audioExecP = (tool, args) => execFileP(tool, args, { encoding: 'utf8', timeout: 15000 }).then((r) => r.stdout);
+const audioExecP = (tool, args) => execFileP(tool, args, { encoding: 'utf8', timeout: 15000, windowsHide: true }).then((r) => r.stdout);
 let watchdogBusy = false;
 let micWatchSuspended = false;
 

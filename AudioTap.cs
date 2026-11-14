@@ -1,15 +1,19 @@
-// AudioTap - utilitaire SoundFart : capture le loopback WASAPI du peripherique de sortie
-// par defaut et le reinjecte en temps reel dans « CABLE Input » (VB-Audio Virtual Cable).
-// Permet d'enregistrer « ce qu'on entend » (Discord, YouTube, jeu) via la source
-// « CABLE Output » sans depender de la capture loopback Chromium (getDisplayMedia).
+// AudioTap - utilitaire SoundFart : capture le loopback WASAPI d'une sortie
+// render (defaut : sortie Windows par defaut, ou « CABLE Input » pour le flux
+// Discord) et sort le PCM float32 stereo 48 kHz sur stdout (mode « pcm »).
+// Le process main le relaie au renderer via IPC -> AudioWorklet -> enregistreur :
+// « ce qu'on entend » est enregistre sans repasser par le cable (pas d'echo).
 //
-// Compile avec csc.exe (.NET Framework) au premier usage -> %APPDATA%\SoundFart\tools\AudioTap.exe
-// Usage : AudioTap.exe [nom-du-cable] [pid-parent] [secondes] [nom-source]
-//   nom-du-cable : sous-chaine du nom du peripherique render cible (defaut "CABLE Input",
-//                 le « CABLE In 16ch » est evite). pid-parent : pid du process parent,
-//                 AudioTap s'arrete si ce process disparait (anti-orphelin).
-//                 secondes : 0/vide = indefini. nom-source : sous-chaine d'une sortie
-//                 render a capturer au lieu de la sortie par defaut.
+// Compile avec csc.exe (.NET Framework) au premier usage -> tools\AudioTap.exe
+//   dans le dossier de donnees (SoundFart-data portable, %APPDATA% en repli).
+// Usage : AudioTap.exe [nom-du-cable] [pid-parent] [secondes] [nom-source] [mode]
+//   nom-du-cable : sous-chaine du nom du peripherique render cible pour une
+//                 reinjection CABLE (mode historique, non utilise par l'app).
+//                 pid-parent : pid du process parent, AudioTap s'arrete si ce
+//                 process disparait (anti-orphelin, verifie aussi StartTime).
+//                 secondes : 0/vide = indefini. nom-source : sous-chaine d'une
+//                 sortie render a capturer au lieu de la sortie par defaut.
+//                 mode « pcm » : PCM brut sur stdout au lieu de la reinjection.
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
