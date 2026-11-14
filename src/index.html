@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self' blob:;">
+<title>SoundFart</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <aside class="sidebar">
+    <div class="brand"><div class="logo">💨</div><div class="brand-name">Sound<span>Fart</span><span id="appVersion" class="ver">v1.3.0</span></div></div>
+    <div class="side-title">Catégories</div>
+    <select id="catSort" class="catsort" title="Trier les catégories"></select>
+    <nav id="cats"></nav>
+    <button id="addCat" class="ghost wide">＋ Nouvelle catégorie</button>
+    <div class="spacer"></div>
+    <button id="recBtn" class="ghost wide">🎙 Enregistreur</button>
+    <button id="openSettings" class="ghost wide">⚙ Réglages audio</button>
+  </aside>
+
+  <main>
+    <header class="topbar">
+      <div class="search"><input id="search" type="search" placeholder="Rechercher un son…"></div>
+      <label class="sort"><span>Trier</span><select id="sort"></select></label>
+      <label class="sort group-toggle" title="Regrouper les sons par catégorie"><input type="checkbox" id="groupCat"><span>Par catégorie</span></label>
+      <button id="ytBtn" class="ghost">📺 YouTube</button>
+      <button id="addBtn" class="primary">＋ Ajouter des sons</button>
+    </header>
+    <div class="section-head"><h1 id="viewTitle">Tous les sons</h1><span id="viewCount"></span></div>
+    <section id="grid"></section>
+    <footer class="player">
+      <div id="nowplaying" class="np">Prêt</div>
+      <div id="routes" class="routes"></div>
+      <label class="master"><span>🔊</span><input id="master" type="range" min="0" max="100"><span id="masterVal"></span></label>
+      <button id="stopBtn" class="stop">■ STOP</button>
+    </footer>
+  </main>
+</div>
+
+<div id="drop-overlay"><div>Dépose tes fichiers ou dossiers audio ici</div></div>
+<div id="modal-root"></div>
+<div id="ctxmenu"></div>
+<div id="toast"></div>
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,43 @@
+# AGENTS.md — Règles de développement SoundFart (immuables)
+
+## Stack
+- Electron 45 (main: `main.js`, preload: `preload.js`, renderer: `src/app.js` + `src/index.html` + `src/style.css`)
+- Vanila JS, pas de framework. Outils natifs C# compilés à la volée via `csc.exe` dans `%APPDATA%\SoundFart\tools\`
+- Build : `npm run dist` → `dist\SoundFart.exe` (portable, electron-builder)
+- Config : `%APPDATA%\SoundFart\config.json` — Log : `%APPDATA%\SoundFart\soundfart.log`
+
+## Règles de travail OBLIGATOIRES
+
+### Git
+- Git est OBLIGATOIRE pour versionner CHAQUE changement, même sans remote GitHub.
+- Git est installé à `C:\Program Files\Git\cmd\git.exe` (ajouter au PATH des sessions ou appeler par chemin absolu).
+- Un commit par changement cohérent, message clair axé "pourquoi".
+- Ne jamais committer de secrets. `.gitignore` couvre `node_modules/`, `dist/`, `*.log`.
+
+### Subagents
+- Utiliser des subagents (`run_subagent`) pour diviser les tâches et explorer en parallèle quand c'est pertinent.
+- Ne pas s'arrêter tant que la tâche demandée n'est pas entièrement implémentée.
+
+### Vérification
+- Après chaque modification : `node --check` sur les JS modifiés.
+- Rebuild `dist\SoundFart.exe` après tout changement fonctionnel.
+- Tests de régression : relancer l'app, vérifier `soundfart.log`, tester les flux touchés.
+- NE JAMAIS prétendre qu'une feature audio marche sans test réel (niveau non nul mesuré, pas juste "fichier créé").
+
+### Suivi
+- `suivi.tsv` à la racine = journal de suivi des fonctionnalités/tests (colonnes : date, feature, statut, note).
+- `suivi.html` = page de consultation générée depuis le TSV, ouvrable via `file://` (HTML+CSS inline, AUCUN serveur web, AUCUNE dépendance externe).
+- Mettre à jour le TSV à chaque changement significatif, régénérer le HTML.
+
+### Code
+- Pas de commentaires superflus ; style compact ; suivre les conventions existantes.
+- Les originaux audio ne sont JAMAIS modifiés.
+- Les outils (yt-dlp, ffmpeg, AudioEndpoint, AudioTap, VB-CABLE setup) se téléchargent/compilent à la volée dans `%APPDATA%\SoundFart\tools\`.
+- Sécurité : `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true` — ne jamais contourner.
+
+## Architecture audio (rappel)
+- Sortie sons → Web Audio → `CABLE Input` (rendu) ; monitoring → périphérique `monId`.
+- Micro → `getUserMedia` avec EC/NS/AGC → mixé vers CABLE Input + monitoring.
+- Enregistreur : sources micro + audio PC (via `AudioTap.exe` loopback WASAPI → CABLE Input → `CABLE Output`) + câble SoundFart, mixées.
+- `AudioEndpoint.exe` : bascule auto du micro par défaut vers CABLE Output au lancement, restauration au rôle « défaut Windows » à la fermeture.
+- `VB-CABLE` : installateur bundlé (`vendor/VBCABLE_Setup_x64.exe`), install silencieuse `/S` si absent.
