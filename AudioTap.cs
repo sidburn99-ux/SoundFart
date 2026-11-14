@@ -4,9 +4,12 @@
 // « CABLE Output » sans depender de la capture loopback Chromium (getDisplayMedia).
 //
 // Compile avec csc.exe (.NET Framework) au premier usage -> %APPDATA%\SoundFart\tools\AudioTap.exe
-// Usage : AudioTap.exe [nom-du-cable] [secondes]
+// Usage : AudioTap.exe [nom-du-cable] [pid-parent] [secondes] [nom-source]
 //   nom-du-cable : sous-chaine du nom du peripherique render cible (defaut "CABLE Input",
-//                 le « CABLE In 16ch » est evite). secondes : 0/vide = indefini (tue par le parent).
+//                 le « CABLE In 16ch » est evite). pid-parent : pid du process parent,
+//                 AudioTap s'arrete si ce process disparait (anti-orphelin).
+//                 secondes : 0/vide = indefini. nom-source : sous-chaine d'une sortie
+//                 render a capturer au lieu de la sortie par defaut.
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
@@ -28,6 +31,8 @@ internal static class AudioTap
     private static readonly Guid IID_IAudioClient = new Guid("1CB9AD4C-DBFA-4c32-B178-C2F568A703B2");
     private static readonly Guid IID_IAudioCaptureClient = new Guid("C8ADBD64-E71E-48a0-A4DE-185C395CD317");
     private static readonly Guid IID_IAudioRenderClient = new Guid("F294ACFC-3146-4483-A7BF-ADDCA7C260E2");
+
+    [DllImport("ole32.dll")] private static extern void PropVariantClear(ref PropVariant pvar);
 
     // ------------------------- COM -------------------------
     private enum DataFlow { Render = 0, Capture = 1, All = 2 }
@@ -203,8 +208,12 @@ internal static class AudioTap
                 float v = (float)(chan[sc][i0] * (1 - frac) + chan[sc][i1] * frac);
                 int p = off + c * dSamplesPer;
                 if (df.isFloat) Buffer.BlockCopy(BitConverter.GetBytes(v), 0, outBuf, p, 4);
-                else if (df.bits == 16) Buffer.BlockCopy(BitConverter.GetBytes((short)(v * 32767f)), 0, outBuf, p, 2);
-                else Buffer.BlockCopy(BitConverter.GetBytes((int)(v * 2147483647f)), 0, outBuf, p, 4);
+                else
+                {
+                    if (v > 1f) v = 1f; else if (v < -1f) v = -1f; // clamp avant les casts int
+                    if (df.bits == 16) Buffer.BlockCopy(BitConverter.GetBytes((short)(v * 32767f)), 0, outBuf, p, 2);
+                    else Buffer.BlockCopy(BitConverter.GetBytes((int)(v * 2147483647f)), 0, outBuf, p, 4);
+                }
             }
         }
         return outBuf;
@@ -218,10 +227,14 @@ internal static class AudioTap
             IPropertyStore store;
             if (dev.OpenPropertyStore(STGM_READ, out store) != 0) return "";
             PropertyKey key = new PropertyKey { fmtid = new Guid("a45c254e-df1c-4efd-8020-67d146a850e0"), pid = 14 };
-            PropVariant pv;
-            if (store.GetValue(ref key, out pv) != 0) return "";
-            if (pv.vt == 31 && pv.pointer != IntPtr.Zero) return Marshal.PtrToStringUni(pv.pointer) ?? "";
-            return "";
+            PropVariant pv = new PropVariant();
+            try
+            {
+                if (store.GetValue(ref key, out pv) != 0) return "";
+                if (pv.vt == 31 && pv.pointer != IntPtr.Zero) return Marshal.PtrToStringUni(pv.pointer) ?? "";
+                return "";
+            }
+            finally { PropVariantClear(ref pv); } // libere le BSTR (VT_LPWSTR) alloue par le property store
         }
         catch { return ""; }
     }
@@ -248,7 +261,7 @@ internal static class AudioTap
                 && name.IndexOf("16ch", StringComparison.OrdinalIgnoreCase) < 0)
                 matches.Add(new KeyValuePair<int, IMMDevice>(i, dev));
         }
-        Marshal.Release(pColl);
+        // Pas de Marshal.Release(pColl) : GetObjectForIUnknown a cree un RCW, le GC s'en charge
         if (matches.Count == 0) throw new Exception("peripherique « " + want + " » introuvable");
         return matches[0].Value;
     }
@@ -263,7 +276,7 @@ internal static class AudioTap
     }
 
     // ------------------------- boucle -------------------------
-    private static int Run(IMMDeviceEnumerator en, string cableName, double seconds, string srcName)
+    private static int Run(IMMDeviceEnumerator en, string cableName, int parentPid, double seconds, string srcName)
     {
         // source : loopback du peripherique de sortie par defaut (ou srcName si fourni)
         IMMDevice srcDev = null;
@@ -280,7 +293,7 @@ internal static class AudioTap
                     if (coll.Item(i, out d) != 0) continue;
                     if (DeviceName(d).IndexOf(srcName, StringComparison.OrdinalIgnoreCase) >= 0) srcDev = d;
                 }
-                Marshal.Release(pColl);
+                // Pas de Marshal.Release(pColl) : RCW gere par le GC
             }
             if (srcDev == null) throw new Exception("sortie « " + srcName + " » introuvable");
         }
@@ -313,11 +326,14 @@ internal static class AudioTap
         // init capture loopback : buffer 1 s
         Console.Error.WriteLine("AudioTap: init loopback...");
         // AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM est interdit avec LOOPBACK -> E_NOTIMPL
-        hr = src.Initialize(AUDCLNT_SHAREMODE_SHARED,
-            AUDCLNT_STREAMFLAGS_LOOPBACK,
-            2000000, 0, srcFmtPtr, IntPtr.Zero);
+        try
+        {
+            hr = src.Initialize(AUDCLNT_SHAREMODE_SHARED,
+                AUDCLNT_STREAMFLAGS_LOOPBACK,
+                2000000, 0, srcFmtPtr, IntPtr.Zero);
+        }
+        finally { Marshal.FreeCoTaskMem(srcFmtPtr); }
         Console.Error.WriteLine("AudioTap: init loopback hr=0x" + hr.ToString("X8"));
-        Marshal.FreeCoTaskMem(srcFmtPtr);
         if (hr != 0) throw new Exception("init loopback echoue (0x" + hr.ToString("X8") + ")");
         uint srcBufFrames;
         src.GetBufferSize(out srcBufFrames);
@@ -325,10 +341,13 @@ internal static class AudioTap
 
         // init rendu cable
         Console.Error.WriteLine("AudioTap: init cable...");
-        hr = dst.Initialize(AUDCLNT_SHAREMODE_SHARED, 0,
-            2000000, 0, dstFmtPtr, IntPtr.Zero);
+        try
+        {
+            hr = dst.Initialize(AUDCLNT_SHAREMODE_SHARED, 0,
+                2000000, 0, dstFmtPtr, IntPtr.Zero);
+        }
+        finally { Marshal.FreeCoTaskMem(dstFmtPtr); }
         Console.Error.WriteLine("AudioTap: init cable hr=0x" + hr.ToString("X8"));
-        Marshal.FreeCoTaskMem(dstFmtPtr);
         if (hr != 0) throw new Exception("init cable echoue (0x" + hr.ToString("X8") + ")");
         uint dstBufFrames;
         dst.GetBufferSize(out dstBufFrames);
@@ -361,6 +380,8 @@ internal static class AudioTap
         var deadline = seconds > 0 ? DateTime.UtcNow.AddSeconds(seconds) : DateTime.MaxValue;
         long statPackets = 0, statSilentPkts = 0, statBytes = 0, statPeak = 0, statWritten = 0, statPadding = -1;
         var statLast = DateTime.UtcNow;
+        int parentCheck = 0;
+        bool parentDead = false;
 
         while (DateTime.UtcNow < deadline)
         {
@@ -390,6 +411,7 @@ internal static class AudioTap
                 cap.ReleaseBuffer(frames);
                 statPackets++; if (silent) statSilentPkts++; statBytes += bytes;
                 byte[] outBuf = convert ? Convert(buf, sf, df) : buf;
+                if (outBuf.Length == 0) continue;
                 if (queuedBytes + outBuf.Length > maxQueued)
                 {
                     // depassement : on jette le plus ancien paquet
@@ -398,7 +420,15 @@ internal static class AudioTap
                 }
                 queue.Enqueue(outBuf);
                 queuedBytes += outBuf.Length;
+                // toutes les ~500 paquets : si le parent (Electron) est mort, on sort proprement
+                if (parentPid > 0 && ++parentCheck >= 500)
+                {
+                    parentCheck = 0;
+                    try { System.Diagnostics.Process.GetProcessById(parentPid); }
+                    catch { parentDead = true; break; }
+                }
             }
+            if (parentDead) break;
 
             uint padNow;
             if (dst.GetCurrentPadding(out padNow) == 0) statPadding = padNow;
@@ -458,10 +488,14 @@ internal static class AudioTap
         try
         {
             string cable = args.Length > 0 ? args[0] : "CABLE Input";
-            double seconds = args.Length > 1 ? double.Parse(args[1]) : 0;
-            string srcName = args.Length > 2 ? args[2] : null;
+            int parentPid = 0;
+            if (args.Length > 1) int.TryParse(args[1], out parentPid); // non numerique -> 0 = check desactive
+            double seconds = 0;
+            if (args.Length > 2 && !double.TryParse(args[2], out seconds))
+                throw new Exception("argument « secondes » invalide : " + args[2]);
+            string srcName = args.Length > 3 ? args[3] : null;
             var en = Com<IMMDeviceEnumerator>("BCDE0395-E52F-467C-8E3D-C4579291692E");
-            return Run(en, cable, seconds, srcName);
+            return Run(en, cable, parentPid, seconds, srcName);
         }
         catch (Exception ex)
         {

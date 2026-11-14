@@ -27,3 +27,4 @@ date	feature	statut	note
 2026-10-14	Fix onCableReady sans applyAudio + actx fuiter enregistreur	OK	resolveDevices+applyAudio, actx.close au stop
 2026-10-14	Correctifs differe (contexte): AudioTap parent-death, tapDead event, dedup compilations, normalizeCfg validation, applyAudio try/catch separes, PropVariantClear/RCW COM	A_FAIRE	Documente pour prochaine session
 2026-10-14	Watchdog micro: re-bascule auto si l'entree defaut quitte le cable	OK	setInterval 10s, check seulement si bascule active (restoreFile)
+2026-10-14	Correctifs audit: 31 bugs (main.js, app.js, AudioTap.cs)	OK	Recorder orphelin, races, fuites COM, validations, perfs

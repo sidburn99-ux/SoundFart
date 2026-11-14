@@ -13,7 +13,14 @@ let win = null;
 // ---------- journal d'erreurs : %APPDATA%\SoundFart\soundfart.log ----------
 function log(msg) {
   try {
-    fs.appendFileSync(path.join(app.getPath('userData'), 'soundfart.log'), new Date().toISOString() + ' ' + msg + '\n');
+    const f = path.join(app.getPath('userData'), 'soundfart.log');
+    // Borne la taille : au-dela de 2 Mo on ne garde que les 500 derniers Ko
+    try {
+      if (fs.statSync(f).size > 2 * 1024 * 1024) {
+        fs.writeFileSync(f, fs.readFileSync(f).slice(-500 * 1024));
+      }
+    } catch {}
+    fs.appendFileSync(f, new Date().toISOString() + ' ' + msg + '\n');
   } catch {}
 }
 
@@ -139,13 +146,15 @@ ipcMain.handle('config:save', (_e, cfg) => {
 });
 
 // ---------- fichiers ----------
-function expand(paths, depth = 0) {
+function expand(paths, depth = 0, seen = { n: 0 }) {
   const out = [];
   for (const p of paths) {
+    if (seen.n >= 5000) break; // garde-fou : pas plus de 5000 entrees inspectees
+    seen.n++;
     try {
       const st = fs.statSync(p);
       if (st.isDirectory()) {
-        if (depth < 4) out.push(...expand(fs.readdirSync(p).map((n) => path.join(p, n)), depth + 1));
+        if (depth < 3) out.push(...expand(fs.readdirSync(p).map((n) => path.join(p, n)), depth + 1, seen));
       } else if (AUDIO_EXT.includes(path.extname(p).toLowerCase())) {
         out.push(p);
       }
@@ -228,6 +237,11 @@ function findFile(dir, name, depth = 0) {
 // Telecharge et extrait ffmpeg.exe une seule fois (~80 Mo, build "essentials" de gyan.dev)
 async function ensureFfmpeg() {
   if (fs.existsSync(ffmpegPath())) return ffmpegDir();
+  // ffmpeg.exe deja extrait quelque part dans ffmpegDir() : on l'utilise tel quel, sans recopier
+  if (fs.existsSync(ffmpegDir())) {
+    const existing = findFile(ffmpegDir(), 'ffmpeg.exe');
+    if (existing) return path.dirname(existing);
+  }
   fs.mkdirSync(toolsDir(), { recursive: true });
   const zip = path.join(toolsDir(), 'ffmpeg.zip');
   try {
@@ -242,7 +256,10 @@ async function ensureFfmpeg() {
       await execFileP('tar', ['-xf', zip, '-C', dest], { timeout: 300000 });
     }
     const found = findFile(dest, 'ffmpeg.exe');
-    if (found && found !== ffmpegPath()) fs.copyFileSync(found, ffmpegPath());
+    if (found && found !== ffmpegPath()) {
+      // deplacer (rename) plutot que copier quand c'est possible
+      try { fs.renameSync(found, ffmpegPath()); } catch { fs.copyFileSync(found, ffmpegPath()); }
+    }
   } finally {
     try { fs.unlinkSync(zip); } catch {}
   }
@@ -257,8 +274,9 @@ ipcMain.handle('media:cut', async (_e, { input, start, end, dir }) => {
   const base = safeName(path.basename(String(input), path.extname(String(input)))) + '_extrait';
   let out = path.join(outDir, base + '.mp3');
   for (let i = 1; fs.existsSync(out); i++) out = path.join(outDir, `${base}-${i}.mp3`);
+  const dur = Math.max(0.1, (+end || 0) - (+start || 0));
   await execFileP(path.join(fdir, 'ffmpeg.exe'),
-    ['-y', '-ss', String(Math.max(0, +start || 0)), '-to', String(Math.max(0, +end || 0)), '-i', String(input), '-vn', '-c:a', 'libmp3lame', '-q:a', '4', out],
+    ['-y', '-ss', String(Math.max(0, +start || 0)), '-i', String(input), '-t', String(dur), '-vn', '-c:a', 'libmp3lame', '-q:a', '4', out],
     { timeout: 600000 });
   return out;
 });
@@ -282,7 +300,7 @@ function storageRoot(dir) {
 function downloadFile(url, dest, onProgress) {
   return new Promise((resolve, reject) => {
     const get = (u, n) => {
-      https.get(u, (res) => {
+      const req = https.get(u, (res) => {
         if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
           res.resume();
           if (n > 5) return reject(new Error('trop de redirections'));
@@ -293,10 +311,13 @@ function downloadFile(url, dest, onProgress) {
         let got = 0;
         const out = fs.createWriteStream(dest);
         res.on('data', (c) => { got += c.length; if (total) onProgress(got / total); });
+        res.on('error', (e) => { out.destroy(); reject(e); });
         res.pipe(out);
         out.on('finish', () => out.close(resolve));
         out.on('error', reject);
-      }).on('error', reject);
+      });
+      req.setTimeout(30000, () => req.destroy(new Error('timeout')));
+      req.on('error', reject);
     };
     get(url, 0);
   });
@@ -338,6 +359,7 @@ const ytProgress = (f) => {
 ipcMain.handle('yt:ensure', async () => { await ensureYtDlp(); ytProgress(-1); return true; });
 
 ipcMain.handle('yt:info', async (_e, url) => {
+  if (!/^https?:\/\//i.test(String(url || ''))) throw new Error('URL invalide');
   await ensureYtDlp();
   ytProgress(-1);
   const { stdout } = await execFileP(ytdlpPath(), ['--dump-single-json', '--no-playlist', '--no-warnings', url], { maxBuffer: 64 * 1024 * 1024, timeout: 120000 });
@@ -346,6 +368,7 @@ ipcMain.handle('yt:info', async (_e, url) => {
 });
 
 ipcMain.handle('yt:download', async (_e, { url, start, end, dir }) => {
+  if (!/^https?:\/\//i.test(String(url || ''))) throw new Error('URL invalide');
   await ensureYtDlp();
   const impDir = path.join(storageRoot(dir), 'imports');
   fs.mkdirSync(impDir, { recursive: true });
@@ -384,18 +407,28 @@ const CSC_CANDIDATES = [
   'C:\\Windows\\Microsoft.NET\\Framework\\v4.0.30319\\csc.exe',
 ];
 
+let audioToolPromise = null; // evite deux csc.exe simultanes sur le meme exe
+
 async function ensureAudioTool() {
   if (fs.existsSync(audioToolPath())) return audioToolPath();
-  const csInAsar = path.join(__dirname, 'AudioEndpoint.cs');
-  const csc = CSC_CANDIDATES.find((p) => fs.existsSync(p));
-  // dans l'exe package, __dirname est dans app.asar : illisible par csc.exe externe.
-  // On extrait la source vers un vrai fichier temporaire avant compilation.
-  const cs = path.join(toolsDir(), 'AudioEndpoint.cs');
-  if (!csc || !fs.existsSync(csInAsar)) return null;
-  fs.mkdirSync(toolsDir(), { recursive: true });
-  fs.writeFileSync(cs, fs.readFileSync(csInAsar));
-  await execFileP(csc, ['/nologo', '/target:exe', '/platform:anycpu', '/out:' + audioToolPath(), cs], { timeout: 60000 });
-  return fs.existsSync(audioToolPath()) ? audioToolPath() : null;
+  if (audioToolPromise) return audioToolPromise;
+  audioToolPromise = (async () => {
+    try {
+      const csInAsar = path.join(__dirname, 'AudioEndpoint.cs');
+      const csc = CSC_CANDIDATES.find((p) => fs.existsSync(p));
+      // dans l'exe package, __dirname est dans app.asar : illisible par csc.exe externe.
+      // On extrait la source vers un vrai fichier temporaire avant compilation.
+      const cs = path.join(toolsDir(), 'AudioEndpoint.cs');
+      if (!csc || !fs.existsSync(csInAsar)) return null;
+      fs.mkdirSync(toolsDir(), { recursive: true });
+      fs.writeFileSync(cs, fs.readFileSync(csInAsar));
+      await execFileP(csc, ['/nologo', '/target:exe', '/platform:anycpu', '/out:' + audioToolPath(), cs], { timeout: 60000 });
+      return fs.existsSync(audioToolPath()) ? audioToolPath() : null;
+    } finally {
+      audioToolPromise = null;
+    }
+  })();
+  return audioToolPromise;
 }
 
 function audioExec(tool, args) {
@@ -529,17 +562,28 @@ ipcMain.on('audio:restore', () => {
 // Contourne l'impossibilite de capturer la sortie systeme via Chromium (getDisplayMedia/loopback
 // renvoient « Could not start audio source » ou du silence sur certaines configs).
 let audioTapProc = null;
+let audioTapKilling = false; // vrai entre kill() et l'evenement 'exit' (anti double spawn)
+
+let audioTapPromise = null; // evite deux csc.exe simultanes sur le meme exe
 
 async function ensureAudioTap() {
   if (fs.existsSync(audioTapPath())) return audioTapPath();
-  const csInAsar = path.join(__dirname, 'AudioTap.cs');
-  const csc = CSC_CANDIDATES.find((p) => fs.existsSync(p));
-  if (!csc || !fs.existsSync(csInAsar)) return null;
-  fs.mkdirSync(toolsDir(), { recursive: true });
-  const cs = path.join(toolsDir(), 'AudioTap.cs');
-  fs.writeFileSync(cs, fs.readFileSync(csInAsar));
-  await execFileP(csc, ['/nologo', '/target:exe', '/platform:anycpu', '/out:' + audioTapPath(), cs], { timeout: 60000 });
-  return fs.existsSync(audioTapPath()) ? audioTapPath() : null;
+  if (audioTapPromise) return audioTapPromise;
+  audioTapPromise = (async () => {
+    try {
+      const csInAsar = path.join(__dirname, 'AudioTap.cs');
+      const csc = CSC_CANDIDATES.find((p) => fs.existsSync(p));
+      if (!csc || !fs.existsSync(csInAsar)) return null;
+      fs.mkdirSync(toolsDir(), { recursive: true });
+      const cs = path.join(toolsDir(), 'AudioTap.cs');
+      fs.writeFileSync(cs, fs.readFileSync(csInAsar));
+      await execFileP(csc, ['/nologo', '/target:exe', '/platform:anycpu', '/out:' + audioTapPath(), cs], { timeout: 60000 });
+      return fs.existsSync(audioTapPath()) ? audioTapPath() : null;
+    } finally {
+      audioTapPromise = null;
+    }
+  })();
+  return audioTapPromise;
 }
 
 ipcMain.handle('audio:tapStart', async () => {
@@ -547,13 +591,27 @@ ipcMain.handle('audio:tapStart', async () => {
     const tool = await ensureAudioTap();
     if (!tool) return { ok: false, err: 'outil audio introuvable (csc.exe absent ?)' };
     if (audioTapProc && audioTapProc.exitCode === null) return { ok: true };
-    audioTapProc = spawn(tool, ['CABLE Input'], { stdio: ['ignore', 'ignore', 'pipe'] });
+    // Un tapStop vient peut-etre de tuer l'ancien processus sans que 'exit' soit encore arrive :
+    // on attend sa sortie avant d'en respawn un (sinon deux AudioTap ecriraient dans le cable).
+    if (audioTapKilling) {
+      const t0 = Date.now();
+      while (audioTapKilling && Date.now() - t0 < 3000) await new Promise((r) => setTimeout(r, 200));
+      if (audioTapKilling) return { ok: false, err: 'arrêt de l\'ancien AudioTap en cours' };
+    }
+    // args[1] = pid du parent : AudioTap s'auto-termine si ce process meurt (anti-orphelin)
+    audioTapProc = spawn(tool, ['CABLE Input', String(process.pid)], { stdio: ['ignore', 'ignore', 'pipe'] });
     audioTapProc.stderr.on('data', (d) => {
       const line = String(d).trim();
       if (/ERREUR|echoue|introuvable/i.test(line)) log('[audiotap] ' + line.slice(0, 300));
     });
-    audioTapProc.on('exit', () => { audioTapProc = null; });
-    audioTapProc.on('error', () => { audioTapProc = null; });
+    audioTapProc.on('exit', () => {
+      const wasKilled = audioTapKilling;
+      audioTapProc = null;
+      audioTapKilling = false;
+      // Mort non volontaire (crash AudioTap / peripherique disparu) : on previent le renderer
+      if (!wasKilled && win && !win.isDestroyed()) win.webContents.send('sf:tapDead', true);
+    });
+    audioTapProc.on('error', () => { audioTapProc = null; audioTapKilling = false; });
     await new Promise((r) => setTimeout(r, 700));
     if (!audioTapProc || audioTapProc.exitCode !== null)
       return { ok: false, err: 'AudioTap s\'est arrêté au démarrage' };
@@ -562,7 +620,10 @@ ipcMain.handle('audio:tapStart', async () => {
 });
 
 ipcMain.handle('audio:tapStop', () => {
-  try { if (audioTapProc) audioTapProc.kill(); } catch {}
+  if (audioTapProc) {
+    audioTapKilling = true;
+    try { audioTapProc.kill(); } catch { audioTapKilling = false; }
+  }
   audioTapProc = null;
   return { ok: true };
 });
