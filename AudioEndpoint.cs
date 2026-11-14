@@ -71,6 +71,9 @@ internal static class AudioEndpoint
         public IntPtr pointer;
     }
 
+    [DllImport("ole32.dll")]
+    private static extern int PropVariantClear(ref PropVariant pvar);
+
     [Guid("f8679f50-850a-41cf-9c72-430f290290c8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     private interface IPolicyConfig
     {
@@ -102,10 +105,14 @@ internal static class AudioEndpoint
             if (dev.OpenPropertyStore(STGM_READ, out store) != 0) return "";
             PropertyKey key = FriendlyNameKey;
             PropVariant pv;
-            if (store.GetValue(ref key, out pv) != 0) return "";
-            if (pv.vt == 31 && pv.pointer != IntPtr.Zero) // VT_LPWSTR
-                return Marshal.PtrToStringUni(pv.pointer) ?? "";
-            return "";
+            string name = "";
+            if (store.GetValue(ref key, out pv) == 0)
+            {
+                if (pv.vt == 31 && pv.pointer != IntPtr.Zero) // VT_LPWSTR
+                    name = Marshal.PtrToStringUni(pv.pointer) ?? "";
+                PropVariantClear(ref pv); // sans ca : fuite d'un BSTR par peripherique
+            }
+            return name;
         }
         catch { return ""; }
     }
@@ -156,6 +163,9 @@ internal static class AudioEndpoint
         int hr1 = policy.SetDefaultEndpoint(idConsole, Role.Console);
         int hr2 = policy.SetDefaultEndpoint(idComm, Role.Communications);
         int hr3 = string.IsNullOrEmpty(idMulti) ? 0 : policy.SetDefaultEndpoint(idMulti, Role.Multimedia);
+        // Journaliser chaque role : un echec partiel (console ok, comm ko)
+        // rendait la restauration incomplete sans aucun diagnostic.
+        Console.Error.WriteLine("set console=0x" + hr1.ToString("X8") + " comm=0x" + hr2.ToString("X8") + " multi=0x" + hr3.ToString("X8"));
         if (hr1 != 0 && hr2 != 0 && hr3 != 0)
             throw new Exception("SetDefaultEndpoint a echoue (0x" + hr1.ToString("X8") + ")");
     }
@@ -179,12 +189,20 @@ internal static class AudioEndpoint
     // Restauration immediate depuis un fichier audio-restore.json (utilisee par le
     // mode 'restore' et par 'guard' apres la mort du parent). Retourne 0 si le
     // fichier a ete consomme, 1 sinon.
-    private static int RestoreFromFile(IMMDeviceEnumerator en, string restorePath)
+    private static int RestoreFromFile(IMMDeviceEnumerator en, string restorePath, string expectedOwner = null)
     {
         try
         {
             if (!System.IO.File.Exists(restorePath)) return 0; // rien a faire
             string json = System.IO.File.ReadAllText(restorePath);
+            // Revérifier l'owner sur CETTE lecture : entre le check du guard et
+            // celle-ci, une nouvelle instance a pu reecrire le marqueur — sans
+            // ca on restaurerait (et supprimerait) le fichier d'un autre run.
+            if (expectedOwner != null)
+            {
+                var mOwn = System.Text.RegularExpressions.Regex.Match(json, "\"owner\"\\s*:\\s*(\\d+)");
+                if (!mOwn.Success || mOwn.Groups[1].Value != expectedOwner) return 0;
+            }
             var caps = new System.Collections.Generic.List<KeyValuePair<string, string>>();
             IntPtr pColl;
             if (en.EnumAudioEndpoints(DataFlow.Capture, DEVICE_STATE_ACTIVE, out pColl) != 0 || pColl == IntPtr.Zero) return 1;
@@ -212,7 +230,11 @@ internal static class AudioEndpoint
             try { System.IO.File.Delete(restorePath); } catch {}
             return 0;
         }
-        catch { return 1; }
+        catch (Exception ex)
+        {
+            try { Console.Error.WriteLine("restore: " + ex.Message); } catch {}
+            return 1;
+        }
     }
 
     private static int Guard(IMMDeviceEnumerator en, int pid, string restorePath)
@@ -241,7 +263,7 @@ internal static class AudioEndpoint
             if (mOwner.Success && mOwner.Groups[1].Value != pid.ToString()) return 0;
         }
         catch { return 0; }
-        return RestoreFromFile(en, restorePath);
+        return RestoreFromFile(en, restorePath, pid.ToString());
     }
 
     private static string RegexVal(string json, string key)
@@ -278,6 +300,7 @@ internal static class AudioEndpoint
             if (args[0] == "list") { List(en); return 0; }
             if (args[0] == "get" && args.Length == 2)
             {
+                if (args[1] != "capture" && args[1] != "render") return Usage();
                 DataFlow flow = args[1] == "capture" ? DataFlow.Capture : DataFlow.Render;
                 GetDefault(en, flow);
                 return 0;
@@ -296,6 +319,7 @@ internal static class AudioEndpoint
             }
             if (args[0] == "set" && args.Length >= 3)
             {
+                if (args[1] != "capture" && args[1] != "render") return Usage();
                 DataFlow flow = args[1] == "capture" ? DataFlow.Capture : DataFlow.Render;
                 SetDefault(flow, args[2], args.Length > 3 ? args[3] : args[2], args.Length > 4 ? args[4] : args[2]);
                 return 0;

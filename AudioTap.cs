@@ -148,6 +148,10 @@ internal static class AudioTap
             f.isFloat = subTag == 3;
             if (subTag != 1 && subTag != 3) throw new Exception("format audio non supporte (tag " + subTag + ", bits " + f.bits + ", canaux " + f.channels + ")");
             if (f.bits != 16 && f.bits != 32) throw new Exception("profondeur " + f.bits + " bits non supportee");
+            // channels/rate/blockAlign doivent etre > 0 : blockAlign == channels*x
+            // passe avec channels=0/blockAlign=0 -> DivideByZero ou chan[-1] plus bas.
+            if (f.channels < 1 || f.rate < 1 || f.blockAlign < 1)
+                throw new Exception("format audio invalide (canaux " + f.channels + ", rate " + f.rate + ", blockAlign " + f.blockAlign + ")");
             // blockAlign doit correspondre a channels * bits/8 : sinon les canaux
             // seraient lus decales (padding/24-in-32) -> audio corrompu.
             if (f.blockAlign != f.channels * (f.bits / 8))
@@ -463,6 +467,7 @@ internal static class AudioTap
             }
 
             // 1) aspirer les paquets disponibles
+            int sStreak = 0; // codes S_ consecutifs : borne le spin interne
             while (true)
             {
                 uint packet;
@@ -475,7 +480,8 @@ internal static class AudioTap
                     try { src.Stop(); if (dst != null) dst.Stop(); } catch {}
                     return 2;
                 }
-                if (pkHr != 0) continue; // code S_ : rien a faire ce tour
+                if (pkHr != 0) { if (++sStreak > 500) break; continue; } // code S_ : rien a faire ce tour
+                sStreak = 0;
                 if (packet == 0) break;
                 IntPtr data; uint frames; int flags; ulong pos, qpc;
                 int gbHr = cap.GetBuffer(out data, out frames, out flags, out pos, out qpc);
@@ -485,7 +491,8 @@ internal static class AudioTap
                     try { src.Stop(); if (dst != null) dst.Stop(); } catch {}
                     return 2;
                 }
-                if (gbHr > 0) continue; // code S_ : pas de donnees a consommer ce tour
+                if (gbHr > 0) { if (++sStreak > 500) break; continue; } // code S_ : pas de donnees a consommer ce tour
+                sStreak = 0;
                 if (frames == 0) { cap.ReleaseBuffer(0); continue; }
                 int bytes = (int)(frames * sf.frameBytes);
                 bool silent = (flags & 0x2) != 0;
@@ -517,9 +524,11 @@ internal static class AudioTap
                     statWritten += outBuf.Length;
                     continue;
                 }
-                if (queuedBytes + outBuf.Length > maxQueued)
+                // Depassement : on jette les plus anciens paquets. La boucle
+                // (et non un Dequeue unique) couvre aussi le cas ou un seul
+                // paquet depasse maxQueued — sinon Dequeue sur file vide.
+                while (queue.Count > 0 && queuedBytes + outBuf.Length > maxQueued)
                 {
-                    // depassement : on jette le plus ancien paquet
                     byte[] old = queue.Dequeue();
                     queuedBytes -= old.Length;
                 }
@@ -555,12 +564,13 @@ internal static class AudioTap
                         int takeBytes = takeFrames * df.frameBytes;
                         IntPtr rdata;
                         int rgHr = ren.GetBuffer((uint)takeFrames, out rdata);
-                        if (rgHr != 0)
+                        if (rgHr < 0)
                         {
                             Console.Error.WriteLine("AudioTap: render GetBuffer echoue hr=0x" + rgHr.ToString("X8"));
                             try { src.Stop(); dst.Stop(); } catch {}
                             return 2;
                         }
+                        if (rgHr > 0) break; // code S_ : pas de buffer ce tour (symetrique au cote capture)
                         if (takeBytes == head.Length)
                         {
                             Marshal.Copy(head, 0, rdata, takeBytes);
@@ -577,7 +587,7 @@ internal static class AudioTap
                             queuedBytes -= takeBytes;
                         }
                         ren.ReleaseBuffer((uint)takeFrames, 0);
-                        statWritten += takeFrames;
+                        statWritten += takeBytes; // octets, comme le mode pcm (statWritten += outBuf.Length)
                         spaceBytes -= takeBytes;
                     }
                 }

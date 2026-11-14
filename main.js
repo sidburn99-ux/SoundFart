@@ -7,6 +7,28 @@ const { spawn, execFile, execFileSync } = require('child_process');
 const { promisify } = require('util');
 const crypto = require('crypto');
 const execFileP = promisify(execFile);
+// Processus enfants long-terme (yt-dlp, ffmpeg) : Windows ne tue PAS les
+// enfants a la sortie du parent — on les suit pour les tuer au will-quit,
+// sinon un telechargement continue sans UI ni possibilite d'arret.
+const childProcs = new Set();
+const trackChild = (p) => { childProcs.add(p); p.on('close', () => childProcs.delete(p)); return p; };
+const killTree = (pid) => { try { execFile('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true }, () => {}); } catch {} };
+// execFile avec handle suivi (execFileP/promisify ne donne pas le ChildProcess).
+function execFileTracked(file, args, opts = {}) {
+  return new Promise((resolve, reject) => {
+    const p = trackChild(spawn(file, args, { ...opts, windowsHide: true }));
+    let out = '', err = '', done = false;
+    const timer = opts.timeout ? setTimeout(() => { if (!done) { done = true; try { p.kill(); } catch {} reject(new Error('délai dépassé')); } }, opts.timeout) : null;
+    if (p.stdout) p.stdout.on('data', (d) => { if (out.length < 4 * 1024 * 1024) out += d; });
+    if (p.stderr) p.stderr.on('data', (d) => { if (err.length < 65536) err += d; });
+    p.on('error', (e) => { if (!done) { done = true; if (timer) clearTimeout(timer); reject(e); } });
+    p.on('close', (code) => {
+      if (done) return;
+      done = true; if (timer) clearTimeout(timer);
+      code === 0 ? resolve({ stdout: out, stderr: err }) : reject(new Error('exit ' + code + ' : ' + err.slice(-400).trim()));
+    });
+  });
+}
 const { AUDIO_EXT, VIRTUAL_RE: VIRTUAL_RE_MAIN, parseEndpoints, parseGet, findCableCapture, chooseRestoreIds, safeName, expandPaths: expand } = require('./lib/audio-utils');
 let win = null;
 
@@ -186,8 +208,14 @@ H('config:load', () => {
     return JSON.parse(fs.readFileSync(f, 'utf-8'));
   } catch (e) {
     if (e.code === 'ENOENT') return migrateOldConfig();
-    // horodate : plusieurs configs cassees successives ne s'ecrasent pas
-    try { fs.renameSync(f, `${f}.broken-${new Date().toISOString().replace(/[:.]/g, '-')}`); } catch {}
+    // Ne renommer en .broken-* que si le fichier est vraiment illisible comme
+    // JSON : une erreur transitoire (EACCES, verrou AV/OneDrive) ne doit pas
+    // deplacer une config validee ni la faire ecraser par le prochain save.
+    const parseFail = e instanceof SyntaxError || /trop volumineux/.test(e.message);
+    if (parseFail) {
+      // horodate : plusieurs configs cassees successives ne s'ecrasent pas
+      try { fs.renameSync(f, `${f}.broken-${new Date().toISOString().replace(/[:.]/g, '-')}`); } catch {}
+    }
     // Dernier recours : la sauvegarde .bak (ecrite a chaque config:save) contient
     // la derniere config validee — mieux que de demarrer sur une bibliotheque vide.
     try { return JSON.parse(fs.readFileSync(f + '.bak', 'utf-8')); } catch {}
@@ -256,7 +284,7 @@ H('file:reveal', async (_e, p) => {
 H('shortcuts:apply', (_e, entries) => {
   // Valider TOUT avant unregisterAll : une entree malformee ne doit pas
   // effacer les raccourcis existants.
-  const list = Array.isArray(entries) ? entries : [];
+  const list = Array.isArray(entries) ? entries.slice(0, 5000) : [];
   const valid = [], failed = [];
   const seen = new Set();
   for (const { key, accel } of list) {
@@ -367,9 +395,9 @@ H('media:cut', async (_e, { input, start, end, dir }) => {
   let out = path.join(outDir, base + '.mp3');
   for (let i = 1; fs.existsSync(out); i++) out = path.join(outDir, `${base}-${i}.mp3`);
   // protocol_whitelist file : ffmpeg ne doit pas suivre de playlist/URL externe
-  await execFileP(path.join(fdir, 'ffmpeg.exe'),
+  await execFileTracked(path.join(fdir, 'ffmpeg.exe'),
     ['-y', '-protocol_whitelist', 'file', '-ss', String(Math.max(0, +start || 0)), '-i', String(input), '-t', String(Math.max(0.1, dur)), '-vn', '-c:a', 'libmp3lame', '-q:a', '4', out],
-    { timeout: 600000, windowsHide: true });
+    { timeout: 600000 });
   return out;
 });
 
@@ -425,7 +453,12 @@ function downloadFile(url, dest, onProgress) {
         });
         res.on('error', (e) => { out.destroy(); reject(e); });
         res.pipe(out);
-        out.on('finish', () => out.close(resolve));
+        out.on('finish', () => {
+          // Content-Length incoherent ou reponse tronquee : ne jamais valider
+          // un fichier partiel (le SHA-256 ne protege que les binaires, pas .sums).
+          if (total && got !== total) { out.destroy(); return reject(new Error('téléchargement tronqué (' + got + '/' + total + ' octets)')); }
+          out.close(resolve);
+        });
         out.on('error', reject);
       });
       req.setTimeout(30000, () => req.destroy(new Error('timeout')));
@@ -450,9 +483,13 @@ async function downloadVerified({ url, dest, sumsUrl, match, onProgress }) {
   await downloadFile(url, dest, onProgress || (() => {}));
   try {
     const sumsTmp = dest + '.sums';
-    await downloadFile(sumsUrl, sumsTmp);
-    const sums = fs.readFileSync(sumsTmp, 'utf-8');
-    try { fs.unlinkSync(sumsTmp); } catch {}
+    let sums;
+    try {
+      await downloadFile(sumsUrl, sumsTmp);
+      sums = fs.readFileSync(sumsTmp, 'utf-8');
+    } finally {
+      try { fs.unlinkSync(sumsTmp); } catch {} // .sums partiel : jamais de residu
+    }
     const lines = sums.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
     const pair = lines.map((l) => l.split(/\s+/)).find((p) => p.length === 2 && p[1] === match);
     // gyan.dev publie un hash nu sans nom de fichier (une seule ligne).
@@ -485,7 +522,17 @@ async function ytdlpInstalledVersion() {
   } catch { return null; }
 }
 
-async function installYtDlp(version) {
+// Single-flight : maybeUpdateYtDlp(true) est appele hors de ensureYtDlp —
+// deux telechargements concurrents partageaient le meme yt-dlp.exe.part.
+let installYtDlpPromise = null;
+function installYtDlp(version) {
+  if (!installYtDlpPromise) {
+    installYtDlpPromise = doInstallYtDlp(version).finally(() => { installYtDlpPromise = null; });
+  }
+  return installYtDlpPromise;
+}
+
+async function doInstallYtDlp(version) {
   fs.mkdirSync(toolsDir(), { recursive: true });
   const tmp = ytdlpPath() + '.part';
   try {
@@ -550,7 +597,7 @@ async function ensureYtDlp() {
 
 function runYt(args, onProgress) {
   return new Promise((resolve, reject) => {
-    const p = spawn(ytdlpPath(), args, { windowsHide: true });
+    const p = trackChild(spawn(ytdlpPath(), args, { windowsHide: true }));
     let err = '', done = false;
     // Timeout global : un yt-dlp fige ne doit pas pendre le telechargement
     // indefiniment (le timeout inactivite de downloadVerified ne s'applique pas ici).
@@ -575,8 +622,13 @@ function runYt(args, onProgress) {
   });
 }
 
+// f vaut -1 (reset) ou un pourcentage 0-100 deja pret (yt-dlp, downloadVerified).
+// L'ancienne heuristique « f <= 1 -> fraction » affichait -100 % au reset et
+// transformait 1 % en 100 %.
 const ytProgress = (f) => {
-  if (win && !win.isDestroyed()) win.webContents.send('sf:ytprogress', typeof f === 'number' && f <= 1 ? Math.round(f * 100) : Math.round(f));
+  if (!win || win.isDestroyed()) return;
+  const p = (typeof f === 'number' && f === -1) ? -1 : Math.round(+f || 0);
+  win.webContents.send('sf:ytprogress', p);
 };
 
 H('yt:ensure', async () => { await ensureYtDlp(); ytProgress(-1); return true; });
@@ -599,7 +651,7 @@ H('yt:info', async (_e, url) => {
 
 H('yt:download', async (_e, { url, start, end, dir, full }) => {
   if (!validHttpUrl(url) || !isYoutubeUrl(url)) throw new Error('URL YouTube invalide');
-  if (!full && (!Number.isFinite(+start) || !Number.isFinite(+end) || +end <= +start)) throw new Error('bornes invalides');
+  if (!full && (!Number.isFinite(+start) || +start < 0 || !Number.isFinite(+end) || +end <= +start)) throw new Error('bornes invalides');
   await ensureYtDlp();
   const tryDownload = async () => {
     const impDir = path.join(storageRoot(dir), 'imports');
@@ -618,7 +670,7 @@ H('yt:download', async (_e, { url, start, end, dir, full }) => {
       try {
         await runYt([...baseArgs, '--ffmpeg-location', ffDir, '-f', 'bestaudio', '-x', '--audio-format', 'mp3', '--download-sections', `*${start}-${end}`, url], ytProgress);
         sectioned = true;
-      } catch {}
+      } catch (e) { log('[yt] extrait sectionne impossible, repli sur l\'audio complet : ' + (e && e.message), 'warn'); }
     }
     if (!sectioned) {
       ytProgress(-1);
@@ -1073,8 +1125,9 @@ app.whenReady().then(() => {
     desktopCapturer.getSources({ types: ['screen'] }).then((sources) => {
       log(`[displaymedia] ${sources.length} source(s) ecran`);
       if (sources.length) {
+        // L'app n'utilise que l'audio loopback : jamais de capture video
+        // d'ecran, meme si le renderer la demande (videoRequested).
         const opts = {};
-        if (request.videoRequested) opts.video = sources[0];
         if (request.audioRequested) opts.audio = 'loopback';
         callback(Object.keys(opts).length ? opts : {});
       } else callback({});
@@ -1097,6 +1150,10 @@ process.on('unhandledRejection', (e) => log('[fatal] unhandledRejection: ' + (e 
 app.on('will-quit', () => {
   if (!isPrimary) return; // ne jamais restaurer le micro depuis une 2e instance
   globalShortcut.unregisterAll();
+  // Tue les enfants encore vivants (yt-dlp/ffmpeg) : taskkill /T emporte
+  // l'arbre entier — p.kill() seul laisserait le ffmpeg petit-enfant tourner.
+  for (const p of [...childProcs]) { try { killTree(p.pid); } catch { try { p.kill(); } catch {} } }
+  childProcs.clear();
   try { if (audioTapProc) audioTapProc.kill(); } catch {}
   audioTapProc = null;
   try {

@@ -63,9 +63,12 @@ const defaults = () => ({
 
 function save() {
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => window.sf.saveConfig(cfg), 250);
+  saveTimer = setTimeout(() => window.sf.saveConfig(cfg).catch((e) => logErr('saveConfig', e)), 250);
 }
-window.addEventListener('beforeunload', () => { if (cfg) window.sf.saveConfig(cfg); window.sf.restoreMic(); });
+window.addEventListener('beforeunload', () => {
+  if (cfg) { try { const p = window.sf.saveConfig(cfg); if (p && p.catch) p.catch(() => {}); } catch {} }
+  window.sf.restoreMic();
+});
 
 function normalizeCfg(saved) {
   // JSON.parse cree une propriete '__proto__' propre : Object.assign la
@@ -105,11 +108,25 @@ function normalizeCfg(saved) {
     if (!Number.isFinite(+s.addedAt)) s.addedAt = 0; else s.addedAt = +s.addedAt;
     if (!Number.isFinite(+s.plays)) s.plays = 0; else s.plays = Math.max(0, +s.plays);
     for (const k of ['trimStart', 'trimEnd', 'fadeIn', 'fadeOut']) {
-      if (s[k] != null && !Number.isFinite(+s[k])) s[k] = k === 'trimEnd' ? null : 0;
-      else if (s[k] != null && +s[k] < 0) s[k] = k === 'trimEnd' ? null : 0;
+      if (s[k] == null) continue;
+      const n = +s[k];
+      // coercition : une string "1.5" importee doit devenir nombre — editSound
+      // appelle toFixed dessus et plantait sur les configs tapees a la main.
+      s[k] = (Number.isFinite(n) && n >= 0) ? n : (k === 'trimEnd' ? null : 0);
     }
     if (s.trimEnd != null && Number.isFinite(+s.trimStart) && +s.trimEnd <= +s.trimStart) s.trimEnd = null;
   });
+  // Raccourcis : dedupe insensible a la casse — un import peut creer des
+  // doublons que l'UI bloque mais qui sinon faisaient echouer register().
+  {
+    const seenSc = new Set();
+    const stopSc = (c.settings.stopShortcut || '').toLowerCase();
+    for (const s of c.sounds) {
+      if (!s.shortcut) continue;
+      const a = s.shortcut.toLowerCase();
+      if (seenSc.has(a) || a === stopSc) s.shortcut = null; else seenSc.add(a);
+    }
+  }
   // ids de categories dupliques : garde le premier (catById serait ambigu)
   {
     const seenCat = new Set();
@@ -223,6 +240,12 @@ async function getBuffer(path) {
     const ab = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
   const buf = await decoder.decodeAudioData(ab);
   const bytes = bufBytes(buf);
+  // Buffer decode plus gros que tout le cache : ne pas le retenir (il
+  // evincerait tout pour rien et pourrait lui-meme saturer le renderer).
+  if (bytes > BUF_CACHE_MAX) {
+    toast('Fichier très lourd : joué sans cache pour économiser la mémoire.', 'warn');
+    return buf;
+  }
   // Fichier tres long : un buffer decode tient ~22 Mo/min stereo — on previent une fois.
   if (buf.duration > 600 && !longWarned.has(path)) {
     longWarned.add(path);
@@ -252,6 +275,7 @@ async function makeOutput(deviceId) {
   // Etat 'interrupted' (session Windows coupee sans devicechange) : sans
   // ecoute, les voix restent zombies et le silence est indetectable.
   ctx.addEventListener('statechange', () => {
+    if (ctx.state === 'suspended') { uiLog('sortie audio suspendue (device=' + (deviceId || 'defaut') + ')'); return; }
     if (ctx.state === 'interrupted' || ctx.state === 'closed') {
       uiLog('sortie audio ' + ctx.state + ' (device=' + (deviceId || 'defaut') + ')');
       if (ctx.state === 'interrupted') toast('Sortie audio interrompue — réessaie de jouer un son.', 'warn');
@@ -304,6 +328,7 @@ async function applyAudioInner() {
   // sons, jamais la voix. micMix reste un interrupteur manuel complementaire.
   const micMixOn = s.micMix || s.autoSwitchMic;
   if (micMixOn) {
+    let micPendingStream = null; // getUserMedia reussi mais graphe en echec : a stopper
     try {
       if (!audio.cable) warns.push('Mixage micro : choisis d\'abord une sortie Discord.');
       else if (!VIRTUAL_RE.test(s.cableLabel)) warns.push('Mixage micro désactivé : la sortie Discord n\'est pas un câble virtuel (tu t\'entendrais dans ton casque).');
@@ -317,10 +342,10 @@ async function applyAudioInner() {
         }
         // Traitement vocal sur la voix uniquement (echo cancellation, bruit, gain) —
         // les sons joues via Web Audio ne sont pas concernes.
-        const stream = await navigator.mediaDevices.getUserMedia({
+        micPendingStream = await navigator.mediaDevices.getUserMedia({
           audio: { deviceId: micDev ? { exact: micDev } : undefined, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
         });
-        audio.micStream = stream;
+        const stream = micPendingStream;
         // Micro perdu sans devicechange (debranchement, BT qui coupe) : le
         // track meurt -> Discord n'entend plus la voix, sans aucun signal.
         stream.getTracks().forEach((t) => {
@@ -329,10 +354,15 @@ async function applyAudioInner() {
         });
         const src = audio.cable.ctx.createMediaStreamSource(stream);
         src.connect(audio.cable.lim);
+        audio.micStream = stream; // apres connect : un echec ne laisse pas de piste orpheline
+        micPendingStream = null;
       }
     } catch (e) {
-      warns.push('Micro inaccessible : ' + e.message);
-    }
+        // Si le graphe a jete apres getUserMedia, stopper le stream tout de
+        // suite : sinon le micro reste allume (LED) sans etre connecte.
+        try { if (micPendingStream) micPendingStream.getTracks().forEach((t) => t.stop()); } catch {}
+        warns.push('Micro inaccessible : ' + e.message);
+      }
   }
   updateRoutes();
   if (warns.length) toast(warns.join('\n'), 'warn');
@@ -424,6 +454,7 @@ function setPlaying(id, delta) {
 }
 
 function endVoice(v) {
+  if (v.killTimer) { clearTimeout(v.killTimer); v.killTimer = null; }
   if (voices.delete(v)) setPlaying(v.soundId, -1);
 }
 
@@ -479,6 +510,16 @@ function play(sound, opts = {}) {
       voices.delete(voice);
       throw e;
     }
+    // Watchdog voix : si le AudioContext est suspendu (veille, session coupee)
+    // sans evenement exploitable, currentTime ne avance plus et onended ne
+    // tire jamais -> la voix resterait zombie (carte playing figee). On force
+    // l'arret apres duree + marge.
+    voice.killTimer = setTimeout(() => {
+      if (!voices.has(voice)) return;
+      for (const n of voice.nodes) { try { n.src.stop(); } catch {} try { n.g.disconnect(); } catch {} }
+      endVoice(voice);
+      toast('Lecture interrompue : la sortie audio était suspendue.', 'warn');
+    }, (dur + 15) * 1000);
     setPlaying(sound.id, +1);
     if (missing.delete(sound.id)) renderGrid();
     if (!opts.preview) { sound.plays = (sound.plays || 0) + 1; save(); }
@@ -1075,8 +1116,12 @@ function settingsModal() {
       if (e.key === 'Escape') { disarm(); return; }
       const acc = buildAccel(e);
       if (!acc) { stopHint.textContent = 'Ajoute un modifieur (Ctrl, Alt, Maj) ou utilise une touche F.'; return; }
-      const owner = cfg.sounds.find((x) => (x.shortcut || '').toLowerCase() === acc.toLowerCase());
-      if (owner) { stopHint.textContent = 'Ce raccourci est déjà attribué à « ' + owner.name + ' ».'; return; }
+      // Meme source de verite que les raccourcis de sons : couvre les sons,
+      // le STOP existant ET les accesseurs du menu (Ctrl+F/O, F12).
+      if (acc.toLowerCase() !== (stopSc || '').toLowerCase()) {
+        const owner = findShortcutOwner(acc);
+        if (owner) { stopHint.textContent = 'Ce raccourci est déjà attribué à ' + owner + '.'; return; }
+      }
       stopSc = acc;
       stopBtn.textContent = fmtAccel(acc);
       stopHint.textContent = '';
@@ -1361,8 +1406,17 @@ async function recorderModal() {
   }) : null;
 
   // « default » exclu : apres la bascule micro auto, il pointerait sur CABLE Output (on enregistrerait la soundboard, pas le micro)
-  const devs = (await navigator.mediaDevices.enumerateDevices())
-    .filter((d) => d.kind === 'audioinput' && d.deviceId !== 'communications' && d.deviceId !== 'default');
+  // Si enumerateDevices jette, les handlers IPC enregistres plus haut fuiraient
+  // pour toute la session : on les desabonne avant de propager.
+  let devs;
+  try {
+    devs = (await navigator.mediaDevices.enumerateDevices())
+      .filter((d) => d.kind === 'audioinput' && d.deviceId !== 'communications' && d.deviceId !== 'default');
+  } catch (e) {
+    if (offTapDead) offTapDead();
+    if (offTapPcm) offTapPcm();
+    throw e;
+  }
   const micSel = el('select', {}, devs.map((d) => {
     const o = el('option', { value: d.deviceId, text: (VIRTUAL_RE.test(d.label || '') ? '⚠ ' : '') + (d.label || d.deviceId), selected: d.deviceId === cfg.settings.micId });
     o.dataset.label = d.label || d.deviceId;
@@ -1392,6 +1446,7 @@ async function recorderModal() {
     stopLoose();
     killTapNode();
     window.sf.audioTapStop().catch(() => {});
+    if (actx) { actx.close().catch(() => {}); actx = null; }
   };
 
   const cleanup = () => {
@@ -1546,12 +1601,19 @@ async function recorderModal() {
       chunks = [];
       rec = new MediaRecorder(dest.stream, mime ? { mimeType: mime } : undefined);
       rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+      // MediaRecorder peut errerurer sans jamais tirer onstop : sans ce filet,
+      // micro/tap/contexte resteraient allumes et l'enregistrement serait perdu.
+      rec.onerror = () => {
+        window.sf.uiLog('recorder onerror state=' + (rec ? rec.state : '?'));
+        try { if (rec && rec.state !== 'inactive') rec.stop(); } catch {}
+      };
       rec.onstop = async () => {
         if (recTimer) { clearInterval(recTimer); recTimer = null; }
         const recMime = rec ? rec.mimeType : '';
         try {
           const blob = new Blob(chunks, { type: recMime || mime || 'audio/webm' });
           const ab = await blob.arrayBuffer();
+          chunks = []; // liberer les Blob sources : des centaines de Mo sinon
           const fname = nameIn.value.trim() || 'enregistrement';
           const destDir = await askDestDir();
           if (destDir === null) {
@@ -1563,8 +1625,27 @@ async function recorderModal() {
             categoryId: null, favorite: false, norm: 1, shortcut: null,
             trimStart: 0, trimEnd: null, fadeIn: 0, fadeOut: 0,
           };
-          status.textContent = 'Enregistrement prêt (' + fmtTime((Date.now() - recStart) / 1000) + ') : ' + path;
-          previewBtn.disabled = false;
+          // askDestDir a remplace la modale enregistreur (slot unique) : sans
+          // modale de resultat, recordedSound mourait dans une closure et le
+          // fichier restait orphelin dans recordings/ — plus jamais ajoutable.
+          modal('Enregistrement terminé', [
+            el('div', { class: 'hint', text: 'Durée ' + fmtTime((Date.now() - recStart) / 1000) + ' — ' + path }),
+            field('Nom', nameIn),
+            field('Catégorie', catSel),
+          ], [
+            { label: 'Fermer', onclick: (c) => c() },
+            { label: 'Ajouter à la bibliothèque', kind: 'primary', onclick: (c) => {
+              if (!recordedSound) return;
+              recordedSound.name = nameIn.value.trim() || recordedSound.name;
+              recordedSound.categoryId = catSel.value || null;
+              const added = recordedSound;
+              recordedSound = null;
+              cfg.sounds.push(added);
+              save(); renderAll(); c();
+              toast('Son ajouté à la bibliothèque.');
+              setTimeout(() => editSound(added), 60);
+            } },
+          ]);
           }
         } catch (e) {
           status.textContent = 'Sauvegarde impossible : ' + e.message;
@@ -1676,6 +1757,7 @@ function youtubeModal() {
     busy = true;
     infoBox.textContent = 'Vérification de l\'outil de téléchargement…';
     try {
+      if (offProg) offProg(); // un seul ecouteur ytprogress a la fois
       offProg = window.sf.onYtProgress(setProg);
       await window.sf.ytEnsure();
       infoBox.textContent = 'Lecture des infos de la vidéo…';
@@ -1715,6 +1797,33 @@ function youtubeModal() {
       offProg = offProg || window.sf.onYtProgress(setProg);
       const r = await window.sf.ytDownload({ url: urlIn.value.trim(), start: hasTimeline ? start : 0, end: hasTimeline ? end : 0, dir: dest || cfg.settings.storageDir || '', full: !hasTimeline });
       dl = { path: r.path, sectioned: r.sectioned, start: hasTimeline ? start : 0, end: hasTimeline ? end : null };
+      // askDestDir a detruit la modale YouTube : sans modale de resultat, le
+      // fichier reste orphelin dans imports/ et « Ajouter » est inaccessible.
+      modal('Téléchargement terminé', [
+        el('div', { class: 'hint', text: (r.sectioned ? 'Extrait MP3' : 'Audio complet') + ' — ' + r.path }),
+        field('Nom', nameIn),
+        field('Catégorie', catSel),
+      ], [
+        { label: 'Fermer', onclick: (c) => c() },
+        { label: 'Ajouter à la bibliothèque', kind: 'primary', onclick: (c) => {
+          if (!dl) return;
+          const s = {
+            id: uid(),
+            name: nameIn.value.trim() || (info && info.title) || 'YouTube',
+            path: dl.path,
+            categoryId: catSel.value || null,
+            volume: 100, addedAt: Date.now(), plays: 0,
+            favorite: false, norm: 1, shortcut: null,
+            trimStart: dl.sectioned ? 0 : dl.start,
+            trimEnd: dl.sectioned ? null : dl.end,
+            fadeIn: 0, fadeOut: 0,
+          };
+          dl = null;
+          cfg.sounds.push(s);
+          save(); renderAll(); c();
+          toast('Son YouTube ajouté : ' + s.path);
+        } },
+      ]);
       prog.textContent = r.sectioned
         ? 'Extrait MP3 prêt (' + fmtTime(end - start) + ').'
         : hasTimeline
