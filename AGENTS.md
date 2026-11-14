@@ -4,7 +4,8 @@
 
 ## Never
 
-- Ne jamais modifier les originaux audio ; ne jamais écrire hors `SoundFart-data` sans accord.
+- Ne jamais modifier les originaux audio (bibliothèque, fichiers importés, enregistrements) ni les données utilisateur (`SoundFart-data`, config, `tools\`).
+- Les fichiers sources du projet (code, docs, scripts) se modifient normalement ; « hors SoundFart-data » ne concerne que les données utilisateur.
 - Ne jamais contourner `contextIsolation`, `nodeIntegration: false` ou `sandbox: true`.
 - Ne jamais embarquer ni installer VB-CABLE (licence) — `cable:openPage` ouvre uniquement `https://vb-audio.com/Cable/` après clic.
 - Ne jamais committer de secrets ni données personnelles.
@@ -14,8 +15,8 @@
 
 ## Always / Ask first
 
-- **Always** : `node --check` sur chaque JS modifié ; `npm test` ; `npm run dist` après changement fonctionnel ; `git push` après chaque commit ; statuts honnêtes dans `suivi.tsv`.
-- **Ask first** : nouvelle dépendance, refonte d'un module, changement de comportement audio, force-push ou réécriture d'historique.
+- **Always** : `node --check` sur chaque JS modifié ; `npm test` ; `npm run dist` après changement fonctionnel ; statuts honnêtes dans `suivi.tsv`.
+- **Ask first** : nouvelle dépendance, refonte d'un module, changement de comportement audio, push sur `main`, force-push ou réécriture d'historique.
 
 ## Architecture (contraignante)
 
@@ -64,8 +65,8 @@ node --check <f>  # syntaxe JS
 ## Git
 
 - `C:\Program Files\Git\cmd\git.exe`. Remote : `git@github.com:sidburn99-ux/SoundFart.git` — **SSH uniquement** (`~/.ssh/id_ed25519`).
+- Commits locaux sur la branche de travail ; `git push` quand le lot est cohérent et vérifié — jamais de push direct sur `main` sans autorisation (PR via `gh pr create` pour docs et changements multi-fichiers ; correctif ciblé : demander avant de pousser sur `main`).
 - Un commit par changement cohérent, message en français axé « pourquoi » + trailer Devin. Vérifier le diff avant ; jamais de secrets, temporaires ou changements étrangers.
-- Docs ou changement multi-fichiers → branche dédiée + PR (`gh pr create`) ; correctif ciblé → commit direct sur `main`.
 
 ## Travail
 
@@ -106,5 +107,5 @@ node --check <f>  # syntaxe JS
 - [ ] `npm run dist` OK si changement fonctionnel
 - [ ] Tests réels effectués ou explicitement marqués « NON testé »
 - [ ] `suivi.tsv` + `suivi.html` à jour, docs impactées corrigées
-- [ ] Commit + `git push` (SSH) effectués
+- [ ] Commit + `git push` de la branche de travail (SSH) effectués
 - [ ] Rapport : fichiers, tests, restes, commits
