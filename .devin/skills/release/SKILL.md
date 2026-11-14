@@ -2,11 +2,11 @@
 name: release
 description: Procédure de livraison SoundFart — vérifications, build, suivi, commit, push, rapport. À invoquer pour finaliser un changement ou préparer une release.
 allowed-tools:
-  - exec
   - read
   - grep
+  - glob
+  - exec
   - edit
-  - write
 ---
 
 Exécuter la Definition of Done de `AGENTS.md` dans l'ordre :
