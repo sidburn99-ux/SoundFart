@@ -5,25 +5,27 @@ SoundFart est une soundboard pour Discord : elle joue tes sons dans un **micro v
 ## 1. Installer SoundFart
 
 ### Version .exe (recommandé)
-1. Lance `dist\SoundFart.exe` (fichier portable, aucun install).
-2. La première fois, la fenêtre « Réglages audio » s'ouvre automatiquement.
+1. Télécharge `SoundFart.exe` et lance-le (fichier portable, **aucun install**, aucune désinstallation).
+2. **Important** : toutes les données (config, sons importés, enregistrements, outils, logs) sont rangées dans le dossier **`SoundFart-data` à côté de l'exe** — si tu déplaces l'exe, déplace aussi ce dossier pour garder ta bibliothèque.
+3. Au premier lancement sans VB-CABLE, un écran « VB-CABLE requis » s'affiche (voir section 2).
 
 ### Depuis les sources
 1. Installe **Node.js** (version LTS) : https://nodejs.org
 2. Double-clique sur `run-dev.bat` pour tester, ou `build.bat` pour reconstruire `dist\SoundFart.exe`.
 
-Ta configuration est sauvegardée dans `%APPDATA%\SoundFart\config.json`. Les fichiers audio ne sont **jamais copiés ni modifiés** : SoundFart ne garde que leurs chemins d'accès.
+Ta configuration est sauvegardée dans `SoundFart-data\config.json` (à côté de l'exe ; `%APPDATA%\SoundFart\` en repli). Les fichiers audio ne sont **jamais copiés ni modifiés** : SoundFart ne garde que leurs chemins d'accès.
 
 ## 2. Installer le câble virtuel (VB-CABLE)
 
-Pour que Discord entende les sons, il faut un périphérique audio virtuel qui fait le lien entre SoundFart et Discord.
+Pour que Discord entende les sons, il faut un périphérique audio virtuel qui fait le lien entre SoundFart et Discord. **SoundFart ne l'embarque ni ne l'installe** (licence VB-Audio) : tu l'installes toi-même, une seule fois.
 
-1. Télécharge **VB-CABLE** (gratuit) : https://vb-audio.com/Cable/
-2. Dézippe et lance `VBCABLE_Setup_x64.exe` (ou `.exe` fourni), clique sur **Install**.
-3. Redémarre le PC si demandé.
-4. Dans Windows, tu verras apparaître **« CABLE Input »** (sortie) et **« CABLE Output »** (entrée).
+1. Lance SoundFart : si VB-CABLE manque, un écran « VB-CABLE requis » s'affiche avec un **gros bouton de téléchargement** (ou va directement sur https://vb-audio.com/Cable/ — affiché en clair dans l'écran et les réglages).
+2. Dézippe l'archive, **clic droit sur `VBCABLE_Setup_x64.exe` → « Exécuter en tant qu'administrateur »**, clique sur **Install**.
+3. **Redémarre Windows** : les périphériques n'apparaissent qu'après le reboot.
+4. De retour dans SoundFart, clique **« J'ai installé, vérifier »** (ou le bouton **Vérifier** des réglages) : l'écran se ferme tout seul dès que le câble est détecté, sans relancer l'app.
+5. Dans Windows, tu verras apparaître **« CABLE Input »** (sortie) et **« CABLE Output »** (entrée).
 
-> Sans VB-CABLE (ou équivalent : Voicemeeter, Virtual Audio Cable…), les sons ne peuvent pas arriver dans Discord. SoundFart le signale dans les réglages.
+> Sans VB-CABLE, SoundFart reste utilisable (sons, éditeur, préécoute, enregistreur) mais **la diffusion vers Discord et la bascule micro automatique sont désactivées** — un bandeau permanent le rappelle. Tu peux aussi utiliser un équivalent (Voicemeeter…) en choisissant sa sortie dans les réglages.
 
 ## 3. Configurer SoundFart
 
@@ -35,7 +37,7 @@ Ouvre **⚙ Réglages audio** (barre latérale) :
 | **Écoute locale** | Ton casque/enceintes — tu entends les sons sans que ta voix soit captée. |
 | **Mon micro** | Ton vrai micro (casque, webcam…). |
 | **Mixer mon micro** | ✅ si tu veux que tes potes entendent **ta voix + les sons** sur le même micro Discord. ❌ si tu préfères gérer ta voix autrement (ex. « Écouter ce périphérique » de Discord). |
-| **Bascule micro automatique** | ✅ (recommandé) : à l'ouverture, l'entrée micro Windows passe sur **CABLE Output** ; à la fermeture, ton micro (ex. G930) est restauré automatiquement. |
+| **Bascule micro automatique** | ✅ (recommandé) : à l'ouverture, l'entrée micro Windows passe sur **CABLE Output** ; à la fermeture, ton micro (ex. G930) est restauré automatiquement. Un **garde externe** restaure même après un crash ou kill du processus. Le bouton **« Restaurer mon micro Windows »** (section « Récupération micro ») force le retour en cas de blocage. |
 | **Dossier de stockage** | Où SoundFart range les fichiers qu'il crée (imports YouTube, enregistrements, extraits MP3). |
 
 Clique **Appliquer**. Le bandeau en bas de fenêtre affiche les routes actives (`Discord : … · Casque : …`).
@@ -71,7 +73,7 @@ Clique **Appliquer**. Le bandeau en bas de fenêtre affiche les routes actives (
 | « Fichier introuvable » sur une carte | Le fichier a été déplacé/supprimé | Clique le badge ou clic droit → « Retrouver le fichier… » |
 | Fenêtre noire au démarrage | Fichiers `src/` manquants à côté de `main.js` | Vérifie que `index.html`, `style.css`, `app.js` sont dans `src/` |
 | « Micro inaccessible » | Permission Windows refusée | Paramètres Windows → Confidentialité → Micro |
-| Erreurs techniques | — | `%APPDATA%\SoundFart\soundfart.log` + F12 pour la console |
+| Erreurs techniques | — | `SoundFart-data\soundfart.log` + F12 pour la console |
 
 ## 7. Note légale YouTube
 

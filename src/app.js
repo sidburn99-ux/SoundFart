@@ -279,6 +279,58 @@ function resolveDevices() {
   pick('micId', 'micLabel', audio.devices.inp, null, 'default');
 }
 
+// ---------- VB-CABLE : ecran d'accueil + bandeau ----------
+// VB-CABLE n'est ni embarque ni installe par SoundFart (licence VB-Audio) :
+// l'utilisateur l'installe depuis vb-audio.com/Cable. On detecte les
+// peripheriques « CABLE Input/Output » via enumerateDevices/devicechange.
+const cablePresent = () => audio.devices.out.some((d) => /cable/i.test(d.label));
+let cableScreenEl = null;
+
+function cableScreen() {
+  if (cableScreenEl) return cableScreenEl;
+  const verify = el('button', { class: 'ghost', text: 'J\'ai installé, vérifier', onclick: async (e) => {
+    e.target.disabled = true;
+    await refreshDevices(false); resolveDevices(); updateCableUi(); await applyAudio();
+    e.target.disabled = false;
+    if (cablePresent()) {
+      window.sf.audioAutoSetup({ enabled: cfg.settings.autoSwitchMic, cableLabel: cfg.settings.cableLabel }).then((r) => {
+        if (r && r.changed) toast('Entrée micro basculée sur ' + r.device + ' (restaurée à la fermeture).');
+      });
+    } else {
+      toast('Toujours absent — si tu viens d\'installer VB-CABLE, redémarre Windows : les périphériques n\'apparaissent qu\'après.', 'warn');
+    }
+  } });
+  cableScreenEl = el('div', { class: 'cable-screen', id: 'cable-screen' },
+    el('div', { class: 'cable-card' },
+      el('h2', { text: 'VB-CABLE requis' }),
+      el('p', { text: 'SoundFart envoie le son dans un câble audio virtuel : c\'est lui qui permet à Discord de recevoir tes sons comme s\'ils venaient de ton micro. Sans lui, la diffusion vers Discord est désactivée.' }),
+      el('button', { class: 'primary big', text: 'Télécharger VB-CABLE (page officielle)', onclick: () => window.sf.cableDownload() }),
+      el('div', { class: 'hint center', text: 'vb-audio.com/Cable' }),
+      el('ol', { class: 'cable-steps' },
+        el('li', { text: 'Dézippe l\'archive téléchargée.' }),
+        el('li', { text: 'Clic droit sur VBCABLE_Setup_x64.exe → « Exécuter en tant qu\'administrateur ».' }),
+        el('li', { text: 'Clique « Install », puis redémarre Windows.' })),
+      el('div', { class: 'row center' }, verify,
+        el('button', { class: 'ghost', text: 'Plus tard', onclick: () => { cableScreenEl.remove(); cableScreenEl = null; } })),
+      el('p', { class: 'hint', text: 'VB-CABLE est gratuit — si tu l\'utilises, pense à soutenir VB-Audio sur sa page.' })));
+  document.body.append(cableScreenEl);
+  window.sf.uiLog && window.sf.uiLog('ecran VB-CABLE requis affiche');
+  return cableScreenEl;
+}
+
+function updateCableUi() {
+  const present = cablePresent();
+  const banner = $('#cable-banner');
+  if (banner) banner.hidden = present;
+  if (present && cableScreenEl) { cableScreenEl.remove(); cableScreenEl = null; }
+  return present;
+}
+
+function showCableScreen() {
+  if (!cablePresent()) cableScreen();
+  updateCableUi();
+}
+
 function setPlaying(id, delta) {
   const n = (playingCount.get(id) || 0) + delta;
   if (n <= 0) playingCount.delete(id); else playingCount.set(id, n);
@@ -856,7 +908,6 @@ function settingsModal() {
   const monSel = el('select', {}, opts(audio.devices.out, s.monId, true));
   const micSel = el('select', {}, opts(audio.devices.inp, s.micId, false));
   const mix = el('input', { type: 'checkbox', checked: s.micMix });
-  const hasCable = audio.devices.out.some((d) => VIRTUAL_RE.test(d.label));
   const lbl = (sel) => (sel.value ? sel.selectedOptions[0].textContent : '');
 
   // raccourci global STOP
@@ -903,26 +954,19 @@ function settingsModal() {
   const exportBtn = el('button', { text: 'Exporter la configuration', onclick: exportConfig });
   const importBtn = el('button', { text: 'Importer une configuration', onclick: () => importConfig(closeSettings) });
 
-  const cableDlBtn = el('button', { class: 'ghost', text: 'Télécharger VB-CABLE', onclick: () => window.sf.openExternal('https://vb-audio.com/Cable/') });
-  const cableCheckBtn = el('button', { class: 'ghost', text: 'Revérifier', onclick: async () => {
-    cableCheckBtn.disabled = true; cableCheckBtn.textContent = 'Vérification…';
-    try {
-      const st = await window.sf.cableEnsure();
-      const msgs = {
-        ready: 'VB-CABLE détecté — périphériques prêts.',
-        'needs-reboot': 'Pilote VB-CABLE installé mais inactif : redémarre Windows.',
-        missing: 'VB-CABLE absent : installe-le depuis vb-audio.com/Cable puis revérifie.',
-        error: 'Vérification impossible : ' + (st && st.err || 'erreur inconnue'),
-      };
-      toast(msgs[st && st.state] || msgs.error, st && st.state === 'ready' ? '' : 'warn');
-      if (st && st.state === 'ready') { await refreshDevices(false); resolveDevices(); await applyAudio(); }
-    } finally { cableCheckBtn.disabled = false; cableCheckBtn.textContent = 'Revérifier'; }
+  const cableVerifyBtn = el('button', { class: 'ghost', text: 'Vérifier', onclick: async () => {
+    cableVerifyBtn.disabled = true; cableVerifyBtn.textContent = 'Vérification…';
+    await refreshDevices(false); resolveDevices(); updateCableUi(); await applyAudio();
+    cableVerifyBtn.disabled = false; cableVerifyBtn.textContent = 'Vérifier';
+    if (!cablePresent()) toast('VB-CABLE toujours absent — si tu viens de l\'installer, redémarre Windows.', 'warn');
+    else toast('VB-CABLE détecté — périphériques prêts.');
   } });
+  const cableInstallBtn = el('button', { class: 'ghost', text: 'Installer VB-CABLE…', onclick: () => showCableScreen() });
 
   const closeSettings = modal('Réglages audio', [
-    field('Sortie vers Discord (micro virtuel)', el('div', { class: 'row' }, cableSel, cableCheckBtn, cableDlBtn),
-      hasCable ? 'Choisis « CABLE Input ». Dans Discord, mets « CABLE Output » comme micro.'
-        : 'Aucun câble virtuel détecté : VB-CABLE est un pilote gratuit de VB-Audio, à installer toi-même (lien ci-dessus), puis redémarre le PC.'),
+    field('Sortie vers Discord (micro virtuel)', el('div', { class: 'row' }, cableSel, cableVerifyBtn, cableInstallBtn),
+      cablePresent() ? 'Choisis « CABLE Input ». Dans Discord, mets « CABLE Output » comme micro.'
+        : 'Aucun câble virtuel détecté : la diffusion vers Discord est désactivée. VB-CABLE est un pilote gratuit de VB-Audio, à installer toi-même (vb-audio.com/Cable), puis redémarre le PC.'),
     field('Écoute locale (ton casque)', monSel, 'Tu entends les sons dans ton casque, jamais ta propre voix.'),
     field('Mon micro', micSel),
     el('label', { class: 'check' }, mix,
@@ -957,7 +1001,7 @@ function settingsModal() {
       save(); c();
       if (await applyAudio()) toast('Réglages audio appliqués.');
       applyShortcuts();
-      window.sf.audioAutoSetup({ enabled: s.autoSwitchMic, cableLabel: s.cableLabel }).then((r) => {
+      if (cablePresent()) window.sf.audioAutoSetup({ enabled: s.autoSwitchMic, cableLabel: s.cableLabel }).then((r) => {
         if (r && r.changed) toast('Entrée micro basculée sur ' + r.device + ' (restaurée à la fermeture).');
         else if (r && !r.ok) toast('Bascule micro auto impossible : ' + r.err, 'warn');
       });
@@ -1571,6 +1615,7 @@ async function init() {
   document.addEventListener('click', () => $('#ctxmenu').classList.remove('on'));
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') $('#ctxmenu').classList.remove('on'); });
   window.addEventListener('focus', checkMissing);
+  $('#cableBannerBtn').addEventListener('click', () => showCableScreen());
   // devicechange peut spammer (casque, bluetooth...) : debounce puis re-resolution des peripheriques
   let devTimer = null;
   navigator.mediaDevices.addEventListener('devicechange', () => {
@@ -1578,10 +1623,19 @@ async function init() {
     devTimer = setTimeout(async () => {
       const s = cfg.settings;
       const prev = { cable: s.cableId, mon: s.monId, mic: s.micId };
+      const hadCable = cablePresent();
       await refreshDevices(false);
       resolveDevices();
+      updateCableUi();
       // ne reconstruit les sorties que si un peripherique configure a disparu
       if (s.cableId !== prev.cable || s.monId !== prev.mon || s.micId !== prev.mic) await applyAudio();
+      // Cable branche/installé a chaud : diffusion + bascule micro sans relancer l'app
+      if (!hadCable && cablePresent()) {
+        await applyAudio();
+        window.sf.audioAutoSetup({ enabled: s.autoSwitchMic, cableLabel: s.cableLabel }).then((r) => {
+          if (r && r.changed) toast('Entrée micro basculée sur ' + r.device + ' (restaurée à la fermeture).');
+        });
+      }
     }, 500);
   });
 
@@ -1623,22 +1677,11 @@ async function init() {
   checkMissing();
   const ok = await applyAudio();
   applyShortcuts();
-  window.sf.audioAutoSetup({ enabled: cfg.settings.autoSwitchMic, cableLabel: cfg.settings.cableLabel }).then((r) => {
+  updateCableUi();
+  showCableScreen();
+  if (cablePresent()) window.sf.audioAutoSetup({ enabled: cfg.settings.autoSwitchMic, cableLabel: cfg.settings.cableLabel }).then((r) => {
     if (r && r.changed) toast('Entrée micro basculée sur ' + r.device + ' (restaurée à la fermeture).');
     else if (r && !r.ok) console.warn('bascule micro auto :', r.err);
-  });
-  window.sf.onCableState && window.sf.onCableState((state) => {
-    if (state === 'missing') toast('VB-CABLE non détecté — installe-le depuis vb-audio.com/Cable, puis revérifie dans les réglages.', 'warn');
-    else if (state === 'needs-reboot') toast('VB-CABLE installé — redémarre Windows pour activer le périphérique audio.', 'warn');
-  });
-  window.sf.onCableReady(() => {
-    toast('Composant audio virtuel installé — périphériques rechargés.');
-    refreshDevices(false).then(async () => {
-      resolveDevices();
-      await applyAudio();
-      window.sf.audioAutoSetup({ enabled: cfg.settings.autoSwitchMic, cableLabel: cfg.settings.cableLabel })
-        .then((r) => { if (r && r.changed) toast('Entrée micro basculée sur ' + r.device); });
-    });
   });
   window.sf.onMicWatchOff && window.sf.onMicWatchOff(() => {
     toast('Entrée micro modifiée pendant la session — surveillance auto suspendue (réglages → surveillance micro).', 'warn');

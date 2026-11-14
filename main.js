@@ -725,20 +725,10 @@ H('audio:autoSetup', async (_e, { enabled, cableLabel }) => {
     let eps = parseEndpoints(audioExec(tool, ['list']));
     let target = findCableCapture(eps, cableLabel);
     if (!target) {
-      const cs = await ensureCableDriver();
-      if (cs.state === 'ready') {
-        eps = parseEndpoints(audioExec(tool, ['list']));
-        target = findCableCapture(eps, cableLabel);
-      }
-      if (!target) {
-        const msgs = {
-          'needs-reboot': 'VB-CABLE installé — redémarre Windows pour activer le périphérique',
-          'missing': 'VB-CABLE absent — installe-le depuis https://vb-audio.com/Cable/ puis revérifie',
-          'error': cs.err || 'vérification du câble impossible',
-        };
-        restoreMicNow(tool);
-        return { ok: false, err: msgs[cs.state] || 'périphérique « CABLE Output » introuvable' };
-      }
+      // Sans endpoint cable (VB-CABLE absent) : pas de bascule, on restaure
+      // un eventuel etat precedent et on explique.
+      restoreMicNow(tool);
+      return { ok: false, err: 'périphérique « CABLE Output » introuvable — installe VB-CABLE (vb-audio.com/Cable)' };
     }
     let cur = parseGet(audioExec(tool, ['get', 'capture']));
     if (cur.console === target.id && cur.comm === target.id && cur.multi === target.id) {
@@ -788,13 +778,9 @@ ipcMain.on('audio:restore', () => {
   } catch {}
 });
 
-// Ouvre une URL externe — restreint a https + vb-audio.com (lien officiel VB-CABLE).
-H('shell:openExternal', (_e, url) => {
-  try {
-    const u = new URL(String(url));
-    if (u.protocol === 'https:' && /(^|\.)vb-audio\.com$/i.test(u.hostname)) shell.openExternal(u.href);
-  } catch {}
-});
+// VB-CABLE : ouvre la page officielle de telechargement. L'URL est FIXE ici,
+// jamais fournie par le renderer — pas d'openExternal generique.
+H('cable:openPage', () => { shell.openExternal('https://vb-audio.com/Cable/'); });
 
 // ---------- AudioTap : loopback systeme -> CABLE Input (enregistreur « audio du PC ») ----------
 // Contourne l'impossibilite de capturer la sortie systeme via Chromium (getDisplayMedia/loopback
@@ -865,52 +851,11 @@ H('audio:tapStop', () => {
   return { ok: true };
 });
 
-// ---------- VB-CABLE : verification uniquement ----------
-// VB-CABLE n'est NI embarque NI installe par SoundFart (licence : redistribution
-// interdite sans accord de l'auteur). L'utilisateur l'installe lui-meme depuis
-// https://vb-audio.com/Cable/ — l'app verifie et explique, point.
-let cableCheckPromise = null;
-
-function hasVirtualCable(endpoints) {
-  // Specifiquement VB-CABLE (« CABLE » dans le nom) — pas n'importe quel device virtuel
-  // (Voicemeeter, Sonic Studio…) sinon la detection serait faussee.
-  return endpoints.some((e) => e.flow === 'render' && /cable/i.test(e.name) && VIRTUAL_RE_MAIN.test(e.name));
-}
-
-// Detection unifiee avec l'installateur : peripherique PnP present + Status OK.
-// Les endpoints audio peuvent ne apparaitre qu'apres reboot ; le PnP est la
-// source de verite « pilote installe ».
-async function cablePnpOk() {
-  try {
-    const { stdout } = await execFileP('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
-      "if (Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object { $_.FriendlyName -match 'VB-Audio Virtual Cable' -and $_.Status -eq 'OK' }) { 'OK' } else { 'KO' }"],
-      { timeout: 20000 });
-    return /OK/.test(stdout);
-  } catch { return false; }
-}
-
-// Retourne { state: 'ready' | 'needs-reboot' | 'missing' | 'error', err? }.
-// 'ready' = endpoints audio presents ; 'needs-reboot' = pilote PnP OK mais pas
-// d'endpoint (reboot requis) ; 'missing' = rien installe.
-async function ensureCableDriver() {
-  if (cableCheckPromise) return cableCheckPromise;
-  cableCheckPromise = (async () => {
-    try {
-      const tool = await ensureAudioTool();
-      if (!tool) return { state: 'error', err: lastToolErr || 'composant audio natif indisponible' };
-      const eps = parseEndpoints(audioExec(tool, ['list']));
-      if (hasVirtualCable(eps)) return { state: 'ready' };
-      if (await cablePnpOk()) return { state: 'needs-reboot' };
-      return { state: 'missing' };
-    } catch (e) {
-      log('[cable] verification: ' + e.message);
-      return { state: 'error', err: e.message };
-    } finally {
-      cableCheckPromise = null;
-    }
-  })();
-  return cableCheckPromise;
-}
+// ---------- VB-CABLE : detection des endpoints uniquement ----------
+// VB-CABLE n'est NI embarque NI installe par SoundFart (licence VB-Audio).
+// L'utilisateur l'installe depuis https://vb-audio.com/Cable/ ; le renderer
+// detecte les peripheriques « CABLE Input/Output » via enumerateDevices et
+// devicechange. Ici on ne garde que la bascule micro (cableLabel -> endpoint).
 
 // Watchdog : re-verifie periodiquement que l'entree par defaut est toujours sur le cable.
 // Couvre le cas ou Discord (ou un peripherique) demarre/change le defaut pendant que
@@ -944,8 +889,6 @@ async function watchdogMic() {
   } catch (e) { log('[mic-watchdog] ' + e.message); }
   finally { watchdogBusy = false; }
 }
-
-H('cable:ensure', () => ensureCableDriver());
 
 // ---------- fenetre ----------
 function createWindow() {
@@ -1024,14 +967,6 @@ app.whenReady().then(() => {
     }).catch((e) => { log('[displaymedia] getSources: ' + e.message); callback({}); });
   });
   createWindow();
-  // Verification VB-CABLE au boot : l'app n'installe ni n'embarque le pilote
-  // (VB-Audio l'interdit sans accord) ; on notifie le renderer de l'etat pour
-  // afficher un message visible + lien officiel si absent.
-  ensureCableDriver().then((st) => {
-    if (!win || win.isDestroyed()) return;
-    win.webContents.send('sf:cableState', st.state);
-    if (st.state === 'ready') win.webContents.send('sf:cableReady');
-  });
   setInterval(watchdogMic, 10000);
 });
 
