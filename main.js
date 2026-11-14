@@ -5,6 +5,7 @@ const https = require('https');
 const os = require('os');
 const { spawn, execFile, execFileSync } = require('child_process');
 const { promisify } = require('util');
+const crypto = require('crypto');
 const execFileP = promisify(execFile);
 
 const AUDIO_EXT = ['.mp3', '.wav', '.ogg', '.flac', '.m4a', '.aac', '.opus', '.webm', '.mp4', '.mkv', '.mov', '.m4v'];
@@ -45,6 +46,18 @@ if (process.argv.includes('--test-profile')) {
 }
 
 const configFile = () => path.join(app.getPath('userData'), 'config.json');
+
+// Garde IPC : seuls les evenements venant de la page de l'app (src/index.html) sont acceptes.
+const fromApp = (e) => {
+  try {
+    const u = new URL(e.senderFrame.url);
+    return u.protocol === 'file:' && /src[\\/]index\.html$/.test(u.pathname);
+  } catch { return false; }
+};
+const H = (channel, fn) => ipcMain.handle(channel, (e, ...args) => {
+  if (!fromApp(e)) throw new Error('accès IPC refusé (sender non autorisé)');
+  return fn(e, ...args);
+});
 
 // ---------- config ----------
 function migrateOldConfig() {
@@ -120,31 +133,37 @@ ipcMain.on('menu:state', (_e, s) => {
 
 ipcMain.on('ui:log', (_e, m) => log('[ui] ' + String(m).slice(0, 800)));
 
-ipcMain.handle('desktop:source', async () => {
+H('desktop:source', async () => {
   try {
     const sources = await desktopCapturer.getSources({ types: ['screen'] });
     return sources.length ? sources[0].id : null;
   } catch { return null; }
 });
 
-ipcMain.handle('app:version', () => app.getVersion());
+H('app:version', () => app.getVersion());
 
-ipcMain.handle('config:load', () => {
+H('config:load', () => {
   const f = configFile();
   try {
     return JSON.parse(fs.readFileSync(f, 'utf-8'));
   } catch (e) {
     if (e.code === 'ENOENT') return migrateOldConfig();
-    try { fs.renameSync(f, f + '.broken'); } catch {}
+    // horodate : plusieurs configs cassees successives ne s'ecrasent pas
+    try { fs.renameSync(f, `${f}.broken-${new Date().toISOString().replace(/[:.]/g, '-')}`); } catch {}
     return null;
   }
 });
 
-ipcMain.handle('config:save', (_e, cfg) => {
+H('config:save', (_e, cfg) => {
+  if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) throw new Error('configuration invalide');
   const f = configFile();
   const tmp = f + '.tmp';
+  const body = JSON.stringify(cfg, null, 2);
+  if (body.length > 5 * 1024 * 1024) throw new Error('configuration trop volumineuse');
   fs.mkdirSync(path.dirname(f), { recursive: true });
-  fs.writeFileSync(tmp, JSON.stringify(cfg, null, 2), 'utf-8');
+  // sauvegarde .bak avant ecrasement : une ecriture cassee reste recuperable
+  try { if (fs.existsSync(f)) fs.copyFileSync(f, f + '.bak'); } catch {}
+  fs.writeFileSync(tmp, body, 'utf-8');
   fs.renameSync(tmp, f);
   return true;
 });
@@ -167,9 +186,12 @@ function expand(paths, depth = 0, seen = { n: 0 }) {
   return out;
 }
 
-ipcMain.handle('files:expand', (_e, paths) => expand(paths || []));
+H('files:expand', (_e, paths) => {
+  if (!Array.isArray(paths) || paths.length > 2000 || paths.some((p) => typeof p !== 'string')) throw new Error('chemins invalides');
+  return expand(paths);
+});
 
-ipcMain.handle('files:pick', async () => {
+H('files:pick', async () => {
   const r = await dialog.showOpenDialog(win, {
     title: 'Ajouter des sons',
     properties: ['openFile', 'multiSelections'],
@@ -178,7 +200,7 @@ ipcMain.handle('files:pick', async () => {
   return r.canceled ? [] : r.filePaths;
 });
 
-ipcMain.handle('files:pickDir', async () => {
+H('files:pickDir', async () => {
   const r = await dialog.showOpenDialog(win, {
     title: 'Choisir le dossier de stockage',
     properties: ['openDirectory', 'createDirectory'],
@@ -186,20 +208,27 @@ ipcMain.handle('files:pickDir', async () => {
   return r.canceled ? null : r.filePaths[0];
 });
 
-ipcMain.handle('file:read', async (_e, p) => {
-  if (!AUDIO_EXT.includes(path.extname(String(p)).toLowerCase())) throw new Error('Format non autorise');
+H('file:read', async (_e, p) => {
+  if (typeof p !== 'string' || !path.isAbsolute(p)) throw new Error('chemin invalide');
+  if (!AUDIO_EXT.includes(path.extname(p).toLowerCase())) throw new Error('Format non autorise');
   return fs.promises.readFile(p);
 });
 
-ipcMain.handle('file:check', (_e, paths) => (paths || []).filter((p) => !fs.existsSync(p)));
-ipcMain.handle('file:reveal', (_e, p) => shell.showItemInFolder(p));
+H('file:check', (_e, paths) => {
+  if (!Array.isArray(paths) || paths.length > 5000) throw new Error('chemins invalides');
+  return paths.filter((p) => typeof p !== 'string' || !fs.existsSync(p));
+});
+H('file:reveal', (_e, p) => {
+  if (typeof p !== 'string' || !path.isAbsolute(p)) throw new Error('chemin invalide');
+  shell.showItemInFolder(p);
+});
 
 // ---------- raccourcis clavier globaux ----------
-ipcMain.handle('shortcuts:apply', (_e, entries) => {
+H('shortcuts:apply', (_e, entries) => {
   globalShortcut.unregisterAll();
   const failed = [];
-  for (const { key, accel } of entries || []) {
-    if (!key || !accel) continue;
+  for (const { key, accel } of (Array.isArray(entries) ? entries.slice(0, 200) : [])) {
+    if (typeof key !== 'string' || typeof accel !== 'string' || accel.length > 64) continue;
     try {
       const ok = globalShortcut.register(accel, () => {
         if (win && !win.isDestroyed()) win.webContents.send('sf:shortcut', key);
@@ -215,7 +244,7 @@ ipcMain.handle('shortcuts:apply', (_e, entries) => {
 // ---------- enregistreur : sauvegarde d'un fichier audio ----------
 const safeName = (s) => String(s || '').replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, ' ').trim().slice(0, 80) || 'son';
 
-ipcMain.handle('rec:save', async (_e, { data, name, ext, dir }) => {
+H('rec:save', async (_e, { data, name, ext, dir }) => {
   const rdir = path.join(storageRoot(dir), 'recordings');
   fs.mkdirSync(rdir, { recursive: true });
   const base = safeName(name);
@@ -223,6 +252,7 @@ ipcMain.handle('rec:save', async (_e, { data, name, ext, dir }) => {
   let p = path.join(rdir, base + extOk);
   for (let i = 1; fs.existsSync(p); i++) p = path.join(rdir, `${base}-${i}${extOk}`);
   const buf = data instanceof ArrayBuffer ? Buffer.from(new Uint8Array(data)) : Buffer.from(data);
+  if (buf.length > 512 * 1024 * 1024) throw new Error('enregistrement trop volumineux (> 512 Mo)');
   await fs.promises.writeFile(p, buf);
   return p;
 });
@@ -239,39 +269,51 @@ function findFile(dir, name, depth = 0) {
 }
 
 // Telecharge et extrait ffmpeg.exe une seule fois (~80 Mo, build "essentials" de gyan.dev)
+let ffmpegPromise = null; // single-flight : un seul telechargement/extraction a la fois
+
 async function ensureFfmpeg() {
   if (fs.existsSync(ffmpegPath())) return ffmpegDir();
-  // ffmpeg.exe deja extrait quelque part dans ffmpegDir() : on l'utilise tel quel, sans recopier
-  if (fs.existsSync(ffmpegDir())) {
-    const existing = findFile(ffmpegDir(), 'ffmpeg.exe');
-    if (existing) return path.dirname(existing);
-  }
-  fs.mkdirSync(toolsDir(), { recursive: true });
-  const zip = path.join(toolsDir(), 'ffmpeg.zip');
-  try {
-    await downloadFile(FFMPEG_URL, zip, (f) => {
-      if (win && !win.isDestroyed()) win.webContents.send('sf:ytprogress', Math.round(f * 100));
-    });
-    const dest = ffmpegDir();
-    fs.mkdirSync(dest, { recursive: true });
+  if (ffmpegPromise) return ffmpegPromise;
+  ffmpegPromise = (async () => {
     try {
-      await execFileP('tar', ['-xf', zip, '-C', dest, '*ffmpeg.exe'], { timeout: 180000 });
-    } catch {
-      await execFileP('tar', ['-xf', zip, '-C', dest], { timeout: 300000 });
+      // ffmpeg.exe deja extrait quelque part dans ffmpegDir() : on l'utilise tel quel
+      if (fs.existsSync(ffmpegDir())) {
+        const existing = findFile(ffmpegDir(), 'ffmpeg.exe');
+        if (existing) return path.dirname(existing);
+      }
+      fs.mkdirSync(toolsDir(), { recursive: true });
+      const zip = path.join(toolsDir(), 'ffmpeg.zip');
+      try {
+        await downloadVerified({
+          url: FFMPEG_URL, dest: zip, sumsUrl: FFMPEG_SUMS_URL, match: 'ffmpeg-' + FFMPEG_VERSION + '-essentials_build.zip',
+          onProgress: (f) => { if (win && !win.isDestroyed()) win.webContents.send('sf:ytprogress', Math.round(f * 100)); },
+        });
+        const dest = ffmpegDir();
+        fs.mkdirSync(dest, { recursive: true });
+        try {
+          await execFileP('tar', ['-xf', zip, '-C', dest, '*ffmpeg.exe'], { timeout: 180000 });
+        } catch {
+          await execFileP('tar', ['-xf', zip, '-C', dest], { timeout: 300000 });
+        }
+        const found = findFile(dest, 'ffmpeg.exe');
+        if (found && found !== ffmpegPath()) {
+          try { fs.renameSync(found, ffmpegPath()); } catch { fs.copyFileSync(found, ffmpegPath()); }
+        }
+      } finally {
+        try { fs.unlinkSync(zip); } catch {}
+      }
+      if (!fs.existsSync(ffmpegPath())) throw new Error('ffmpeg.exe introuvable dans l\'archive téléchargée.');
+      return ffmpegDir();
+    } finally {
+      ffmpegPromise = null;
     }
-    const found = findFile(dest, 'ffmpeg.exe');
-    if (found && found !== ffmpegPath()) {
-      // deplacer (rename) plutot que copier quand c'est possible
-      try { fs.renameSync(found, ffmpegPath()); } catch { fs.copyFileSync(found, ffmpegPath()); }
-    }
-  } finally {
-    try { fs.unlinkSync(zip); } catch {}
-  }
-  if (!fs.existsSync(ffmpegPath())) throw new Error('ffmpeg.exe introuvable dans l\'archive téléchargée.');
-  return ffmpegDir();
+  })();
+  return ffmpegPromise;
 }
 
-ipcMain.handle('media:cut', async (_e, { input, start, end, dir }) => {
+H('media:cut', async (_e, { input, start, end, dir }) => {
+  if (typeof input !== 'string' || !path.isAbsolute(input)) throw new Error('chemin source invalide');
+  if (!Number.isFinite(+start) || !Number.isFinite(+end) || +end <= +start) throw new Error('bornes de coupe invalides');
   const fdir = await ensureFfmpeg();
   const outDir = path.join(storageRoot(dir), 'cuts');
   fs.mkdirSync(outDir, { recursive: true });
@@ -290,25 +332,39 @@ const toolsDir = () => path.join(app.getPath('userData'), 'tools');
 const ytdlpPath = () => path.join(toolsDir(), 'yt-dlp.exe');
 const ffmpegDir = () => path.join(toolsDir(), 'ffmpeg');
 const ffmpegPath = () => path.join(ffmpegDir(), 'ffmpeg.exe');
-const audioToolPath = () => path.join(toolsDir(), 'AudioEndpoint.exe');
-const audioTapPath = () => path.join(toolsDir(), 'AudioTap.exe');
-const YTDLP_URL = 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe';
-const FFMPEG_URL = 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip';
+// Versions epinglees + sommes publiees par les editeurs : un binaire telecharge n'est
+// jamais execute sans verification SHA-256 (fichier de sommes de la release).
+const YTDLP_VERSION = '2026.10.26';
+const YTDLP_URL = (v) => `https://github.com/yt-dlp/yt-dlp/releases/download/${v}/yt-dlp.exe`;
+const YTDLP_SUMS_URL = (v) => `https://github.com/yt-dlp/yt-dlp/releases/download/${v}/SHA2-256SUMS`;
+const FFMPEG_VERSION = '9.0.2';
+const FFMPEG_URL = `https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-${FFMPEG_VERSION}-essentials_build.zip`;
+const FFMPEG_SUMS_URL = FFMPEG_URL + '.sha256';
 
-// Dossier de stockage choisi par l'utilisateur (imports/, recordings/, cuts/) ; defaut = userData
+// Dossier de stockage choisi par l'utilisateur (imports/, recordings/, cuts/) ; defaut = userData.
+// Un dir relatif ou non-chainable est ignore (protection contre une config importee malveillante).
 function storageRoot(dir) {
   const d = dir && String(dir).trim();
-  return d || app.getPath('userData');
+  return d && path.isAbsolute(d) ? d : app.getPath('userData');
 }
+
+const validHttpUrl = (u) => {
+  try { const x = new URL(String(u)); return x.protocol === 'https:' || x.protocol === 'http:'; } catch { return false; }
+};
 
 function downloadFile(url, dest, onProgress) {
   return new Promise((resolve, reject) => {
     const get = (u, n) => {
+      // Les redirections ne doivent jamais sortir du HTTPS (anti-downgrade MITM).
+      if (!/^https:\/\//i.test(u)) return reject(new Error('redirection non-HTTPS refusée : ' + u.slice(0, 120)));
       const req = https.get(u, (res) => {
         if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
           res.resume();
           if (n > 5) return reject(new Error('trop de redirections'));
-          return get(res.headers.location, n + 1);
+          try {
+            const loc = new URL(res.headers.location, u).href;
+            return get(loc, n + 1);
+          } catch { return reject(new Error('redirection invalide')); }
         }
         if (res.statusCode !== 200) { res.resume(); return reject(new Error('HTTP ' + res.statusCode)); }
         const total = parseInt(res.headers['content-length'] || '0', 10);
@@ -327,19 +383,111 @@ function downloadFile(url, dest, onProgress) {
   });
 }
 
-async function ensureYtDlp() {
-  if (fs.existsSync(ytdlpPath())) return;
+function sha256File(p) {
+  return new Promise((resolve, reject) => {
+    const h = crypto.createHash('sha256');
+    fs.createReadStream(p).on('data', (c) => h.update(c)).on('end', () => resolve(h.digest('hex'))).on('error', reject);
+  });
+}
+
+// Telecharge un fichier puis verifie son SHA-256 contre le fichier de sommes publie
+// avec la release (SHA2-256SUMS cote yt-dlp, .sha256 cote gyan.dev). En cas de
+// mismatch ou d'indisponibilite des sommes : le fichier est supprime et on refuse
+// de l'utiliser — jamais d'execution d'un binaire non verifie.
+async function downloadVerified({ url, dest, sumsUrl, match, onProgress }) {
+  await downloadFile(url, dest, onProgress || (() => {}));
+  try {
+    const sumsTmp = dest + '.sums';
+    await downloadFile(sumsUrl, sumsTmp);
+    const sums = fs.readFileSync(sumsTmp, 'utf-8');
+    try { fs.unlinkSync(sumsTmp); } catch {}
+    const expected = sums.split(/\r?\n/).map((l) => l.trim().split(/\s+/)).find((p) => p.length === 2 && p[1] === match);
+    if (!expected) throw new Error('somme introuvable pour ' + match);
+    const actual = await sha256File(dest);
+    if (actual !== expected[0].toLowerCase()) throw new Error('SHA-256 mismatch pour ' + match);
+    log('[dl] SHA-256 verifie: ' + match);
+  } catch (e) {
+    try { fs.unlinkSync(dest); } catch {}
+    throw new Error('verification du téléchargement impossible : ' + e.message);
+  }
+}
+
+const ytdlpMetaFile = () => path.join(toolsDir(), 'yt-dlp.json');
+const YTDLP_UPDATE_MS = 7 * 24 * 3600 * 1000; // verification de mise a jour hebdomadaire
+let ytdlpPromise = null;
+let lastToolErr = ''; // dernier echec de compilation d'outil natif (remonte a l'UI)
+
+async function ytdlpInstalledVersion() {
+  try {
+    const meta = JSON.parse(fs.readFileSync(ytdlpMetaFile(), 'utf-8'));
+    if (meta && meta.version) return meta.version;
+  } catch {}
+  try {
+    const { stdout } = await execFileP(ytdlpPath(), ['--version'], { timeout: 15000 });
+    const v = String(stdout).trim().split(/\s+/)[0];
+    return /^\d{4}\.\d{2}\.\d{2}$/.test(v) ? v : null;
+  } catch { return null; }
+}
+
+async function installYtDlp(version) {
   fs.mkdirSync(toolsDir(), { recursive: true });
   const tmp = ytdlpPath() + '.part';
   try {
-    await downloadFile(YTDLP_URL, tmp, (f) => {
-      if (win && !win.isDestroyed()) win.webContents.send('sf:ytprogress', Math.round(f * 100));
+    await downloadVerified({
+      url: YTDLP_URL(version), dest: tmp, sumsUrl: YTDLP_SUMS_URL(version), match: 'yt-dlp.exe',
+      onProgress: (f) => { if (win && !win.isDestroyed()) win.webContents.send('sf:ytprogress', Math.round(f * 100)); },
     });
     fs.renameSync(tmp, ytdlpPath());
+    fs.writeFileSync(ytdlpMetaFile(), JSON.stringify({ version, at: Date.now() }));
+    log('[yt] yt-dlp ' + version + ' installe (SHA-256 verifie)');
+    return true;
   } catch (e) {
     try { fs.unlinkSync(tmp); } catch {}
     throw e;
   }
+}
+
+// Mise a jour periodeque : si la derniere verification a plus de 7 jours, on compare
+// au dernier tag GitHub et on remplace yt-dlp (telechargement verifie SHA-256).
+// Un echec de mise a jour ne casse jamais l'existant.
+async function maybeUpdateYtDlp(force = false) {
+  try {
+    let meta = {};
+    try { meta = JSON.parse(fs.readFileSync(ytdlpMetaFile(), 'utf-8')) || {}; } catch {}
+    if (!force && meta.at && Date.now() - meta.at < YTDLP_UPDATE_MS) return false;
+    const { stdout } = await execFileP('powershell.exe', ['-NoProfile', '-Command',
+      `(Invoke-RestMethod -Uri 'https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest' -Headers @{'User-Agent'='SoundFart'}).tag_name`],
+      { timeout: 20000 });
+    const latest = String(stdout).trim();
+    if (!/^\d{4}\.\d{2}\.\d{2}$/.test(latest)) return false;
+    const current = (await ytdlpInstalledVersion()) || YTDLP_VERSION;
+    fs.writeFileSync(ytdlpMetaFile(), JSON.stringify({ version: current, at: Date.now() })); // horodate la verification
+    if (latest === current) return false;
+    log('[yt] mise a jour yt-dlp ' + current + ' -> ' + latest);
+    try {
+      await installYtDlp(latest);
+      return true;
+    } catch (e) {
+      log('[yt] mise a jour echouee (version precedente conservee): ' + e.message);
+      return false;
+    }
+  } catch (e) { log('[yt] check mise a jour: ' + e.message); return false; }
+}
+
+async function ensureYtDlp() {
+  if (ytdlpPromise) return ytdlpPromise;
+  ytdlpPromise = (async () => {
+    try {
+      if (!fs.existsSync(ytdlpPath())) {
+        await installYtDlp(YTDLP_VERSION);
+      } else {
+        await maybeUpdateYtDlp();
+      }
+    } finally {
+      ytdlpPromise = null;
+    }
+  })();
+  return ytdlpPromise;
 }
 
 function runYt(args, onProgress) {
@@ -360,10 +508,10 @@ const ytProgress = (f) => {
   if (win && !win.isDestroyed()) win.webContents.send('sf:ytprogress', typeof f === 'number' && f <= 1 ? Math.round(f * 100) : Math.round(f));
 };
 
-ipcMain.handle('yt:ensure', async () => { await ensureYtDlp(); ytProgress(-1); return true; });
+H('yt:ensure', async () => { await ensureYtDlp(); ytProgress(-1); return true; });
 
-ipcMain.handle('yt:info', async (_e, url) => {
-  if (!/^https?:\/\//i.test(String(url || ''))) throw new Error('URL invalide');
+H('yt:info', async (_e, url) => {
+  if (!validHttpUrl(url)) throw new Error('URL invalide');
   await ensureYtDlp();
   ytProgress(-1);
   const { stdout } = await execFileP(ytdlpPath(), ['--dump-single-json', '--no-playlist', '--no-warnings', url], { maxBuffer: 64 * 1024 * 1024, timeout: 120000 });
@@ -371,33 +519,43 @@ ipcMain.handle('yt:info', async (_e, url) => {
   return { title: j.title || '', duration: j.duration || 0, url: j.webpage_url || url };
 });
 
-ipcMain.handle('yt:download', async (_e, { url, start, end, dir }) => {
-  if (!/^https?:\/\//i.test(String(url || ''))) throw new Error('URL invalide');
+H('yt:download', async (_e, { url, start, end, dir }) => {
+  if (!validHttpUrl(url)) throw new Error('URL invalide');
+  if (!Number.isFinite(+start) || !Number.isFinite(+end) || +end <= +start) throw new Error('bornes invalides');
   await ensureYtDlp();
-  const impDir = path.join(storageRoot(dir), 'imports');
-  fs.mkdirSync(impDir, { recursive: true });
-  const before = new Set(fs.readdirSync(impDir));
-  const outTpl = path.join(impDir, '%(id)s.%(ext)s');
-  const baseArgs = ['--no-playlist', '--no-warnings', '-o', outTpl];
-  let sectioned = false;
-  // ffmpeg permet de ne telecharger + convertir que l'extrait (MP3 leger) ; sinon repli sur l'audio complet + trim
-  let ffDir = null;
-  try { ffDir = await ensureFfmpeg(); } catch {}
-  if (ffDir && end > start) {
-    try {
-      await runYt([...baseArgs, '--ffmpeg-location', ffDir, '-f', 'bestaudio', '-x', '--audio-format', 'mp3', '--download-sections', `*${start}-${end}`, url], ytProgress);
-      sectioned = true;
-    } catch {}
-  }
-  if (!sectioned) {
+  const tryDownload = async () => {
+    const impDir = path.join(storageRoot(dir), 'imports');
+    fs.mkdirSync(impDir, { recursive: true });
+    const before = new Set(fs.readdirSync(impDir));
+    const outTpl = path.join(impDir, '%(id)s.%(ext)s');
+    const baseArgs = ['--no-playlist', '--no-warnings', '-o', outTpl];
+    let sectioned = false;
+    // ffmpeg permet de ne telecharger + convertir que l'extrait (MP3 leger) ; sinon repli sur l'audio complet + trim
+    let ffDir = null;
+    try { ffDir = await ensureFfmpeg(); } catch {}
+    if (ffDir && end > start) {
+      try {
+        await runYt([...baseArgs, '--ffmpeg-location', ffDir, '-f', 'bestaudio', '-x', '--audio-format', 'mp3', '--download-sections', `*${start}-${end}`, url], ytProgress);
+        sectioned = true;
+      } catch {}
+    }
+    if (!sectioned) {
+      ytProgress(-1);
+      await runYt([...baseArgs, '-f', 'bestaudio/best', url], ytProgress);
+    }
+    const created = fs.readdirSync(impDir).filter((f) => !before.has(f) && !f.startsWith('.'));
+    if (!created.length) throw new Error('Aucun fichier audio produit.');
+    const newest = created.map((f) => path.join(impDir, f)).sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)[0];
     ytProgress(-1);
-    await runYt([...baseArgs, '-f', 'bestaudio/best', url], ytProgress);
+    return { path: newest, sectioned };
+  };
+  try {
+    return await tryDownload();
+  } catch (e) {
+    // YouTube casse souvent les vieilles versions : une mise a jour forcee puis un seul retry.
+    if (await maybeUpdateYtDlp(true)) return await tryDownload();
+    throw e;
   }
-  const created = fs.readdirSync(impDir).filter((f) => !before.has(f) && !f.startsWith('.'));
-  if (!created.length) throw new Error('Aucun fichier audio produit.');
-  const newest = created.map((f) => path.join(impDir, f)).sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)[0];
-  ytProgress(-1);
-  return { path: newest, sectioned };
 });
 
 // ---------- bascule automatique de l'entree micro (CABLE Output) ----------
@@ -411,28 +569,52 @@ const CSC_CANDIDATES = [
   'C:\\Windows\\Microsoft.NET\\Framework\\v4.0.30319\\csc.exe',
 ];
 
-let audioToolPromise = null; // evite deux csc.exe simultanes sur le meme exe
+const audioToolPath = () => path.join(toolsDir(), 'AudioEndpoint-' + toolHash(path.join(__dirname, 'AudioEndpoint.cs')) + '.exe');
+const audioTapPath = () => path.join(toolsDir(), 'AudioTap-' + toolHash(path.join(__dirname, 'AudioTap.cs')) + '.exe');
+const toolHash = (csPath) => {
+  try { return crypto.createHash('sha256').update(fs.readFileSync(csPath)).digest('hex').slice(0, 8); } catch { return 'src'; }
+};
+
+let csQueue = Promise.resolve(); // une seule compilation C# a la fois, toutes sources confondues
+
+function compileCs(csName, exeBase) {
+  const run = csQueue.then(() => doCompileCs(csName, exeBase));
+  csQueue = run.catch(() => {});
+  return run;
+}
+
+async function doCompileCs(csName, exeBase) {
+  const csInAsar = path.join(__dirname, csName + '.cs');
+  const csc = CSC_CANDIDATES.find((p) => fs.existsSync(p));
+  if (!csc) throw new Error('compilateur C# introuvable (csc.exe absent — installe .NET Framework 4.x)');
+  if (!fs.existsSync(csInAsar)) throw new Error(csName + '.cs absent du bundle');
+  const h = toolHash(csInAsar);
+  fs.mkdirSync(toolsDir(), { recursive: true });
+  const cs = path.join(toolsDir(), csName + '.cs');
+  fs.writeFileSync(cs, fs.readFileSync(csInAsar));
+  const target = path.join(toolsDir(), exeBase + '-' + h + '.exe');
+  const tmpOut = target + '.tmp';
+  try { fs.unlinkSync(tmpOut); } catch {}
+  // compilation vers un nom temporaire puis renommage : un echec ne laisse jamais
+  // un exe partiel qui aurait l'air valide
+  await execFileP(csc, ['/nologo', '/target:exe', '/platform:anycpu', '/out:' + tmpOut, cs], { timeout: 60000 });
+  if (!fs.existsSync(tmpOut)) throw new Error('compilation ' + csName + ' sans exe produit');
+  try { fs.renameSync(tmpOut, target); } catch { fs.copyFileSync(tmpOut, target); }
+  try { fs.unlinkSync(tmpOut); } catch {}
+  // purge des anciennes versions hachees et de l'exe historique sans hash
+  for (const f of fs.readdirSync(toolsDir())) {
+    if ((f === exeBase + '.exe' || (f.startsWith(exeBase + '-') && f.endsWith('.exe'))) && f !== path.basename(target)) {
+      try { fs.unlinkSync(path.join(toolsDir(), f)); } catch {}
+    }
+  }
+  return target;
+}
 
 async function ensureAudioTool() {
-  if (fs.existsSync(audioToolPath())) return audioToolPath();
-  if (audioToolPromise) return audioToolPromise;
-  audioToolPromise = (async () => {
-    try {
-      const csInAsar = path.join(__dirname, 'AudioEndpoint.cs');
-      const csc = CSC_CANDIDATES.find((p) => fs.existsSync(p));
-      // dans l'exe package, __dirname est dans app.asar : illisible par csc.exe externe.
-      // On extrait la source vers un vrai fichier temporaire avant compilation.
-      const cs = path.join(toolsDir(), 'AudioEndpoint.cs');
-      if (!csc || !fs.existsSync(csInAsar)) return null;
-      fs.mkdirSync(toolsDir(), { recursive: true });
-      fs.writeFileSync(cs, fs.readFileSync(csInAsar));
-      await execFileP(csc, ['/nologo', '/target:exe', '/platform:anycpu', '/out:' + audioToolPath(), cs], { timeout: 60000 });
-      return fs.existsSync(audioToolPath()) ? audioToolPath() : null;
-    } finally {
-      audioToolPromise = null;
-    }
-  })();
-  return audioToolPromise;
+  const p = audioToolPath();
+  if (fs.existsSync(p)) return p;
+  try { return await compileCs('AudioEndpoint', 'AudioEndpoint'); }
+  catch (e) { lastToolErr = e.message; log('[audio] compilation AudioEndpoint: ' + e.message); return null; }
 }
 
 function audioExec(tool, args) {
@@ -510,7 +692,7 @@ const DEFAULT_SOUND_NAMES = {
   'sarkozy-_-quelle-indignite.mp3': 'Quelle Indignité',
 };
 
-ipcMain.handle('sounds:seed', () => {
+H('sounds:seed', () => {
   try {
     const src = path.join(__dirname, 'assets', 'sounds');
     const dst = path.join(app.getPath('userData'), 'default-sounds');
@@ -523,10 +705,10 @@ ipcMain.handle('sounds:seed', () => {
   } catch { return []; }
 });
 
-ipcMain.handle('audio:autoSetup', async (_e, { enabled, cableLabel }) => {
+H('audio:autoSetup', async (_e, { enabled, cableLabel }) => {
   try {
     const tool = await ensureAudioTool();
-    if (!tool) return { ok: false, err: 'outil audio introuvable (csc.exe absent ?)' };
+    if (!tool) return { ok: false, err: 'composant audio natif indisponible : ' + (lastToolErr || 'compilation impossible') };
     if (!enabled) { restoreMicNow(tool); return { ok: true, changed: false }; }
     let eps = parseEndpoints(audioExec(tool, ['list']));
     let target = findCableCapture(eps, cableLabel);
@@ -576,32 +758,17 @@ let audioTapProc = null;
 let audioTapKilling = false; // vrai entre kill() et l'evenement 'exit' (anti double spawn)
 let tapPcmRem = Buffer.alloc(0); // reste PCM non aligne (stdout livre des chunks arbitraires)
 
-let audioTapPromise = null; // evite deux csc.exe simultanes sur le meme exe
-
 async function ensureAudioTap() {
-  if (fs.existsSync(audioTapPath())) return audioTapPath();
-  if (audioTapPromise) return audioTapPromise;
-  audioTapPromise = (async () => {
-    try {
-      const csInAsar = path.join(__dirname, 'AudioTap.cs');
-      const csc = CSC_CANDIDATES.find((p) => fs.existsSync(p));
-      if (!csc || !fs.existsSync(csInAsar)) return null;
-      fs.mkdirSync(toolsDir(), { recursive: true });
-      const cs = path.join(toolsDir(), 'AudioTap.cs');
-      fs.writeFileSync(cs, fs.readFileSync(csInAsar));
-      await execFileP(csc, ['/nologo', '/target:exe', '/platform:anycpu', '/out:' + audioTapPath(), cs], { timeout: 60000 });
-      return fs.existsSync(audioTapPath()) ? audioTapPath() : null;
-    } finally {
-      audioTapPromise = null;
-    }
-  })();
-  return audioTapPromise;
+  const p = audioTapPath();
+  if (fs.existsSync(p)) return p;
+  try { return await compileCs('AudioTap', 'AudioTap'); }
+  catch (e) { lastToolErr = e.message; log('[audiotap] compilation: ' + e.message); return null; }
 }
 
-ipcMain.handle('audio:tapStart', async () => {
+H('audio:tapStart', async () => {
   try {
     const tool = await ensureAudioTap();
-    if (!tool) return { ok: false, err: 'outil audio introuvable (csc.exe absent ?)' };
+    if (!tool) return { ok: false, err: 'composant audio natif indisponible : ' + (lastToolErr || 'compilation impossible') };
     if (audioTapProc && audioTapProc.exitCode === null) return { ok: true };
     // Un tapStop vient peut-etre de tuer l'ancien processus sans que 'exit' soit encore arrive :
     // on attend sa sortie avant d'en respawn un (sinon deux AudioTap ecriraient dans le cable).
@@ -643,7 +810,7 @@ ipcMain.handle('audio:tapStart', async () => {
   } catch (e) { return { ok: false, err: e.message }; }
 });
 
-ipcMain.handle('audio:tapStop', () => {
+H('audio:tapStop', () => {
   if (audioTapProc) {
     audioTapKilling = true;
     try { audioTapProc.kill(); } catch { audioTapKilling = false; }
@@ -755,25 +922,37 @@ function offerCableReboot() {
 // Watchdog : re-verifie periodiquement que l'entree par defaut est toujours sur le cable.
 // Couvre le cas ou Discord (ou un peripherique) demarre/change le defaut pendant que
 // SoundFart tourne — la bascule est re-appliquee automatiquement.
-function watchdogMic() {
+// Executions serialisees (watchdogBusy), jamais de execFileSync (ne bloque pas les
+// raccourcis globaux). Si l'entree est modifiee hors SoundFart, on considere que
+// c'est un choix de l'utilisateur : la surveillance est suspendue pour la session
+// (reglage « surveillance micro » pour la reactiver au prochain lancement).
+const audioExecP = (tool, args) => execFileP(tool, args, { encoding: 'utf8', timeout: 15000 }).then((r) => r.stdout);
+let watchdogBusy = false;
+let micWatchSuspended = false;
+
+async function watchdogMic() {
+  if (watchdogBusy || micWatchSuspended) return;
+  watchdogBusy = true;
   try {
     const tool = audioToolPath();
     if (!tool || !fs.existsSync(tool) || !fs.existsSync(restoreFile()) || !fs.existsSync(configFile())) return;
     const cfg = JSON.parse(fs.readFileSync(configFile(), 'utf-8'));
     const st = cfg && cfg.settings;
-    if (!st || !st.autoSwitchMic) return;
-    const eps = parseEndpoints(audioExec(tool, ['list']));
+    if (!st || st.autoSwitchMic === false || st.watchdogMic === false) return;
+    const eps = parseEndpoints(await audioExecP(tool, ['list']));
     const target = findCableCapture(eps, st.cableLabel);
     if (!target) return;
-    const cur = parseGet(audioExec(tool, ['get', 'capture']));
+    const cur = parseGet(await audioExecP(tool, ['get', 'capture']));
     if (cur.console !== target.id || cur.comm !== target.id || cur.multi !== target.id) {
-      audioExec(tool, ['set', 'capture', target.id, target.id, target.id]);
-      log('[mic-watchdog] entree re-basculee sur ' + target.name);
+      micWatchSuspended = true;
+      log('[mic-watchdog] entree modifiee hors SoundFart -> surveillance suspendue pour la session');
+      if (win && !win.isDestroyed()) win.webContents.send('sf:micWatchOff', target.name);
     }
   } catch (e) { log('[mic-watchdog] ' + e.message); }
+  finally { watchdogBusy = false; }
 }
 
-ipcMain.handle('cable:ensure', () => ensureCableDriver());
+H('cable:ensure', () => ensureCableDriver());
 
 // ---------- fenetre ----------
 function createWindow() {
