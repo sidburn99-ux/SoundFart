@@ -134,8 +134,9 @@ Journal de bord du développement. Règle : ne jamais marquer une fonctionnalit�
 - v1.1 : tri des catégories, éditeur de découpe avec onde et fondus.
 
 ## À faire / idées restantes
-- [ ] Tester sous Windows : diffusion CABLE Input, micro, latence, tous les nouveaux modules en conditions réelles.
+- [ ] Tester sous Windows : diffusion CABLE Input, micro, latence, tous les nouveaux modules en conditions réelles (voir TESTS_VM.md).
 - [ ] Son aléatoire / plusieurs sons sur un même raccourci, boucle, mode « maintenir pour jouer ».
-- [ ] Lancement auto Windows, réduction dans la barre des tâches, icône.
-- [ ] Tests unitaires (le front n'a pas de harnais de test).
-- [ ] Éventuellement : proposer le téléchargement de ffmpeg pour les MP3 YouTube courts.
+- [ ] Lancement auto Windows, réduction dans la barre des tâches.
+- [x] Icône de l'application — fait (`assets/icon.ico`, v1.4).
+- [x] Tests unitaires — `test/audio-utils.test.js` (node:test, fonctions pures partagées).
+- [x] Téléchargement ffmpeg automatique — fait (`tools\ffmpeg\ffmpeg.exe`, ~115 Mo, SHA-256 vérifié).

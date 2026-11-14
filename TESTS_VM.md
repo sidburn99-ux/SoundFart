@@ -9,10 +9,10 @@ Copier `dist\SoundFart.exe` **seul** dans un dossier de test (ex. `C:\SoundFart-
 ## Cas 1 — Premier lancement sans VB-CABLE
 
 1. Double-cliquer `SoundFart.exe`.
-2. **Attendu** : fenêtre en ~2-5 s ; écran « VB-CABLE requis » centré avec le gros bouton « Télécharger VB-CABLE (page officielle) » et l'adresse `vb-audio.com/Cable` visible ; bandeau « Discord désactivé : VB-CABLE manquant » sous la barre du haut ; la bibliothèque (sons par défaut ou config migrée) est utilisable ; **aucune bascule micro** (vérifier Paramètres → Système → Son → Entrée : ton vrai micro reste par défaut).
+2. **Attendu** : fenêtre en ~2-5 s ; écran « VB-CABLE requis » centré avec le gros bouton « Télécharger VB-CABLE (page officielle) » et l'adresse `vb-audio.com/Cable` visible ; bandeau « Discord désactivé : VB-CABLE manquant » **au-dessus** de la barre du haut ; la bibliothèque (5 sons par défaut) est utilisable ; **aucune bascule micro** (vérifier Paramètres → Système → Son → Entrée : ton vrai micro reste par défaut).
 3. Cliquer « Télécharger VB-CABLE » → **Attendu** : la page officielle s'ouvre dans le navigateur **uniquement après le clic** (jamais automatiquement).
 4. Fermer l'écran via « Plus tard » → il reste ré-ouvrable via ⚙ Réglages → « Installer VB-CABLE… ».
-5. **Vérifier** : `SoundFart-data\` créé à côté de l'exe avec `config.json`, `tools\`, `soundfart.log`.
+5. **Vérifier** : `SoundFart-data\` créé à côté de l'exe avec `config.json`, `soundfart.log`, `default-sounds\` ; `tools\` n'est créé **qu'au premier usage réel** (bascule micro ou import) — son absence ici est normale.
 
 ## Cas 2 — Installation manuelle de VB-CABLE
 
@@ -23,7 +23,7 @@ Copier `dist\SoundFart.exe` **seul** dans un dossier de test (ex. `C:\SoundFart-
 ## Cas 3 — Bascule micro automatique
 
 1. Réglages → « Bascule micro automatique » ✅ (défaut), « Sortie vers Discord » = `CABLE Input`, « Écoute locale » = casque.
-2. Appliquer → **Attendu** : toast « Entrée micro basculée sur CABLE Output » ; Paramètres Windows → le micro par défaut = CABLE Output.
+2. Lancer `SoundFart.exe` → **Attendu** : toast « Entrée micro basculée sur CABLE Output » **au lancement** (la bascule a lieu à la détection du câble, pas au clic sur Appliquer) ; Paramètres Windows → le micro par défaut = CABLE Output. À l'« Appliquer » ultérieur, pas de nouveau toast si rien n'a changé.
 3. Fermer SoundFart proprement → **Attendu** : le micro revient sur le périphérique d'origine (ex. G930).
 4. Vérifier `SoundFart-data\audio-restore.json` : absent après fermeture propre.
 
@@ -35,12 +35,13 @@ Copier `dist\SoundFart.exe` **seul** dans un dossier de test (ex. `C:\SoundFart-
 
 1. Avec la bascule micro active, ouvrir le Gestionnaire des tâches → terminer `SoundFart.exe` **sans** fermer proprement.
 2. **Attendu** : en ≤ ~2-3 s le micro revient sur le périphérique d'origine (garde `AudioEndpoint.exe guard <pid>` détachée) ; `audio-restore.json` supprimé ; au prochain lancement tout est normal.
-3. Variante matérielle : couper la VM / BSOD → au prochain boot, lancer SoundFart → la restauration a déjà eu lieu via le guard ou se fait au lancement.
+3. Variante matérielle : couper la VM / BSOD → au prochain boot, les endpoints audio persistent → `audio:autoSetup` voit déjà le bon micro et **ne restaure rien au lancement** ; la restauration différée n'a lieu qu'à la prochaine fermeture propre de SoundFart ou via le bouton manuel (tant que `audio-restore.json` existe).
 
 ## Cas 6 — Bouton « Restaurer mon micro Windows »
 
-1. Reproduire un blocage : forcer l'entrée Windows sur « CABLE Output » manuellement pendant que SoundFart tourne, puis fermer SoundFart de façon à ce que l'état soit perdu (ou simuler en supprimant `audio-restore.json` après une bascule manuelle).
-2. ⚙ Réglages → « Restaurer mon micro Windows » → **Attendu** : l'entrée redevient un périphérique non virtuel (vrai micro ou défaut Windows).
+1. Avec la bascule auto active (donc `audio-restore.json` présent), forcer l'entrée Windows sur un **autre** périphérique (ex. « CABLE Output » ou un autre micro) pendant que SoundFart tourne.
+2. ⚙ Réglages → « Restaurer mon micro Windows » → **Attendu** : l'entrée redevient le périphérique d'origine mémorisé (vrai micro / défaut Windows non virtuel) ; `audio-restore.json` consommé.
+3. **Contre-test obligatoire** : supprimer `audio-restore.json` (ou ne jamais basculer) puis cliquer « Restaurer mon micro Windows » → **Attendu** : **rien ne se passe** — SoundFart ne touche jamais un micro qu'il n'a pas lui-même basculé (choix manuel respecté, même sur périphérique virtuel).
 
 ## Cas 7 — Appel Discord à deux + enregistrement « Audio du PC »
 

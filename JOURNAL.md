@@ -91,7 +91,8 @@
 - v0.3 bouton Supprimer ; v0.4 renommer les sons
 
 ## A faire / idees
-- [ ] Tester sous Windows (sortie, micro, latence, build)
-- [ ] Raccourcis clavier globaux par son
+- [ ] Tester sous Windows (sortie, micro, latence, build) — voir TESTS_VM.md
+- [x] Raccourcis clavier globaux par son — fait (globalShortcut Electron)
 - [ ] Lancement auto au demarrage de Windows, reduit dans la barre des taches
-- [ ] Icone de l'application, favoris, rognage (debut/fin) d'un son, normalisation automatique
+- [x] Icone de l'application, favoris, rognage (debut/fin) d'un son, normalisation automatique — faits
+- [ ] Créer un raccourci de lancement automatique Windows / icône de la barre des tâches (non fait volontairement : portée portable)

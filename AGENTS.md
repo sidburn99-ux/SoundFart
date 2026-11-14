@@ -16,6 +16,9 @@ test/            # node:test (npm test)
 AudioEndpoint.cs # bascule micro Windows (compilé csc.exe à la volée)
 AudioTap.cs      # loopback WASAPI -> PCM stdout
 assets/          # icône exe + sons par défaut
+*.bat/*.ps1      # run-dev, build, test-env, regen-suivi
+suivi.tsv/html   # journal de suivi (régénérer le html après tsv)
+Docs : README, SPECIFICATION, GUIDE, JOURNAL*, TESTS_VM, THIRD-PARTY-NOTICES
 ```
 
 ## Limites
@@ -31,7 +34,7 @@ npm test          # tests unitaires (node:test)
 npm run dist      # build portable -> dist\SoundFart.exe
 npm start         # dev
 node --check <f>  # syntaxe JS
-# Lancement test : env -u ELECTRON_RUN_AS_NODE ./dist/SoundFart.exe [--test-profile]
+# Lancement test : ./test-env.bat, ou sous bash : env -u ELECTRON_RUN_AS_NODE ./dist/SoundFart.exe [--test-profile]
 ```
 
 ## Git
@@ -47,7 +50,7 @@ node --check <f>  # syntaxe JS
 
 ## Pièges connus (ne pas réintroduire)
 
-- `ELECTRON_RUN_AS_NODE=1` dans l'env → exe exécuté en Node pur, sortie silencieuse. Tests de lancement : `env -u ELECTRON_RUN_AS_NODE`.
+- `ELECTRON_RUN_AS_NODE=1` dans l'env → exe exécuté en Node pur, sortie silencieuse. Tests de lancement : `test-env.bat` (ou `env -u` sous bash — les .bat neutralisent déjà la variable).
 - PCM AudioTap : float32 **stéréo** 48 kHz = **8 octets/frame** — tout découpage doit rester aligné (`main.js` tapPcmRem) ; worklet : `outputChannelCount:[2]`, `numberOfInputs:0`, message `'flush'` avant `rec.start`.
 - Restauration micro : uniquement si `audio-restore.json` existe (marqueur d'une vraie bascule) — ne jamais forcer un virtuel→non-virtuel sans lui, ne jamais écraser un choix manuel.
 - Crash renderer `AudioContext` (exitCode -1/143) : bug connu non résolu — le signaler s'il réapparaît, ne pas le masquer.

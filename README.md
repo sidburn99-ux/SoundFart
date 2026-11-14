@@ -21,7 +21,7 @@ Soundboard Windows pour Discord : joue des sons dans tes appels, enregistre ta v
 
 ## Utilisation
 
-1. Décompresse/lance `SoundFart.exe` (conserve le dossier `SoundFart-data` à côté — il contient ta config, tes outils et tes logs)
+1. Déplace/lance `SoundFart.exe` (conserve le dossier `SoundFart-data` à côté — il contient ta config, tes outils et tes logs)
 2. Si VB-CABLE est absent, l'écran d'accueil t'invite à le télécharger ; installe-le, redémarre Windows si besoin, puis « J'ai installé, vérifier »
 3. Réglages → audio : choisis **« CABLE Input »** (surligné ★) comme sortie Discord et ton casque comme écoute locale
 4. Clique un son (ou son raccourci) pour le jouer

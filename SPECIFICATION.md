@@ -8,7 +8,7 @@
 
 **SoundFart** est une soundboard Windows pour Discord, développée en **Electron 45** (JavaScript vanilla, zéro framework, zéro dépendance runtime). Objectif : jouer des sons dans un salon vocal Discord via un câble virtuel audio (VB-CABLE), pendant qu'on joue, avec une interface sombre et compacte.
 
-- **Livrable** : `dist\SoundFart.exe` portable (~375 Mo, compression `store`), aucun prérequis (Node, Python…) pour l'utilisateur final.
+- **Livrable** : `dist\SoundFart.exe` portable (~375 Mo, compression `store`). Aucun prérequis pour l'utilisateur final **hors** : VB-CABLE (installé manuellement, requis pour la diffusion Discord) ; `csc.exe` du .NET Framework (présent sur tout Windows 10/11) pour compiler les outils audio au premier usage.
 - **Config** : `SoundFart-data\config.json` à côté de l'exe (repli `%APPDATA%\SoundFart\`) — les sons sont des **références** à des fichiers existants, jamais copiés ni modifiés.
 - **Journal** : `SoundFart-data\soundfart.log`.
 - **Outils téléchargés au premier usage** dans `SoundFart-data\tools\` : `yt-dlp.exe` (~15 Mo, import YouTube), `ffmpeg.exe` (~115 Mo, coupes MP3), `AudioEndpoint.exe` + `AudioTap.exe` (compilés localement depuis les `.cs` via le `csc.exe` de .NET Framework — bascule micro et capture loopback).
@@ -54,8 +54,8 @@ Sécurité : CSP stricte (`default-src 'self'`), `contextIsolation`, `sandbox`, 
 ### 5. Diffusion audio
 - Clic = lecture **immédiate** vers la sortie « Discord » configurée (ex. `CABLE Input`) **et** vers l'écoute locale (casque) — un `AudioContext` Web Audio par route.
 - **Limiteur** anti-saturation sur chaque sortie, volume maître global (0-100 %).
-- Volume par son (0-100 %), badge si ≠ 100 %.
-- **Normalisation** : par son (gain ×1 à ×4 calculé sur le pic réel décodé) et « toute la bibliothèque » — non destructive, badge ⚖.
+- Volume par son (0-300 %), badge si ≠ 100 %.
+- **Normalisation** : par son (gain calculé sur le pic réel décodé, plafonné à ×4 — peut aussi atténuer un son trop fort) et « toute la bibliothèque » — non destructive, badge ⚖.
 - **Bouton STOP** global + raccourci clavier global STOP configurable (défaut `Ctrl+Alt+S`), fonction même fenêtre minimisée.
 - Avertissements si la sortie Discord n'est pas un câble virtuel (évite l'écho micro).
 
@@ -64,11 +64,11 @@ Sécurité : CSP stricte (`default-src 'self'`), `contextIsolation`, `sandbox`, 
 - Fondus d'entrée/sortie en millisecondes, préécoute de l'extrait.
 - **Tête de lecture** temps réel sur l'onde pendant l'écoute + clic pour chercher.
 - Réinitialisation ; paramètres stockés en config, appliqués à la lecture **sans modifier le fichier**.
-- **Export MP3 physique** : « MP3 de l'extrait » → `ffmpeg -ss/-to` produit un vrai fichier dans `<stockage>/cuts/` ; option de remplacer le son par ce MP3 (découpe/fondus réinitialisés).
+- **Export MP3 physique** : « MP3 de l'extrait » → `ffmpeg -ss <début> -i <src> -t <durée>` produit un vrai fichier dans `<stockage>/cuts/` ; option de remplacer le son par ce MP3 (découpe/fondus réinitialisés).
 
 ### 7. Import YouTube
 - Coller un lien → `yt-dlp` (téléchargé auto) analyse titre/durée.
-- Début/fin précis (`02:15` ou secondes) → téléchargement de l'extrait.
+- **Timeline vide** (début+fin) → **audio complet** du média ; timeline renseignée → extraction de l'extrait (timeline partielle = début sans fin refusée avec message explicite).
 - **Si ffmpeg présent** : vrai MP3 de l'extrait (`--download-sections`) ; sinon audio complet + trim non destructif.
 - Préécoute, nom + catégorie, ajout direct. Barre de progression.
 - Conforme : yt-dlp standard, pas de contournement de DRM (responsabilité utilisateur).
@@ -88,16 +88,18 @@ Sécurité : CSP stricte (`default-src 'self'`), `contextIsolation`, `sandbox`, 
 - Fichiers enregistrés en webm/opus (ou m4a/ogg selon support) dans `<stockage>/recordings/`, noms uniques.
 
 ### 10. Bascule automatique du micro Windows
-- Au lancement (si activé, défaut ON) : l'entrée micro Windows par défaut passe sur **CABLE Output** via `AudioEndpoint.exe` (C#, Core Audio `IMMDeviceEnumerator` + `IPolicyConfig.SetDefaultEndpoint`, rôles console + communications).
+- Au lancement (si activé, défaut ON) : l'entrée micro Windows par défaut passe sur **CABLE Output** via `AudioEndpoint.exe` (C#, Core Audio `IMMDeviceEnumerator` + `IPolicyConfig.SetDefaultEndpoint`, rôles console + multimedia + communications).
 - Le périphérique d'origine (ex. G930) est mémorisé dans `audio-restore.json`.
-- **Restauration** à la fermeture propre, après crash/kill (`AudioEndpoint.exe guard <pid>` détaché, vérifie `owner` dans `audio-restore.json`), sur `uncaughtException`/`unhandledRejection`, et **manuellement** via le bouton « Restaurer mon micro Windows » des réglages (avec filet de secours si l'état est perdu : détection d'une entrée coincée sur un périphérique virtuel → rebascule sur le premier non virtuel).
+- **Restauration** : uniquement si `audio-restore.json` existe (preuve d'une vraie bascule SoundFart) — à la fermeture propre, après crash/kill du process (`AudioEndpoint.exe guard <pid>` détaché, vérifie `owner` dans `audio-restore.json` + `StartTime` du process contre la réutilisation de PID), sur `uncaughtException`, et **manuellement** via le bouton « Restaurer mon micro Windows » des réglages. Sans marqueur, SoundFart ne touche **jamais** au micro (choix manuel respecté, même si l'entrée est sur un périphérique virtuel). `unhandledRejection` ne restaure pas (log seulement).
 - **Watchdog** (réglage `watchdogMic`, défaut ON) : `execFile` async toutes les 10 s, anti-chevauchement ; si l'entrée est modifiée hors SoundFart, la surveillance est **suspendue pour la session** (impossible de distinguer l'utilisateur d'une app tierce comme Discord).
 - Discord doit utiliser « Défaut » comme entrée pour suivre la bascule (documenté).
 
 ### 11. Stockage configurable
-- Réglage « Dossier de stockage » : les fichiers **créits** par l'app (imports YouTube, enregistrements, extraits MP3) vont dans `<dossier>/imports|recordings|cuts/`.
+- Réglage « Dossier de stockage » : les fichiers **créés** par l'app (imports YouTube, enregistrements, extraits MP3) vont dans `<dossier>/imports|recordings|cuts/`. Avant chaque import YouTube et chaque enregistrement, un sélecteur de dossier est proposé (dernier dossier mémorisé dans `lastDestDir`).
+- **5 sons par défaut** copiés une fois dans `<stockage>/default-sounds/` à la première installation (la bibliothèque référence ces copies).
+- **Pas de migration** d'une éventuelle ancienne config `%APPDATA%\SoundFart` vers `SoundFart-data` : utiliser Export/Import JSON ou copier manuellement `config.json`.
 - **Mode portable complet** : dans l'exe portable, `userData` = `SoundFart-data/` à côté de l'exe (config, outils compilés, logs, caches Electron) via `PORTABLE_EXECUTABLE_DIR` ; repli `%APPDATA%\SoundFart` si non accessible. `--test-profile` isole dans `%TEMP%\SoundFart-test`.
-- **VB-CABLE** : jamais embarqué ni installé (licence VB-Audio). L'utilisateur l'installe depuis https://vb-audio.com/Cable/ ; sans câble, écran d'accueil « VB-CABLE requis » + bandeau permanent, diffusion Discord et bascule micro désactivées, le reste reste utilisable ; détection à chaud par `devicechange` (diffusion + bascule micro démarrent sans relancer).
+- **VB-CABLE** : jamais embarqué ni installé (licence VB-Audio). L'utilisateur l'installe depuis https://vb-audio.com/Cable/ ; sans câble, écran d'accueil « VB-CABLE requis » + bandeau permanent, flux câble et bascule micro auto désactivés — un autre périphérique de sortie virtuelle (ex. Voicemeeter) reste sélectionnable manuellement ; détection à chaud par `devicechange`.
 
 ### 12. Sauvegarde / export-import
 - Export JSON de **toute** la config : catégories + ordre, sons (noms, chemins, volumes, favoris, raccourcis, trim/fondus, normalisation), réglages.
@@ -110,7 +112,7 @@ Sécurité : CSP stricte (`default-src 'self'`), `contextIsolation`, `sandbox`, 
 - Édition : Rechercher (Ctrl+F). Audio : Stopper tous les sons (raccourci STOP), Réglages.
 - Affichage : vue courante (radio, catégories synchronisées) + « Regrouper par catégorie ».
 - Aide : Outils de dev (F12), À propos (version).
-- Version affichée à côté du nom en haut à gauche (`v1.3.0`).
+- Version affichée à côté du nom en haut à gauche (lue depuis les métadonnées de l'app — actuellement `v1.4.0`).
 
 ### 14. Divers
 - Instance unique (2e lancement → focus fenêtre), icône/thème sombre, design compact (1180×760, min 900×600).
@@ -132,5 +134,5 @@ Sécurité : CSP stricte (`default-src 'self'`), `contextIsolation`, `sandbox`, 
 
 ## Scripts
 
-- `npm.cmd start` : dev · `npm.cmd run dist` : build exe portable (`build.bat` disponible).
-- `run-dev.bat` : dev sans terminal.
+- `npm.cmd start` : dev · `npm.cmd test` : tests unitaires (node:test) · `node --check <fichier>` : syntaxe · `npm.cmd run dist` : build exe portable (`build.bat` disponible) · `powershell regen-suivi.ps1` : régénère `suivi.html` depuis `suivi.tsv`.
+- `run-dev.bat` : dev sans terminal · `test-env.bat` : lance l'exe portable en profil de test (`%TEMP%\SoundFart-test`).

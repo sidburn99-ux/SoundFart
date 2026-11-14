@@ -36,8 +36,9 @@ Ouvre **⚙ Réglages audio** (barre latérale) :
 | **Sortie vers Discord** | `CABLE Input` — c'est vers là que partent les sons. |
 | **Écoute locale** | Ton casque/enceintes — tu entends les sons sans que ta voix soit captée. |
 | **Mon micro** | Ton vrai micro (casque, webcam…). |
-| **Mixer mon micro** | ✅ si tu veux que tes potes entendent **ta voix + les sons** sur le même micro Discord. ❌ si tu préfères gérer ta voix autrement (ex. « Écouter ce périphérique » de Discord). |
-| **Bascule micro automatique** | ✅ (recommandé) : à l'ouverture, l'entrée micro Windows passe sur **CABLE Output** ; à la fermeture, ton micro (ex. G930) est restauré automatiquement. Un **garde externe** restaure même après un crash ou kill du processus. Le bouton **« Restaurer mon micro Windows »** (section « Récupération micro ») force le retour en cas de blocage. |
+| **Mixer mon micro** | ✅ si tu veux que tes potes entendent **ta voix + les sons** sur le même micro Discord. ❌ si tu préfères gérer ta voix autrement (ex. « Écouter ce périphérique » de Discord). ⚠️ Tant que « Bascule micro automatique » est activée, le mixage est **forcé** — décoche les deux pour une voix gérée ailleurs. |
+| **Bascule micro automatique** | ✅ (recommandé) : à l'ouverture, l'entrée micro Windows passe sur **CABLE Output** ; à la fermeture, ton micro (ex. G930) est restauré automatiquement — uniquement si SoundFart a réellement basculé (ton choix manuel est toujours respecté). Un **garde externe** restaure même après un crash/kill du processus. Le bouton **« Restaurer mon micro Windows »** (section « Récupération micro ») force le retour en cas de blocage. |
+| **Surveillance micro automatique** | ✅ (recommandé) : vérifie périodiquement que l'entrée micro est toujours sur le câble ; si tu changes le micro toi-même (ou via une autre app), la surveillance se **met en pause pour la session** — impossible de distinguer un choix utilisateur d'un changement parasite. |
 | **Dossier de stockage** | Où SoundFart range les fichiers qu'il crée (imports YouTube, enregistrements, extraits MP3). |
 
 Clique **Appliquer**. Le bandeau en bas de fenêtre affiche les routes actives (`Discord : … · Casque : …`).
@@ -54,13 +55,13 @@ Clique **Appliquer**. Le bandeau en bas de fenêtre affiche les routes actives (
 
 ## 5. Utiliser SoundFart
 
-- **Ajouter des sons** : glisse-dépose des fichiers **ou des dossiers** audio dans la fenêtre, ou bouton « Ajouter des sons ». Formats : mp3, wav, ogg, flac, m4a, aac, opus, webm, mp4, mkv, mov.
+- **Ajouter des sons** : glisse-dépose des fichiers **ou des dossiers** audio dans la fenêtre, ou bouton « Ajouter des sons ». Formats : mp3, wav, ogg, flac, m4a, aac, opus, webm, mp4, mkv, mov, m4v.
 - **Jouer** : clic sur une carte → le son part sur Discord **et** dans ton casque.
 - **STOP** : bouton rouge en bas, ou ton raccourci global STOP.
 - **Raccourcis** : dans « Modifier » (✎), clique sur le champ raccourci et tape la combinaison (ex. `Ctrl+Alt+Q`). Fonctionne même fenêtre minimisée.
 - **Catégories / favoris** : barre latérale ; ★ sur une carte pour les favoris.
 - **Découper / fondus** : « Modifier » → onde avec repères roses + fondus d'entrée/sortie.
-- **YouTube** : bouton « 📺 YouTube » → colle le lien, choisis début/fin, télécharge, ajoute. L'extrait est **physiquement découpé en MP3** (ffmpeg est téléchargé une fois, ~80 Mo) ; si le téléchargement de ffmpeg échoue, l'audio complet est gardé avec une découpe logicielle.
+- **YouTube** : bouton « 📺 YouTube » → colle le lien. **Laisse début/fin vides** pour récupérer l'audio complet, ou précise une timeline (`02:15` ou secondes) pour un extrait. L'extrait est **physiquement découpé en MP3** quand ffmpeg est disponible (téléchargé une fois, ~115 Mo) ; sinon audio complet + découpe logicielle dans l'éditeur.
 - **Couper un son en MP3** : « Modifier » (✎) → règle début/fin → « MP3 de l'extrait » → tu peux remplacer le fichier par le petit MP3.
 - **Enregistreur** : « 🎙 Enregistreur » dans la barre latérale. Tu peux mixer plusieurs sources : **micro**, **audio du PC** (voix Discord, musique — capture système) et **câble SoundFart** (sons + micro mixé). Coche « Audio du PC » pour enregistrer une conversation Discord complète.
 - **Sauvegarde** : ⚙ Réglages → « Exporter la configuration » (récupère tout sauf les fichiers audio ; pour changer de PC, replace les fichiers au même endroit ou utilise « Retrouver le fichier… » sur les cartes marquées).
@@ -73,7 +74,7 @@ Clique **Appliquer**. Le bandeau en bas de fenêtre affiche les routes actives (
 | « Fichier introuvable » sur une carte | Le fichier a été déplacé/supprimé | Clique le badge ou clic droit → « Retrouver le fichier… » |
 | Fenêtre noire au démarrage | Fichiers `src/` manquants à côté de `main.js` | Vérifie que `index.html`, `style.css`, `app.js` sont dans `src/` |
 | « Micro inaccessible » | Permission Windows refusée | Paramètres Windows → Confidentialité → Micro |
-| Erreurs techniques | — | `SoundFart-data\soundfart.log` + F12 pour la console |
+| Erreurs techniques | — | `SoundFart-data\soundfart.log` (`%APPDATA%\SoundFart\soundfart.log` en repli) + F12 pour la console |
 
 ## 7. Note légale YouTube
 

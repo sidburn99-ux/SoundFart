@@ -8,8 +8,8 @@ date	feature	statut	note
 2026-11-13	Enregistreur multi-sources (micro + audio PC + cable)	OK	Mix + limiteur
 2026-11-13	Echo cancellation / noise suppression / AGC micro seul	OK	getUserMedia constraints
 2026-11-13	Bascule micro auto CABLE Output + restauration defaut Windows	OK	AudioEndpoint.exe, role multimedia en priorite
-2026-11-13	AudioTap.exe : loopback WASAPI -> CABLE Input	OK_TESTE_CLI	Capture/reinjecte teste en ligne de commande, non teste via UI
-2026-11-13	VB-CABLE bundlé + install silencieuse /S	A_TESTER	Installateur embarque, UAC auto, non teste sur machine sans cable
+2026-11-13	AudioTap.exe : loopback WASAPI -> CABLE Input	OBSOLÈTE	Remplace en v1.4 : mode PCM stdout -> IPC -> AudioWorklet, sans reinjection CABLE (anti-echo)
+2026-11-13	VB-CABLE bundlé + install silencieuse /S	OBSOLÈTE	Supprime : portable-only, VB-CABLE jamais embarque (licence), installe par l'utilisateur
 2026-11-13	5 sons par defaut bundled (assets/sounds)	A_TESTER	Seed si bibliotheque vide
 2026-11-13	Menu F11 (Fichier/Edition/Audio/Affichage/Aide)	OK	Menu natif Electron
 2026-11-13	Regroupement par categorie dans Tous les sons	OK	Option topbar + menu
@@ -20,16 +20,16 @@ date	feature	statut	note
 2026-11-14	Git versioning + AGENTS.md + suivi.tsv/html	OK	Infrastructure en place
 2026-10-14	Audit complet 3 subagents (main/app/preload/cs)	OK	~50 constats, 8 majeurs corriges
 2026-10-14	Fix hasVirtualCable trop large (VB-CABLE jamais installe)	OK	Match specifique « cable » requis
-2026-10-14	Fix UAC re-prompt a chaque lancement	OK	Snooze 7 jours (cable-install-snooze.json)
+2026-10-14	Fix UAC re-prompt a chaque lancement	OBSOLÈTE	Snooze cable-install-snooze.json supprime avec ensureCableDriver (portable-only)
 2026-10-14	Fix autoSetup flicker + perte marqueur restore	OK	Early-return si deja sur cable, restoreFile conserve
 2026-10-14	Fix restoreMicNow roles console/comm separes	OK	Multi prioritaire, prev par role, unlink seulement si succes
 2026-10-14	Fix displayMedia rendait video pour requete audio-seule	OK	Respecte audioRequested/videoRequested
 2026-10-14	Fix onCableReady sans applyAudio + actx fuiter enregistreur	OK	resolveDevices+applyAudio, actx.close au stop
 2026-10-14	Correctifs differe (contexte): AudioTap parent-death, tapDead event, dedup compilations, normalizeCfg validation, applyAudio try/catch separes, PropVariantClear/RCW COM	A_FAIRE	Documente pour prochaine session
-2026-10-14	Watchdog micro: re-bascule auto si l'entree defaut quitte le cable	OK	setInterval 10s, check seulement si bascule active (restoreFile)
+2026-10-14	Watchdog micro: re-bascule auto si l'entree defaut quitte le cable	OBSOLÈTE	Remplace : surveillance suspendue pour la session si micro change hors SoundFart (jamais de re-bascule forcee)
 2026-10-14	Correctifs audit: 31 bugs (main.js, app.js, AudioTap.cs)	OK	Recorder orphelin, races, fuites COM, validations, perfs
-2026-10-15	Installateur NSIS deux phases: VB-CABLE d'abord, reboot, puis app	OK	Phase1 cable present->install directe testee; phase2 simulee /S->install+launch+cleanup OK; reste test E2E reel cable absent+reboot
-2026-10-15	RunOnce post-reboot dans ensureCableDriver (filet securite runtime)	OK	armPostRebootRelaunch avant shutdown /r /t 60
+2026-10-15	Installateur NSIS deux phases: VB-CABLE d'abord, reboot, puis app	OBSOLÈTE	Cible NSIS + installer.nsh supprimes : portable-only
+2026-10-15	RunOnce post-reboot dans ensureCableDriver (filet securite runtime)	OBSOLÈTE	Supprime avec ensureCableDriver
 2026-10-15	Verification bascule micro: lancement+watchdog+restore	OK	3 roles cables au set; watchdog 10s; restore prouve live (G930 restaure a la fermeture); fix role multimedia ajoute aux checks
 2026-11-14	LOT1-1.1 Instance unique: app.exit(0) sans will-quit/restauration	Testé partiel	2e instance sortie verifiee (1 arbre de process); audio-restore.json factice reste intact; scenario micro/cable NON teste (VB-CABLE absent)
 2026-11-14	LOT1-1.2 AudioTap garde parent par temps (500ms) + StartTime anti-reutilisation PID	Testé réel	Parent tue (taskkill /F) -> tap detecte et sort en <=2s meme flux PCM actif
@@ -80,3 +80,12 @@ date	feature	statut	note
 2026-11-14	AUDIT-P4 audio:restore garde fromApp, openDir exige dossier, validHttpUrl https-only, media:cut whitelist ext + protocol_whitelist file, runYt timeout 2min, yt:download template unique, fromApp accepte index.html racine	Testé partiel	Statique + node --check; flux yt reel NON reteste
 2026-11-14	AUDIT-P5 Docs: SPECIFICATION v1.4.0/~375Mo/SoundFart-data/profondeur 3, AGENTS.md chemin outils, README retire « lecture aleatoire » (absente du code)	Testé réel	Cohérence verifiee vs code
 2026-11-14	UX-REGLAGES Surbrillance peripheriques audio : ★/⚠ sur les options (CABLE Input recommande, cable en ecoute locale evite, micro virtuel evite), bordure rose/rouge du select selon le choix, legende en haut des reglages, micro enregistreur marque aussi	Testé partiel	Build OK; rendu visuel NON verifie en vrai
+2026-11-14	AGENTS.md reecrit (82 lignes) : bornes Always/Ask/Never, arborescence, Pieges connus, Definition of Done — inspire guides agents.md/AAIF + Rocket.Chat/Kong/LTX	OK	Pousse 2b3a918
+2026-11-14	AUDIT2-C1 ffmpeg jamais installable : .sha256 gyan.dev = hash nu sans nom de fichier, downloadVerified exigeait « hash  nom »	Testé réel	Corrige : format hash nu ligne unique accepte; sums reelles telechargees et inspectees
+2026-11-14	AUDIT2-A1 Stack de modales : une nouvelle modale remplacait le DOM sans appeler onClose -> fuite complete enregistreur (micro, tap, actx, enregistrement perdu)	Testé partiel	Fix modal() : modalClose global, fermeture propre de la precedente + garde anti double-close
+2026-11-14	AUDIT2-A2 AudioEndpoint.cs : Marshal.Release en trop sur la collection (GetObjectForIUnknown cree un RCW) -> double libération COM potentielle	NON testé	Fix : release retiree, aligne sur AudioTap.cs/RestoreFromFile; non teste en reel
+2026-11-14	AUDIT2-A3 cleanup() enregistreur : return anticipe si rec.stop() echouait -> streams/tap/actx fuyaient	Testé partiel	Fix : teardown quand meme si stop() leve ou rec inactif
+2026-11-14	AUDIT2-A4 tapStart : si spawn echouait sans 'exit', audioTapProc restait non-null -> ok:true a jamais (source PC silencieuse)	Testé partiel	Fix : error handler null audioTapProc + check audioTapFailed
+2026-11-14	AUDIT2-A5 Durcissements : downloadFile borne 300 Mo, media:cut start>=0, __proto__ supprime avant merge config (top+nested), yt-dlp progression lue sur stderr, pas de downgrade yt-dlp, windowsHide sur tous les process natifs	Testé partiel	Statique + node --check; npm test 14/14
+2026-11-14	AUDIT2-DOCKS Cohérence doc: SPEC (volume 300%, norm<=x4, roles x3, restore via marqueur seul, stockage prompts/seeds/non-migration, YouTube complet, ffmpeg ~115Mo, version dynamique, scripts), GUIDE (couplage micMix+bascule, watchdog, m4v, log repli), TESTS_VM (cas 1/3/5/6 corriges), README, journaux TODO, commentaires AudioTap/AudioEndpoint, THIRD-PARTY URL, suivi obsolete marquee	OK	Audit 3 subagents; incoherences corrigees
+2026-11-14	AUDIT2-RESTES Non resolus: crash renderer AudioContext (exitCode -1/143), backpressure PCM non borne, decodeAudioData >1h, limiteur souple clipping 300%, config:load sans borne taille, fs sync file:check sur gros volumes, menu+globalShortcut double STOP, label UI « SoundFart-data » en dur hors portable	A_FAIRE	Documentes pour chantier dedie
