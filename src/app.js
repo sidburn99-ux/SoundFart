@@ -1314,7 +1314,9 @@ async function recorderModal() {
       })]);
       if (pcOn.checked && !tapOn) want.push(['audio du PC', systemStream]);
       if (cableOn.checked) want.push(['câble SoundFart', cableStream]);
-      if (!want.length) throw new Error('coche au moins une source');
+      // tapOn = source « audio du PC » active via PCM/worklet (pas de getUserMedia) :
+      // elle compte comme une source meme si want est vide.
+      if (!want.length && !(pcOn.checked && tapOn)) throw new Error('coche au moins une source');
       for (const [label, fn] of want) {
         try {
           const st = await fn();
@@ -1399,8 +1401,20 @@ async function recorderModal() {
 
   stopBtn.addEventListener('click', () => { try { if (rec && rec.state !== 'inactive') rec.stop(); } catch {} });
 
+  const cableDevLabel = () => {
+    const d = (audio.devices.inp || []).find((x) => /output/i.test(x.label) && VIRTUAL_RE.test(x.label))
+      || (audio.devices.inp || []).find((x) => /cable/i.test(x.label));
+    return d ? d.label : 'CABLE Output (introuvable)';
+  };
+  const micLabel = () => (micSel.selectedOptions[0] ? micSel.selectedOptions[0].textContent : 'aucun micro');
+  const srcNames = el('div', { class: 'hint' });
+  const syncSrcNames = () => { srcNames.textContent = 'Sources : micro = ' + micLabel() + ' · audio du PC = sortie système · câble = ' + cableDevLabel(); };
+  micSel.addEventListener('change', syncSrcNames);
+  syncSrcNames();
+
   modal('Enregistreur', [
     field('Micro', el('div', { class: 'row' }, micOn, micSel), 'Voix via le périphérique d\'entrée choisi.'),
+    srcNames,
     field('Audio du PC', pcOn, 'Coche pour mixer ce que tu entends (musique, voix Discord, jeu) directement dans l\'enregistrement — le flux passe par SoundFart sans repasser par le câble, donc sans écho pour tes amis.'),
     field('Câble SoundFart', cableOn, 'Coche pour ajouter ce qui passe dans le câble virtuel (sons de la soundboard + micro mixé).'),
     el('div', { class: 'hint', text: 'Tu peux combiner plusieurs sources : elles sont mixées avec un limiteur anti-saturation. Le son est enregistré en qualité numérique, sans passer par les haut-parleurs.' }),
