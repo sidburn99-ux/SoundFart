@@ -2,7 +2,26 @@
 
 Journal de bord du développement. Règle : ne jamais marquer une fonctionnalité comme « testée » si elle ne l'a pas réellement été.
 
-## État actuel : v1.3
+## État actuel : v1.4
+
+### v1.4 — portable only, VB-CABLE manuel, robustesse audio, tests
+
+#### Fait dans cette version
+- [x] **Portable uniquement** : cible NSIS supprimée, plus d'installeur ni de désinstalleur. Un seul `SoundFart.exe` (electron-builder `portable`, compression `store` : ~375 Mo, démarrage ~2 s contre ~6,6 s en normal/110 Mo).
+- [x] **Mode portable complet** : `userData` = `SoundFart-data/` à côté de l'exe (`PORTABLE_EXECUTABLE_DIR`), repli `%APPDATA%` ; `--test-profile` isole les tests.
+- [x] **VB-CABLE jamais embarqué ni installé** (licence VB-Audio : redistribution interdite sans accord — le readme l'interdit explicitement). Écran d'accueil « VB-CABLE requis » + bandeau permanent sans câble ; bouton de téléchargement (IPC `cable:openPage`, URL fixe côté main) ; « J'ai installé, vérifier » ; fermeture auto via `devicechange` ; câblage à chaud (diffusion + bascule micro démarrent sans relancer). `ensureCableDriver`/PnP/snooze/RunOnce supprimés.
+- [x] **Instance unique stricte** : la 2e instance `app.exit(0)` sans `will-quit` ni restauration micro (testé : `audio-restore.json` intact).
+- [x] **AudioTap durci + PCM** : check parent par temps (500 ms, `TickCount` + start-time anti-PIID-reuse), erreurs fatales → exit≠0 + stderr, refus source=câble (anti-boucle), downmix >2 canaux (central 0,707), mode `pcm` float32 stéréo 48 kHz sur stdout → IPC → **AudioWorklet** pour l'enregistreur « Audio du PC » **sans passer par le câble** (anti-écho Discord par construction). Mesuré : flux réel peak=179205.
+- [x] **Restauration micro blindée** : mode `guard <pid>` détaché (restauration à la mort du parent même après kill/crash), `uncaughtException`/`unhandledRejection` → log + restauration, watchdog async (`execFile`, anti-chevauchement, suspension session si micro modifié hors SoundFart), bouton manuel « Restaurer mon micro Windows » + filet de secours.
+- [x] **Robustesse** : téléchargements HTTPS-only + SHA-256 + versions épinglées (yt-dlp 2026.10.26, ffmpeg 9.0.2), outils C# hashés (`AudioEndpoint-<hash8>.exe`), cache audio borné en octets (256 Mo LRU), validation IPC `senderFrame` + types/bornes, config `.bak`/`.broken-<ts>`, CSP durcie.
+- [x] **Qualité** : `lib/audio-utils.js` (UMD, fonctions pures partagées main/renderer) + **14 tests `node:test`** (`npm test`) ; logs à niveaux info/warn/error + id de session ; `npm audit` = 6 moderates dans `minimatch` via electron-builder (build-only, non embarqué).
+
+#### Vérifications effectuées (v1.4)
+- `node --check` sur tous les JS ; `npm test` 14/14 ; build portable OK.
+- Lancement réel sans VB-CABLE : écran « VB-CABLE requis » affiché (log ui), bandeau, aucune bascule micro (pas de `audio-restore.json` créé), arrêt propre.
+- AudioTap PCM : flux mesuré non nul (peak=179205 pendant lecture) ; mort du parent ≤2 s ; guard : restauration + suppression du fichier d'état.
+- Instance unique : 2e lancement → un seul arbre de processus, état de restauration intact.
+- NON testé : tout le flux avec VB-CABLE installé (écran→téléchargement→vérifier→diffusion→bascule→restauration), appel Discord réel (écho), `npm audit` corrigé, UI cliquée.
 
 ### v1.3 — coupe physique, dossier de stockage, vignettes, bascule micro auto
 

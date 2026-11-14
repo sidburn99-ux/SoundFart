@@ -82,7 +82,7 @@ Sécurité : CSP stricte (`default-src 'self'`), `contextIsolation`, `sandbox`, 
 ### 9. Enregistreur intégré
 - **Multi-sources combinables** (mixées via AudioContext + DynamicsCompressor) :
   - **Micro** : périphérique au choix, avec traitement vocal (echoCancellation, noiseSuppression, autoGainControl) — la voix seule est traitée.
-  - **Audio du PC** : capture de la sortie système Windows (getDisplayMedia + loopback `audio:'loopback'`, handler `setDisplayMediaRequestHandler`) → voix Discord, YouTube, jeu. Limité à la sortie par défaut Windows.
+  - **Audio du PC** : `AudioTap.exe` (C#, WASAPI loopback) sort du **PCM float32 stéréo 48 kHz sur stdout** → relayé par IPC (`sf:tapPcm`, aligné sur 8 octets/frame) → **AudioWorklet** (`src/tap-processor.js`) → limiteur → enregistreur. **Ce flux ne passe jamais par CABLE Input** → pas d'écho Discord par construction. Repli : `getDisplayMedia` + loopback `audio:'loopback'` si le tap/worklet échoue. Garde parent par temps (500 ms, anti-réutilisation de PID) : l'orphelin meurt avec le parent.
   - **Câble SoundFart** : captation de `CABLE Output` → sons de la soundboard + micro mixé.
 - Durée affichée, préécoute de l'enregistrement, nom + catégorie, ajout direct à la bibliothèque (puis ouverture de l'éditeur pour découper).
 - Fichiers enregistrés en webm/opus (ou m4a/ogg selon support) dans `<stockage>/recordings/`, noms uniques.
@@ -90,12 +90,14 @@ Sécurité : CSP stricte (`default-src 'self'`), `contextIsolation`, `sandbox`, 
 ### 10. Bascule automatique du micro Windows
 - Au lancement (si activé, défaut ON) : l'entrée micro Windows par défaut passe sur **CABLE Output** via `AudioEndpoint.exe` (C#, Core Audio `IMMDeviceEnumerator` + `IPolicyConfig.SetDefaultEndpoint`, rôles console + communications).
 - Le périphérique d'origine (ex. G930) est mémorisé dans `audio-restore.json`.
-- **Restauration** à la fermeture propre **et** au prochain lancement après crash.
+- **Restauration** à la fermeture propre, après crash/kill (`AudioEndpoint.exe guard <pid>` détaché, vérifie `owner` dans `audio-restore.json`), sur `uncaughtException`/`unhandledRejection`, et **manuellement** via le bouton « Restaurer mon micro Windows » des réglages (avec filet de secours si l'état est perdu : détection d'une entrée coincée sur un périphérique virtuel → rebascule sur le premier non virtuel).
+- **Watchdog** (réglage `watchdogMic`, défaut ON) : `execFile` async toutes les 10 s, anti-chevauchement ; si l'entrée est modifiée hors SoundFart, la surveillance est **suspendue pour la session** (impossible de distinguer l'utilisateur d'une app tierce comme Discord).
 - Discord doit utiliser « Défaut » comme entrée pour suivre la bascule (documenté).
 
 ### 11. Stockage configurable
-- Réglage « Dossier de stockage » : les fichiers **créés** par l'app (imports YouTube, enregistrements, extraits MP3) vont dans `<dossier>/imports|recordings|cuts/`.
-- Défaut : `%APPDATA%\SoundFart`. Sélecteur de dossier + réinitialisation.
+- Réglage « Dossier de stockage » : les fichiers **créits** par l'app (imports YouTube, enregistrements, extraits MP3) vont dans `<dossier>/imports|recordings|cuts/`.
+- **Mode portable complet** : dans l'exe portable, `userData` = `SoundFart-data/` à côté de l'exe (config, outils compilés, logs, caches Electron) via `PORTABLE_EXECUTABLE_DIR` ; repli `%APPDATA%\SoundFart` si non accessible. `--test-profile` isole dans `%TEMP%\SoundFart-test`.
+- **VB-CABLE** : jamais embarqué ni installé (licence VB-Audio). L'utilisateur l'installe depuis https://vb-audio.com/Cable/ ; sans câble, écran d'accueil « VB-CABLE requis » + bandeau permanent, diffusion Discord et bascule micro désactivées, le reste reste utilisable ; détection à chaud par `devicechange` (diffusion + bascule micro démarrent sans relancer).
 
 ### 12. Sauvegarde / export-import
 - Export JSON de **toute** la config : catégories + ordre, sons (noms, chemins, volumes, favoris, raccourcis, trim/fondus, normalisation), réglages.
@@ -119,8 +121,10 @@ Sécurité : CSP stricte (`default-src 'self'`), `contextIsolation`, `sandbox`, 
 
 ## Points non vérifiés / limites connues (honnêteté)
 
-- **Diffusion audio réelle vers Discord** non testée en conditions réelles (dépend du câble VB-CABLE et du réglage Discord).
-- **Capture « Audio du PC »** : dépend de la sortie par défaut Windows ; testée en cours, loopback Windows/Electron parfois capricieux.
+- **Diffusion audio réelle vers Discord** non testée en conditions réelles (dépend du câble VB-CABLE installé par l'utilisateur et du réglage Discord).
+- **Capture « Audio du PC »** : flux PCM AudioTap→worklet mesuré non nul en local (peak=179205), mais **non validé en appel Discord réel** (écho côté interlocuteur à vérifier).
+- **VB-CABLE** : non installé par SoundFart — toute la chaîne micro/câble/Discord reste à tester après installation manuelle du pilote.
+- **npm audit** : 6 vulnérabilités modérées dans `minimatch` (via electron-builder, dépendance de build **non embarquée** dans l'app) — non corrigées (le fix impose un downgrade cassant).
 - **Import YouTube** : nécessite réseau + yt-dlp ; ffmpeg téléchargé au 1er usage (~115 Mo).
 - Formats conteneurs exotiques (mkv, mov…) : décodage dépend de l'ffmpeg embarqué d'Electron, certains peuvent échouer.
 - Raccourcis globaux : testés à l'enregistrement, pas validés en jeu.

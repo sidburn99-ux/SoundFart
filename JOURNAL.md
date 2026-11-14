@@ -1,6 +1,13 @@
 # Journal de code - SoundFart
 
-## Etat actuel : v1.3
+## Etat actuel : v1.4
+
+### v1.4 - portable only, VB-CABLE manuel, robustesse audio, tests
+- [x] Portable uniquement (SoundFart.exe, compression store ~375 Mo, demarrage ~2 s) + SoundFart-data a cote de l'exe (config/outils/logs)
+- [x] VB-CABLE jamais embarque (licence) : ecran d'accueil + bandeau + lien officiel vb-audio.com/Cable + detection a chaud devicechange ; ensureCableDriver/NSIS/snooze supprimes
+- [x] Instance unique stricte (app.exit(0), pas de restauration parasite) ; AudioTap PCM float32->IPC->AudioWorklet (anti-echo Discord) + gardes parent/erreurs/downmix ; guard <pid> + watchdog async + bouton « Restaurer mon micro »
+- [x] Telechargements verifies SHA-256 + versions epinglees ; outils C# hashés ; cache 256 Mo ; IPC valide ; CSP durcie ; lib/audio-utils.js + 14 tests node:test ; logs a niveaux + session
+- Detail : JOURNAL_DE_DEVELOPMENT.md — NON teste : flux complet avec VB-CABLE installe, appel Discord reel
 
 ### v1.3 - coupe physique MP3, dossier de stockage, vignettes, bascule micro auto
 - [x] ffmpeg telecharge auto (~80 Mo) : extraits YouTube en vrai MP3 + bouton "MP3 de l'extrait" dans l'editeur

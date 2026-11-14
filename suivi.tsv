@@ -57,3 +57,7 @@ date	feature	statut	note
 2026-11-14	LOT4-4.2 npm audit: 6 moderates, toutes dans minimatch via electron-builder (devDep, non embarque dans l'app); fix = downgrade cassant -> non applique, liste comme risque residuel	OK	Rien d'embarque dans le runtime
 2026-11-14	LOT4-4.3 Log avec niveaux info/warn/error + identifiant de session [sXXXXXX], bornes 2 Mo conservees	Testé réel	Lancement: [info] [s38f76e] [ui] ecran VB-CABLE requis affiche
 2026-11-14	LOT4-4.4 Revue src/app.js (editeur, raccourcis, modales, AudioContext)	OK	Rien de clairement bug: playGen anti-race, onended cleanup, teardownAudio ferme contextes, ecouteurs canvas lies aux elements, onClose modales libere preview/stopCleanup; points residuels notes dans le rapport
+2026-11-14	LOT5-5.1 Docs: SPECIFICATION.md (AudioTap PCM/worklet, guard/watchdog/restore manuel, portable complet, VB-CABLE manuel), JOURNAL_DE_DEVELOPMENT.md + JOURNAL.md v1.4, GUIDE.md deja a jour	OK	Doc a jour
+2026-11-14	LOT5-5.2 Plan de test VM Windows 11 (integrite memoire) ecrit: TESTS_VM.md, 10 cas avec resultats attendus	OK	A jouer par l'utilisateur sur VM propre
+2026-11-14	LOT5-5.3 Rapport final produit en fin de session	OK	Voir reponse + commits
+2026-11-14	CHECK-OPTIM Debug/optimisation: relais PCM aligne 8o/frame, bufCache LRU octets correct, decodeAudioData sur copie, pas de execPath, pas de fuite evidente; risques residuels listes	OK	Revue ciblee main.js/app.js
