@@ -5,6 +5,7 @@
 //   AudioEndpoint.exe get <render|capture>  -> "console=<id>" puis "comm=<id>" du peripherique par defaut
 //   AudioEndpoint.exe set <render|capture> <id> -> definie le peripherique par defaut (roles console + communications)
 using System;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 
 internal static class AudioEndpoint
@@ -154,9 +155,90 @@ internal static class AudioEndpoint
             throw new Exception("SetDefaultEndpoint a echoue (0x" + hr1.ToString("X8") + ")");
     }
 
+    // Mode « guard <pid> <fichier-restore.json> » : processus detache lance au moment de la
+    // bascule micro. Il attend la mort du process parent (crash/kill de SoundFart) puis
+    // restaure l'entree capture depuis le fichier JSON, avec la meme priorite que
+    // restoreMicNow() de main.js : defaut Windows non virtuel > ids d'origine > 1er non virtuel.
+    // Ne fait rien si le fichier a deja ete consomme (fermeture propre) ou si le champ
+    // « owner » ne correspond pas au pid parent (un autre SoundFart a repris la bascule).
+    private static readonly System.Text.RegularExpressions.Regex VIRTUAL_RE =
+        new System.Text.RegularExpressions.Regex("cable|virtual|voicemeeter|vb-audio", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+    private static bool NonVirtual(string id, System.Collections.Generic.List<KeyValuePair<string, string>> caps)
+    {
+        if (string.IsNullOrEmpty(id)) return false;
+        foreach (var kv in caps) if (kv.Key == id) return !VIRTUAL_RE.IsMatch(kv.Value ?? "");
+        return false;
+    }
+
+    private static int Guard(IMMDeviceEnumerator en, int pid, string restorePath)
+    {
+        // Attente de la mort du parent (poll 500 ms).
+        for (;;)
+        {
+            try { System.Diagnostics.Process.GetProcessById(pid); }
+            catch { break; }
+            System.Threading.Thread.Sleep(500);
+        }
+        try
+        {
+            if (!System.IO.File.Exists(restorePath)) return 0; // fermeture propre : rien a faire
+            string json = System.IO.File.ReadAllText(restorePath);
+            // owner : le guard ne restaure que si c'est bien SA bascule qui est enregistree
+            var mOwner = System.Text.RegularExpressions.Regex.Match(json, "\"owner\"\\s*:\\s*(\\d+)");
+            if (mOwner.Success && mOwner.Groups[1].Value != pid.ToString()) return 0;
+            var caps = new System.Collections.Generic.List<KeyValuePair<string, string>>();
+            IntPtr pColl;
+            if (en.EnumAudioEndpoints(DataFlow.Capture, DEVICE_STATE_ACTIVE, out pColl) != 0 || pColl == IntPtr.Zero) return 1;
+            var coll = (IMMDeviceCollection)Marshal.GetObjectForIUnknown(pColl);
+            int count; coll.GetCount(out count);
+            for (int i = 0; i < count; i++)
+            {
+                IMMDevice d;
+                if (coll.Item(i, out d) != 0) continue;
+                string id; d.GetId(out id);
+                caps.Add(new KeyValuePair<string, string>(id, DeviceName(d)));
+            }
+            var g = new string[3];
+            GetDefault(en, DataFlow.Capture, g);
+            string prevC = RegexVal(json, "console"), prevM = RegexVal(json, "comm");
+            string defId = NonVirtual(g[1], caps) ? g[1] : ""; // role multimedia = defaut Windows fiable
+            string fb = "";
+            foreach (var kv in caps) if (!VIRTUAL_RE.IsMatch(kv.Value ?? "")) { fb = kv.Key; break; }
+            string cId = defId != "" ? defId : (NonVirtual(prevC, caps) ? prevC : "") ;
+            if (cId == "") cId = fb;
+            string mId = defId != "" ? defId : (NonVirtual(prevM, caps) ? prevM : "");
+            if (mId == "") mId = fb;
+            if (cId == "" && mId == "") return 1; // aucun micro : on garde le fichier pour retry ulterieur
+            SetDefault(DataFlow.Capture, cId != "" ? cId : mId, mId != "" ? mId : cId, defId != "" ? defId : (cId != "" ? cId : mId));
+            try { System.IO.File.Delete(restorePath); } catch {}
+            return 0;
+        }
+        catch { return 1; }
+    }
+
+    private static string RegexVal(string json, string key)
+    {
+        var m = System.Text.RegularExpressions.Regex.Match(json, "\"" + key + "\"\\s*:\\s*\"([^\"]*)\"");
+        return m.Success ? m.Groups[1].Value : "";
+    }
+
+    private static void GetDefault(IMMDeviceEnumerator en, DataFlow flow, string[] ids)
+    {
+        int i = 0;
+        foreach (Role role in new[] { Role.Console, Role.Multimedia, Role.Communications })
+        {
+            IMMDevice dev;
+            string id = "";
+            if (en.GetDefaultAudioEndpoint(flow, role, out dev) == 0 && dev != null)
+                dev.GetId(out id);
+            ids[i++] = id;
+        }
+    }
+
     private static int Usage()
     {
-        Console.Error.WriteLine("usage: AudioEndpoint.exe list | get <render|capture> | set <render|capture> <id>");
+        Console.Error.WriteLine("usage: AudioEndpoint.exe list | get <render|capture> | set <render|capture> <id> [id2] [id3] | guard <pid> <restore.json>");
         return 2;
     }
 
@@ -172,6 +254,12 @@ internal static class AudioEndpoint
                 DataFlow flow = args[1] == "capture" ? DataFlow.Capture : DataFlow.Render;
                 GetDefault(en, flow);
                 return 0;
+            }
+            if (args[0] == "guard" && args.Length >= 3)
+            {
+                int gpid;
+                if (!int.TryParse(args[1], out gpid)) return Usage();
+                return Guard(en, gpid, args[2]);
             }
             if (args[0] == "set" && args.Length >= 3)
             {
