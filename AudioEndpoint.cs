@@ -144,12 +144,13 @@ internal static class AudioEndpoint
         return (T)Activator.CreateInstance(Type.GetTypeFromCLSID(new Guid(clsid)));
     }
 
-    private static void SetDefault(DataFlow flow, string idConsole, string idComm)
+    private static void SetDefault(DataFlow flow, string idConsole, string idComm, string idMulti)
     {
         var policy = Com<IPolicyConfig>("870AF99C-171D-4F9E-AF0D-E63DF40C2BC9");
         int hr1 = policy.SetDefaultEndpoint(idConsole, Role.Console);
         int hr2 = policy.SetDefaultEndpoint(idComm, Role.Communications);
-        if (hr1 != 0 && hr2 != 0)
+        int hr3 = string.IsNullOrEmpty(idMulti) ? 0 : policy.SetDefaultEndpoint(idMulti, Role.Multimedia);
+        if (hr1 != 0 && hr2 != 0 && hr3 != 0)
             throw new Exception("SetDefaultEndpoint a echoue (0x" + hr1.ToString("X8") + ")");
     }
 
@@ -175,7 +176,7 @@ internal static class AudioEndpoint
             if (args[0] == "set" && args.Length >= 3)
             {
                 DataFlow flow = args[1] == "capture" ? DataFlow.Capture : DataFlow.Render;
-                SetDefault(flow, args[2], args.Length > 3 ? args[3] : args[2]);
+                SetDefault(flow, args[2], args.Length > 3 ? args[3] : args[2], args.Length > 4 ? args[4] : args[2]);
                 return 0;
             }
             return Usage();

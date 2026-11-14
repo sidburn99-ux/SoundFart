@@ -458,7 +458,7 @@ function restoreMicNow(tool) {
     const cId = defId || (nonVirtual(prev.console) ? prev.console : '') || fallbackId;
     const mId = defId || (nonVirtual(prev.comm) ? prev.comm : '') || fallbackId;
     if (!cId && !mId) return false; // garde restoreFile pour reessayer plus tard
-    audioExec(tool, ['set', 'capture', cId || mId, mId || cId]);
+    audioExec(tool, ['set', 'capture', cId || mId, mId || cId, defId || cId || mId]);
     try { fs.unlinkSync(restoreFile()); } catch {}
     return true;
   } catch { return false; }
@@ -511,7 +511,7 @@ ipcMain.handle('audio:autoSetup', async (_e, { enabled, cableLabel }) => {
     if (!fs.existsSync(restoreFile())) {
       fs.writeFileSync(restoreFile(), JSON.stringify({ console: cur.console, comm: cur.comm }));
     }
-    audioExec(tool, ['set', 'capture', target.id, target.id]);
+    audioExec(tool, ['set', 'capture', target.id, target.id, target.id]);
     return { ok: true, changed: true, device: target.name };
   } catch (e) {
     return { ok: false, err: e.message };
@@ -670,7 +670,7 @@ function watchdogMic() {
     if (!target) return;
     const cur = parseGet(audioExec(tool, ['get', 'capture']));
     if (cur.console !== target.id || cur.comm !== target.id) {
-      audioExec(tool, ['set', 'capture', target.id, target.id]);
+      audioExec(tool, ['set', 'capture', target.id, target.id, target.id]);
       log('[mic-watchdog] entree re-basculee sur ' + target.name);
     }
   } catch (e) { log('[mic-watchdog] ' + e.message); }
