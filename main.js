@@ -833,8 +833,14 @@ H('audio:tapStart', async () => {
       tapPcmRem = tapPcmRem.slice(aligned);
     });
     audioTapProc.stderr.on('data', (d) => {
-      const line = String(d).trim();
-      if (/ERREUR|echoue|introuvable/i.test(line)) log('[audiotap] ' + line.slice(0, 300), 'error');
+      // Tout le stderr est journalise : les lignes d'init revelent ou le tap
+      // en est (init loopback, hr, srcBuf) — indispensable pour diagnostiquer
+      // un enregistrement « audio du PC » silencieux.
+      for (const line of String(d).split(/\r?\n/)) {
+        const t = line.trim();
+        if (!t) continue;
+        log('[audiotap] ' + t.slice(0, 300), /ERREUR|echoue|introuvable/i.test(t) ? 'error' : 'info');
+      }
     });
     proc.on('exit', () => {
       const wasKilled = audioTapKilling;

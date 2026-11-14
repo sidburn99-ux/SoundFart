@@ -1291,14 +1291,17 @@ async function recorderModal() {
   let streams = [], actx = null, rec = null, chunks = [];
   let recordedSound = null, recTimer = null, recStart = 0, looseTracks = [];
   let dead = false; // passe a true a la fermeture : avorte les startBtn encore en vol
-  let tapNode = null, pcmQ = [];
+  let tapNode = null, pcmQ = [], pcmSeen = false, tapLost = false;
   const killTapNode = () => { if (tapNode) { try { tapNode.disconnect(); } catch {} tapNode = null; } pcmQ = []; };
   const offTapDead = window.sf.onTapDead ? window.sf.onTapDead(() => {
+    window.sf.uiLog('tapDead rec=' + (rec ? rec.state : 'null') + ' dead=' + dead);
+    tapLost = true; // le tap est mort : ni enregistrement silencieux ni faux succes
     if (dead || !rec || rec.state === 'inactive') return;
     toast('Source « Audio du PC » perdue — enregistrement arrêté.', 'warn');
     try { rec.stop(); } catch {}
   }) : null;
   const offTapPcm = window.sf.onTapPcm ? window.sf.onTapPcm((ab) => {
+    if (!pcmSeen) { pcmSeen = true; window.sf.uiLog('tapPcm: premier flux recu (' + ab.byteLength + 'o)'); }
     if (tapNode) { try { tapNode.port.postMessage(ab); } catch {} }
     else if (pcmQ.length < 600) pcmQ.push(ab);
   }) : null;
@@ -1425,6 +1428,7 @@ async function recorderModal() {
       // la voix des amis Discord n'est plus reinjectee dans l'appel (anti-echo).
       // Repli sur getDisplayMedia si le tap echoue.
       let tapOn = false;
+      pcmSeen = false; tapLost = false;
       if (pcOn.checked) {
         try {
           const r = await window.sf.audioTapStart();
@@ -1514,6 +1518,9 @@ async function recorderModal() {
       };
       // modal ferme pendant la preparation : ne pas demarrer l'enregistrement
       if (dead) { deadCleanup(); if (actx) { actx.close().catch(() => {}); actx = null; } return; }
+      // Le tap est mort entre tapStart et maintenant : demarrer produirait un
+      // fichier silencieux — on refuse avec un message clair.
+      if (tapOn && tapLost) throw new Error('audio du PC : flux AudioTap interrompu avant le démarrage');
       if (tapNode) {
         // Flush du ring buffer : le PCM arrive des l'audioTapStart, avant les
         // getUserMedia -> sans ca le debut du fichier contiendrait de l'audio
