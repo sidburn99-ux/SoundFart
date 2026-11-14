@@ -143,12 +143,15 @@ function buildMenu() {
   ]);
 }
 
-ipcMain.on('menu:state', (_e, s) => {
+ipcMain.on('menu:state', (e, s) => {
+  if (!fromApp(e)) return;
   menuState = s || {};
   try { Menu.setApplicationMenu(buildMenu()); } catch {}
 });
 
-ipcMain.on('ui:log', (_e, m) => log('[ui] ' + String(m).slice(0, 800)));
+ipcMain.on('ui:log', (e, m) => {
+  if (fromApp(e)) log('[ui] ' + String(m).slice(0, 800));
+});
 
 H('desktop:source', async () => {
   try {
@@ -213,6 +216,8 @@ H('files:pickDir', async () => {
 H('file:read', async (_e, p) => {
   if (typeof p !== 'string' || !path.isAbsolute(p)) throw new Error('chemin invalide');
   if (!AUDIO_EXT.includes(path.extname(p).toLowerCase())) throw new Error('Format non autorise');
+  const st = await fs.promises.stat(p);
+  if (!st.isFile() || st.size > 512 * 1024 * 1024) throw new Error('fichier audio trop volumineux (> 512 Mo)');
   return fs.promises.readFile(p);
 });
 

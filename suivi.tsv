@@ -61,3 +61,4 @@ date	feature	statut	note
 2026-11-14	LOT5-5.2 Plan de test VM Windows 11 (integrite memoire) ecrit: TESTS_VM.md, 10 cas avec resultats attendus	OK	A jouer par l'utilisateur sur VM propre
 2026-11-14	LOT5-5.3 Rapport final produit en fin de session	OK	Voir reponse + commits
 2026-11-14	CHECK-OPTIM Debug/optimisation: relais PCM aligne 8o/frame, bufCache LRU octets correct, decodeAudioData sur copie, pas de execPath, pas de fuite evidente; risques residuels listes	OK	Revue ciblee main.js/app.js
+2026-11-14	DEBUG Revue complete main.js/app.js/preload/lib + correctifs: garde fromApp sur menu:state/ui:log, file:read borne 512 Mo	Testé réel	Build OK; lancement: [info] [s73f779] ecran VB-CABLE, aucune erreur page
