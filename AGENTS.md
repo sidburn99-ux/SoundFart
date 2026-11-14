@@ -2,15 +2,17 @@
 
 ## Stack
 - Electron 45 (main: `main.js`, preload: `preload.js`, renderer: `src/app.js` + `src/index.html` + `src/style.css`)
-- Vanila JS, pas de framework. Outils natifs C# compilés à la volée via `csc.exe` dans `%APPDATA%\SoundFart\tools\`
+- Vanila JS, pas de framework. Outils natifs C# compilés à la volée via `csc.exe` dans `SoundFart-data\tools\` (à côté de l'exe ; repli `%APPDATA%\SoundFart\tools`)
 - Build : `npm run dist` → `dist\SoundFart.exe` — application PORTABLE uniquement, aucun installeur ni désinstalleur.
-- Config : `%APPDATA%\SoundFart\config.json` — Log : `%APPDATA%\SoundFart\soundfart.log`
+- Config : `SoundFart-data\config.json` (à côté de l'exe) — Log : `SoundFart-data\soundfart.log` ; repli `%APPDATA%\SoundFart\` si dossier de données non accessible ; `--test-profile` isole dans `%TEMP%\SoundFart-test`.
 
 ## Règles de travail OBLIGATOIRES
 
 ### Git
-- Git est OBLIGATOIRE pour versionner CHAQUE changement, même sans remote GitHub.
+- Git est OBLIGATOIRE pour versionner CHAQUE changement.
 - Git est installé à `C:\Program Files\Git\cmd\git.exe` (ajouter au PATH des sessions ou appeler par chemin absolu).
+- Remote : GitHub `git@github.com:sidburn99-ux/SoundFart.git` — **SSH uniquement** (clé `~/.ssh/id_ed25519`, compte `sidburn99-ux`).
+- **`git push` OBLIGATOIRE après CHAQUE commit** — le remote doit toujours être à jour.
 - Un commit par changement cohérent, message clair axé "pourquoi".
 - Ne jamais committer de secrets. `.gitignore` couvre `node_modules/`, `dist/`, `*.log`.
 
