@@ -40,6 +40,18 @@ if (!isPrimary) {
   });
 }
 
+// Mode portable complet : dans l'exe portable, config/outils/logs vivent dans
+// « SoundFart-data » a cote de l'exe (PORTABLE_EXECUTABLE_DIR est pose par
+// electron-builder). Repli silencieux sur %APPDATA% si non accessible.
+if (process.env.PORTABLE_EXECUTABLE_DIR && !process.argv.includes('--test-profile')) {
+  const dataDir = path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'SoundFart-data');
+  try {
+    fs.mkdirSync(dataDir, { recursive: true });
+    fs.accessSync(dataDir, fs.constants.W_OK);
+    app.setPath('userData', dataDir);
+  } catch {}
+}
+
 // Mode test : --test-profile isole config/outils/logs dans %TEMP%\SoundFart-test (config reelle intacte)
 if (process.argv.includes('--test-profile')) {
   app.setPath('userData', path.join(os.tmpdir(), 'SoundFart-test'));

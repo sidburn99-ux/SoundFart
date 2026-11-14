@@ -14,6 +14,7 @@
     "electron-builder": "^26.18.0"
   },
   "build": {
+    "compression": "store",
     "appId": "fr.soundfart.app",
     "productName": "SoundFart",
     "files": ["main.js", "preload.js", "AudioEndpoint.cs", "AudioTap.cs", "assets/**/*", "src/**/*", "THIRD-PARTY-NOTICES"],
