@@ -3,6 +3,7 @@
   "productName": "SoundFart",
   "version": "1.4.0",
   "description": "SoundFart - soundboard pour Discord",
+  "author": "Benoit Prudent",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -15,7 +16,7 @@
   "build": {
     "appId": "fr.soundfart.app",
     "productName": "SoundFart",
-    "files": ["main.js", "preload.js", "AudioEndpoint.cs", "AudioTap.cs", "vendor/**/*", "assets/**/*", "src/**/*", "index.html", "style.css", "app.js"],
+    "files": ["main.js", "preload.js", "AudioEndpoint.cs", "AudioTap.cs", "vendor/**/*", "assets/**/*", "src/**/*"],
     "win": {
       "target": ["portable", "nsis"],
       "signAndEditExecutable": false

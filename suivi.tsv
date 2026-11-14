@@ -37,3 +37,9 @@ date	feature	statut	note
 2026-11-14	LOT1-1.4 sf:tapDead expose (preload) + toast "source Audio du PC perdue" + stop enregistrement	NON testé	Code en place; pas de test kill reel du tap en session
 2026-11-14	LOT1-1.5 AudioTap mode PCM float32 48kHz stdout -> IPC -> AudioWorklet (anti-echo Discord)	Testé partiel	Flux PCM mesure reel: 2.5Mo en ~6s, peak=179205 pendant notify.wav (loopback capte audio systeme); appel Discord 2 pers NON teste
 2026-11-14	LOT1-1.6 AudioEndpoint guard <pid>: restauration micro a la mort du parent + uncaughtException	Testé partiel	Guard reel: parent tue -> restore execute + audio-restore.json supprime; kill SoundFart reel NON teste (cable absent)
+2026-11-14	LOT2-2.1 Watchdog async execFileP + anti-chevauchement + suspension session si micro change + reglage watchdogMic	Testé partiel	Code en place; pas de test reel (VB-CABLE absent -> watchdog jamais actif)
+2026-11-14	LOT2-2.2 Outils C# nommes par hash source (AudioEndpoint-<hash8>.exe), compile serialisee, purge anciens, csc absent -> erreur UI	Testé réel	AudioEndpoint-b90c242c.exe compile au lancement + get capture fonctionnel
+2026-11-14	LOT2-2.3 Telechargements: HTTPS only redirects, versions epinglees (yt-dlp 2026.10.26, ffmpeg 9.0.2), verification SHA-256, ensureFfmpeg single-flight, update yt-dlp 7j + retry import	NON testé	Sommes reelles verifiees en ligne; aucun telechargement reel teste
+2026-11-14	LOT2-2.4 bufCache borne en octets (256 Mo LRU) + warning fichiers >10min	NON testé	Code en place; pas de test OOM reel
+2026-11-14	LOT2-2.5 Garde IPC senderFrame (tous handlers), validations types/bornes, dir absolu, config .bak + .broken horodate	Testé partiel	22 handlers wrappes H(); node --check OK; pas de test d'intrusion
+2026-11-14	LOT2-2.6 CSP base-uri/form-action none, fallback version neutre, package.json files+author nettoyes	OK	Statique

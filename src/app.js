@@ -57,7 +57,7 @@ const defaults = () => ({
   version: 1,
   sounds: [],
   categories: [],
-  settings: { cableId: '', cableLabel: '', monId: 'default', monLabel: '', micId: '', micLabel: '', micMix: false, master: 80, sort: 'added-desc', catSort: 'manual', stopShortcut: 'CommandOrControl+Alt+S', storageDir: '', autoSwitchMic: true, groupByCat: true },
+  settings: { cableId: '', cableLabel: '', monId: 'default', monLabel: '', micId: '', micLabel: '', micMix: false, master: 80, sort: 'added-desc', catSort: 'manual', stopShortcut: 'CommandOrControl+Alt+S', storageDir: '', autoSwitchMic: true, watchdogMic: true, groupByCat: true },
   ui: { cat: 'all' },
 });
 
@@ -147,22 +147,37 @@ function confirmBox(title, msg, okLabel) {
 // ================================================================ moteur audio
 const decoder = new OfflineAudioContext(2, 1, SR);
 const audio = { cable: null, mon: null, micStream: null, devices: { out: [], inp: [] } };
-const bufCache = new Map();
+const bufCache = new Map(); // path -> { buf, bytes } — LRU borne en OCTETS (256 Mo)
+const BUF_CACHE_MAX = 256 * 1024 * 1024;
+const bufBytes = (b) => b.length * b.numberOfChannels * 4; // float32
+const longWarned = new Set();
 const voices = new Set();
 let playGen = 0; // generation audio : stopAll/teardownAudio l'incrementent pour avorter les play() en vol
+let bufCacheBytes = 0;
 
 async function getBuffer(path) {
   if (bufCache.has(path)) {
-    const b = bufCache.get(path);
+    const e = bufCache.get(path);
     bufCache.delete(path);
-    bufCache.set(path, b);
-    return b;
+    bufCache.set(path, e);
+    return e.buf;
   }
   const data = await window.sf.readFile(path);
   const ab = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
   const buf = await decoder.decodeAudioData(ab);
-  bufCache.set(path, buf);
-  if (bufCache.size > 16) bufCache.delete(bufCache.keys().next().value);
+  const bytes = bufBytes(buf);
+  // Fichier tres long : un buffer decode tient ~22 Mo/min stereo — on previent une fois.
+  if (buf.duration > 600 && !longWarned.has(path)) {
+    longWarned.add(path);
+    toast('Fichier long (> 10 min) : il occupera beaucoup de mémoire une fois joué.', 'warn');
+  }
+  bufCache.set(path, { buf, bytes });
+  bufCacheBytes += bytes;
+  while (bufCacheBytes > BUF_CACHE_MAX && bufCache.size > 1) {
+    const k = bufCache.keys().next().value;
+    bufCacheBytes -= bufCache.get(k).bytes;
+    bufCache.delete(k);
+  }
   return buf;
 }
 
@@ -882,6 +897,7 @@ function settingsModal() {
   } });
   const resetDirBtn = el('button', { class: 'ghost', text: 'Réinitialiser', onclick: () => { s.storageDir = ''; dirLbl.textContent = 'Dossier SoundFart par défaut (%APPDATA%\\SoundFart)'; } });
   const autoMic = el('input', { type: 'checkbox', checked: !!s.autoSwitchMic });
+  const watchMic = el('input', { type: 'checkbox', checked: s.watchdogMic !== false });
 
   const normAllBtn = el('button', { text: 'Normaliser toute la bibliothèque', onclick: () => { closeSettings(); normalizeAll(); } });
   const exportBtn = el('button', { text: 'Exporter la configuration', onclick: exportConfig });
@@ -897,6 +913,8 @@ function settingsModal() {
       el('span', { text: 'Mixer mon micro dans la sortie Discord (sinon tes potes n\'entendent que les sons). Décoche si tu utilises « Écouter ce périphérique » de Windows.' })),
     field('Bascule micro automatique', el('label', { class: 'check' }, autoMic,
       el('span', { text: 'Au lancement, l\'entrée micro Windows passe sur « CABLE Output » et revient à ton micro à la fermeture. Dans Discord, choisis « Défaut » comme périphérique d\'entrée pour que ça suive.' }))),
+    field('Surveillance micro automatique', el('label', { class: 'check' }, watchMic,
+      el('span', { text: 'Pendant que SoundFart tourne, revérifie régulièrement que l\'entrée micro est toujours sur le câble. Si tu changes le micro toi-même (ou qu\'une app le change), la surveillance se met en pause jusqu\'au prochain lancement.' }))),
     field('Dossier de stockage', el('div', { class: 'row' }, dirLbl, pickDirBtn, resetDirBtn),
       'Les fichiers créés par SoundFart (imports YouTube, enregistrements, extraits MP3) iront dans ce dossier (sous-dossiers imports/, recordings/, cuts/).'),
     field('Raccourci global STOP', el('div', { class: 'row' }, stopBtn), stopHint),
@@ -914,6 +932,7 @@ function settingsModal() {
       s.stopShortcut = stopSc || '';
       s.storageDir = s.storageDir || '';
       s.autoSwitchMic = autoMic.checked;
+      s.watchdogMic = watchMic.checked;
       save(); c();
       if (await applyAudio()) toast('Réglages audio appliqués.');
       applyShortcuts();
@@ -1595,6 +1614,9 @@ async function init() {
       window.sf.audioAutoSetup({ enabled: cfg.settings.autoSwitchMic, cableLabel: cfg.settings.cableLabel })
         .then((r) => { if (r && r.changed) toast('Entrée micro basculée sur ' + r.device); });
     });
+  });
+  window.sf.onMicWatchOff && window.sf.onMicWatchOff(() => {
+    toast('Entrée micro modifiée pendant la session — surveillance auto suspendue (réglages → surveillance micro).', 'warn');
   });
   window.sf.onShortcut((key) => {
     if (key === '__stop__') { stopAll(false); return; }

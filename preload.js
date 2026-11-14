@@ -38,4 +38,5 @@ contextBridge.exposeInMainWorld('sf', {
   onCableReady: on('sf:cableReady'),
   onTapDead: on('sf:tapDead'),
   onTapPcm: on('sf:tapPcm'),
+  onMicWatchOff: on('sf:micWatchOff'),
 });
