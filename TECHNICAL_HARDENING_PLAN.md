@@ -1,6 +1,7 @@
 # TECHNICAL_HARDENING_PLAN.md — SoundFart
 
 > Rôle : plan de reprise et de suivi d'une mission d'audit/durcissement technique. Statut : **actuel mais éphémère** — point de handoff entre sessions, à vider ou archiver en fin de mission. À consulter : uniquement pour reprendre un chantier hardening.
+> Commit de référence : `a4d4e65` (puis durcissements `ed4c3bf`).
 
 
 ## État des lieux (après 2 audits complets + durcissements)

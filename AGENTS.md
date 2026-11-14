@@ -1,6 +1,6 @@
 # AGENTS.md — SoundFart (règles permanentes)
 
-`AGENTS.md` est la seule source de règles agents — ne pas créer de `CLAUDE.md` ni fichier concurrent. Le code réel fait foi : si la doc diverge, corriger la doc après vérification.
+Toute intervention sur ce dépôt respecte ce fichier. `AGENTS.md` est la seule source de règles agents — ne pas créer de `CLAUDE.md` ni fichier concurrent. Le code réel fait foi : si la doc diverge, corriger la doc après vérification.
 
 ## Règles critiques — Never
 
@@ -31,9 +31,11 @@ test/            # node:test (npm test)
 AudioEndpoint.cs # bascule micro Windows (compilé csc.exe à la volée)
 AudioTap.cs      # loopback WASAPI -> PCM stdout
 assets/          # icône exe + sons par défaut
+*.bat/*.ps1      # run-dev, build, test-env, regen-suivi
+suivi.tsv/html   # journal de suivi (régénérer le html après tsv)
 ```
 
-- Chemins : `SoundFart-data\` à côté de l'exe (portable), repli `%APPDATA%\SoundFart\`, `--test-profile` → `%TEMP%\SoundFart-test`. Ne jamais coder `%APPDATA%` en dur : `app.getPath('userData')` / `storageRoot()`. Détail : SPECIFICATION.md.
+- Chemins : `SoundFart-data\` à côté de l'exe (portable ; contient config, `tools\`, `soundfart.log`), repli `%APPDATA%\SoundFart\`, `--test-profile` → `%TEMP%\SoundFart-test`. Ne jamais coder `%APPDATA%` en dur : `app.getPath('userData')` / `storageRoot()`. Détail : SPECIFICATION.md.
 - PCM AudioTap : float32 **stéréo** 48 kHz = **8 octets/frame** — tout découpage aligné (`main.js` tapPcmRem) ; worklet : `outputChannelCount:[2]`, `numberOfInputs:0`, message `'flush'` avant `rec.start`.
 - Restauration micro : uniquement si `audio-restore.json` existe (marqueur d'une vraie bascule) — ne jamais forcer un virtuel→non-virtuel sans lui, ne jamais écraser un choix manuel.
 - Crash renderer `AudioContext` (exitCode -1/143) : bug connu non résolu — le signaler s'il réapparaît, ne pas le masquer.
@@ -47,7 +49,7 @@ npm test          # tests unitaires (node:test)
 npm run dist      # build portable -> dist\SoundFart.exe
 npm start         # dev
 node --check <f>  # syntaxe JS
-# Lancement test : env -u ELECTRON_RUN_AS_NODE ./dist/SoundFart.exe [--test-profile]
+# Lancement test : ./test-env.bat, ou sous bash : env -u ELECTRON_RUN_AS_NODE ./dist/SoundFart.exe [--test-profile]
 ```
 
 ## Git
@@ -76,6 +78,7 @@ node --check <f>  # syntaxe JS
 
 | Besoin | Document |
 |---|---|
+| Présentation du projet | `README.md` |
 | Comprendre l'architecture et les flux | `SPECIFICATION.md` |
 | Utiliser l'application (fonctions, réglages) | `GUIDE.md` |
 | État d'avancement et statut des tests | `suivi.tsv` |
