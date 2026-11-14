@@ -171,22 +171,15 @@ internal static class AudioEndpoint
         return false;
     }
 
-    private static int Guard(IMMDeviceEnumerator en, int pid, string restorePath)
+    // Restauration immediate depuis un fichier audio-restore.json (utilisee par le
+    // mode 'restore' et par 'guard' apres la mort du parent). Retourne 0 si le
+    // fichier a ete consomme, 1 sinon.
+    private static int RestoreFromFile(IMMDeviceEnumerator en, string restorePath)
     {
-        // Attente de la mort du parent (poll 500 ms).
-        for (;;)
-        {
-            try { System.Diagnostics.Process.GetProcessById(pid); }
-            catch { break; }
-            System.Threading.Thread.Sleep(500);
-        }
         try
         {
-            if (!System.IO.File.Exists(restorePath)) return 0; // fermeture propre : rien a faire
+            if (!System.IO.File.Exists(restorePath)) return 0; // rien a faire
             string json = System.IO.File.ReadAllText(restorePath);
-            // owner : le guard ne restaure que si c'est bien SA bascule qui est enregistree
-            var mOwner = System.Text.RegularExpressions.Regex.Match(json, "\"owner\"\\s*:\\s*(\\d+)");
-            if (mOwner.Success && mOwner.Groups[1].Value != pid.ToString()) return 0;
             var caps = new System.Collections.Generic.List<KeyValuePair<string, string>>();
             IntPtr pColl;
             if (en.EnumAudioEndpoints(DataFlow.Capture, DEVICE_STATE_ACTIVE, out pColl) != 0 || pColl == IntPtr.Zero) return 1;
@@ -217,6 +210,27 @@ internal static class AudioEndpoint
         catch { return 1; }
     }
 
+    private static int Guard(IMMDeviceEnumerator en, int pid, string restorePath)
+    {
+        // Attente de la mort du parent (poll 500 ms).
+        for (;;)
+        {
+            try { System.Diagnostics.Process.GetProcessById(pid); }
+            catch { break; }
+            System.Threading.Thread.Sleep(500);
+        }
+        // owner : le guard ne restaure que si c'est bien SA bascule qui est enregistree
+        try
+        {
+            if (!System.IO.File.Exists(restorePath)) return 0;
+            string json = System.IO.File.ReadAllText(restorePath);
+            var mOwner = System.Text.RegularExpressions.Regex.Match(json, "\"owner\"\\s*:\\s*(\\d+)");
+            if (mOwner.Success && mOwner.Groups[1].Value != pid.ToString()) return 0;
+        }
+        catch { return 0; }
+        return RestoreFromFile(en, restorePath);
+    }
+
     private static string RegexVal(string json, string key)
     {
         var m = System.Text.RegularExpressions.Regex.Match(json, "\"" + key + "\"\\s*:\\s*\"([^\"]*)\"");
@@ -238,7 +252,7 @@ internal static class AudioEndpoint
 
     private static int Usage()
     {
-        Console.Error.WriteLine("usage: AudioEndpoint.exe list | get <render|capture> | set <render|capture> <id> [id2] [id3] | guard <pid> <restore.json>");
+        Console.Error.WriteLine("usage: AudioEndpoint.exe list | get <render|capture> | set <render|capture> <id> [id2] [id3] | guard <pid> <restore.json> | restore <restore.json>");
         return 2;
     }
 
@@ -260,6 +274,12 @@ internal static class AudioEndpoint
                 int gpid;
                 if (!int.TryParse(args[1], out gpid)) return Usage();
                 return Guard(en, gpid, args[2]);
+            }
+            if (args[0] == "restore" && args.Length >= 2)
+            {
+                // Restauration immediate depuis un fichier audio-restore.json (utilisee par le
+                // mode 'guard' et par la restauration manuelle de l'app)
+                return RestoreFromFile(en, args[1]);
             }
             if (args[0] == "set" && args.Length >= 3)
             {

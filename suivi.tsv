@@ -43,3 +43,6 @@ date	feature	statut	note
 2026-11-14	LOT2-2.4 bufCache borne en octets (256 Mo LRU) + warning fichiers >10min	NON testé	Code en place; pas de test OOM reel
 2026-11-14	LOT2-2.5 Garde IPC senderFrame (tous handlers), validations types/bornes, dir absolu, config .bak + .broken horodate	Testé partiel	22 handlers wrappes H(); node --check OK; pas de test d'intrusion
 2026-11-14	LOT2-2.6 CSP base-uri/form-action none, fallback version neutre, package.json files+author nettoyes	OK	Statique
+2026-11-14	DECISION portable-only: cible NSIS + build/installer.nsh + build/vbcable supprimes; VB-CABLE jamais embarque (licence VB-Audio); lien officiel vb-audio.com/Cable dans reglages	OK	package.json target=[portable]; dist ne produit plus que SoundFart.exe
+2026-11-14	LOT1-1.7 Bouton « Restaurer mon micro Windows » + audio:restore avec filet de secours (micro coince sur virtuel sans restore.json)	Testé partiel	Handler et UI en place; build portable lance OK (7 process, arret propre, pas de restore.json cree car cable absent)
+2026-11-14	THIRD-PARTY-NOTICES + AGENTS.md alignes: VB-CABLE non distribue, installe par l'utilisateur	OK	Doc a jour

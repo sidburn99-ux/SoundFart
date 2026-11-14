@@ -712,11 +712,22 @@ H('audio:autoSetup', async (_e, { enabled, cableLabel }) => {
     if (!enabled) { restoreMicNow(tool); return { ok: true, changed: false }; }
     let eps = parseEndpoints(audioExec(tool, ['list']));
     let target = findCableCapture(eps, cableLabel);
-    if (!target && await ensureCableDriver()) {
-      eps = parseEndpoints(audioExec(tool, ['list']));
-      target = findCableCapture(eps, cableLabel);
+    if (!target) {
+      const cs = await ensureCableDriver();
+      if (cs.state === 'ready') {
+        eps = parseEndpoints(audioExec(tool, ['list']));
+        target = findCableCapture(eps, cableLabel);
+      }
+      if (!target) {
+        const msgs = {
+          'needs-reboot': 'VB-CABLE installé — redémarre Windows pour activer le périphérique',
+          'missing': 'VB-CABLE absent — installe-le depuis https://vb-audio.com/Cable/ puis revérifie',
+          'error': cs.err || 'vérification du câble impossible',
+        };
+        restoreMicNow(tool);
+        return { ok: false, err: msgs[cs.state] || 'périphérique « CABLE Output » introuvable' };
+      }
     }
-    if (!target) { restoreMicNow(tool); return { ok: false, err: 'peripherique « CABLE Output » introuvable (VB-CABLE non installe)' }; }
     let cur = parseGet(audioExec(tool, ['get', 'capture']));
     if (cur.console === target.id && cur.comm === target.id && cur.multi === target.id) {
       // Deja bascule : on ne touche a rien (restoreFile reste = marqueur de bascule active)
@@ -744,10 +755,32 @@ H('audio:autoSetup', async (_e, { enabled, cableLabel }) => {
   }
 });
 
+// Restauration manuelle du micro (bouton reglages + beforeunload). Si
+// audio-restore.json existe -> restoreMicNow (meme priorite qu'a la fermeture).
+// Sinon, si une entree est coincee sur un peripherique virtuel (cable perdu,
+// guard mort), on la rebascule sur le defaut Windows non virtuel ou le 1er
+// peripherique non virtuel — filet de secours pour l'utilisateur.
 ipcMain.on('audio:restore', () => {
   try {
     const tool = audioToolPath();
-    if (fs.existsSync(tool) && fs.existsSync(restoreFile())) restoreMicNow(tool);
+    if (!tool || !fs.existsSync(tool)) return;
+    if (fs.existsSync(restoreFile()) && restoreMicNow(tool)) return;
+    const eps = parseEndpoints(audioExec(tool, ['list']));
+    const nameOf = (id) => { const e = eps.find((x) => x.id === id); return e ? e.name : ''; };
+    const cur = parseGet(audioExec(tool, ['get', 'capture']));
+    const stuck = [cur.console, cur.comm, cur.multi].some((id) => id && VIRTUAL_RE_MAIN.test(nameOf(id)));
+    if (!stuck) return;
+    const fb = eps.find((e) => e.flow === 'capture' && !VIRTUAL_RE_MAIN.test(e.name));
+    if (fb) audioExec(tool, ['set', 'capture', fb.id, fb.id, fb.id]);
+    log('[mic-restore] micro force hors peripherique virtuel -> ' + (fb ? fb.name : '?'));
+  } catch {}
+});
+
+// Ouvre une URL externe — restreint a https + vb-audio.com (lien officiel VB-CABLE).
+H('shell:openExternal', (_e, url) => {
+  try {
+    const u = new URL(String(url));
+    if (u.protocol === 'https:' && /(^|\.)vb-audio\.com$/i.test(u.hostname)) shell.openExternal(u.href);
   } catch {}
 });
 
@@ -820,103 +853,51 @@ H('audio:tapStop', () => {
   return { ok: true };
 });
 
-// ---------- installation silencieuse de VB-CABLE (bundled, driver noyau obligatoire) ----------
-// Un peripherique audio virtuel ne peut exister sans driver noyau : on embarque l'installateur
-// officiel VB-Audio et on le lance en /S (elevation UAC automatique, aucune fenetre d'install).
-const cableSetupSrc = () => path.join(__dirname, 'vendor', 'vbcable');
-const cableSetupDir = () => path.join(toolsDir(), 'vbcable');
-const cableSetupExe = () => path.join(cableSetupDir(), 'VBCABLE_Setup_x64.exe');
-const cableSnoozeFile = () => path.join(app.getPath('userData'), 'cable-install-snooze.json');
-const CABLE_SNOOZE_MS = 7 * 24 * 3600 * 1000; // ne re-demande pas l'UAC avant 7 jours si refuse
-let cableInstallPromise = null;
+// ---------- VB-CABLE : verification uniquement ----------
+// VB-CABLE n'est NI embarque NI installe par SoundFart (licence : redistribution
+// interdite sans accord de l'auteur). L'utilisateur l'installe lui-meme depuis
+// https://vb-audio.com/Cable/ — l'app verifie et explique, point.
+let cableCheckPromise = null;
 
 function hasVirtualCable(endpoints) {
   // Specifiquement VB-CABLE (« CABLE » dans le nom) — pas n'importe quel device virtuel
-  // (Voicemeeter, Sonic Studio…) sinon l'installateur ne serait jamais lance.
+  // (Voicemeeter, Sonic Studio…) sinon la detection serait faussee.
   return endpoints.some((e) => e.flow === 'render' && /cable/i.test(e.name) && VIRTUAL_RE_MAIN.test(e.name));
 }
 
+// Detection unifiee avec l'installateur : peripherique PnP present + Status OK.
+// Les endpoints audio peuvent ne apparaitre qu'apres reboot ; le PnP est la
+// source de verite « pilote installe ».
+async function cablePnpOk() {
+  try {
+    const { stdout } = await execFileP('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+      "if (Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object { $_.FriendlyName -match 'VB-Audio Virtual Cable' -and $_.Status -eq 'OK' }) { 'OK' } else { 'KO' }"],
+      { timeout: 20000 });
+    return /OK/.test(stdout);
+  } catch { return false; }
+}
+
+// Retourne { state: 'ready' | 'needs-reboot' | 'missing' | 'error', err? }.
+// 'ready' = endpoints audio presents ; 'needs-reboot' = pilote PnP OK mais pas
+// d'endpoint (reboot requis) ; 'missing' = rien installe.
 async function ensureCableDriver() {
-  if (cableInstallPromise) return cableInstallPromise;
-  cableInstallPromise = (async () => {
+  if (cableCheckPromise) return cableCheckPromise;
+  cableCheckPromise = (async () => {
     try {
       const tool = await ensureAudioTool();
-      if (!tool) { log('[cable] outil audio introuvable'); return false; }
-      let eps = parseEndpoints(audioExec(tool, ['list']));
-      if (hasVirtualCable(eps)) { try { fs.unlinkSync(cableSnoozeFile()); } catch {} return true; }
-      // Si l'utilisateur a refuse l'UAC recemment, ne pas re-demander tout de suite.
-      try {
-        const sn = JSON.parse(fs.readFileSync(cableSnoozeFile(), 'utf-8'));
-        if (sn && Date.now() - sn.at < CABLE_SNOOZE_MS) return false;
-      } catch {}
-      if (!fs.existsSync(cableSetupSrc())) { log('[cable] pack VB-CABLE absent du bundle'); return false; }
-      // L'installateur a besoin de tout le pack (.inf/.sys/.cat) a cote de lui, pas juste l'exe.
-      fs.mkdirSync(cableSetupDir(), { recursive: true });
-      for (const f of fs.readdirSync(cableSetupSrc())) {
-        const dst = path.join(cableSetupDir(), f);
-        if (!fs.existsSync(dst)) fs.copyFileSync(path.join(cableSetupSrc(), f), dst);
-      }
-      if (!fs.existsSync(cableSetupExe())) { log('[cable] VBCABLE_Setup_x64.exe introuvable'); return false; }
-      log('[cable] aucun peripherique virtuel detecte -> installation silencieuse VB-CABLE');
-      // Start-Process -Verb RunAs declenche l'UAC ; /S = install silencieuse. Si l'user refuse l'UAC, ca leve une erreur.
-      await execFileP('powershell.exe', ['-NoProfile', '-Command',
-        `Start-Process -FilePath '${cableSetupExe().replace(/'/g, "''")}' -ArgumentList '/S' -Verb RunAs -Wait`],
-        { timeout: 300000 });
-      for (let i = 0; i < 20; i++) {
-        await new Promise((r) => setTimeout(r, 1500));
-        try { eps = parseEndpoints(audioExec(tool, ['list'])); } catch { continue; }
-        if (hasVirtualCable(eps)) {
-          log('[cable] VB-CABLE installe');
-          offerCableReboot();
-          return true;
-        }
-      }
-      log('[cable] VB-CABLE toujours absent apres installation');
-      try { fs.writeFileSync(cableSnoozeFile(), JSON.stringify({ at: Date.now() })); } catch {}
-      return false;
+      if (!tool) return { state: 'error', err: lastToolErr || 'composant audio natif indisponible' };
+      const eps = parseEndpoints(audioExec(tool, ['list']));
+      if (hasVirtualCable(eps)) return { state: 'ready' };
+      if (await cablePnpOk()) return { state: 'needs-reboot' };
+      return { state: 'missing' };
     } catch (e) {
-      log('[cable] installation VB-CABLE echouee/annulee: ' + e.message);
-      // UAC refuse ou erreur : on retentera dans 7 jours (ou au prochain lancement si le fichier est absent)
-      try { fs.writeFileSync(cableSnoozeFile(), JSON.stringify({ at: Date.now() })); } catch {}
-      return false;
+      log('[cable] verification: ' + e.message);
+      return { state: 'error', err: e.message };
     } finally {
-      cableInstallPromise = null;
+      cableCheckPromise = null;
     }
   })();
-  return cableInstallPromise;
-}
-
-// Arme une relance unique de l'app au prochain demarrage (RunOnce, supprime par Windows
-// apres execution) : le reboot d'activation VB-CABLE ramene l'utilisateur sur SoundFart.
-function armPostRebootRelaunch() {
-  try {
-    execFileSync('reg', ['add', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\RunOnce',
-      '/v', 'SoundFart', '/t', 'REG_SZ', '/d', `"${process.execPath}"`, '/f'], { timeout: 5000 });
-    log('[cable] relance post-reboot enregistree');
-  } catch (e) { log('[cable] armPostRebootRelaunch: ' + e.message); }
-}
-
-// VB-CABLE n'est pleinement actif qu'apres un reboot : on propose le redemarrage a l'utilisateur.
-function offerCableReboot() {
-  try {
-    if (!win || win.isDestroyed()) return;
-    dialog.showMessageBox(win, {
-      type: 'info',
-      title: 'SoundFart — VB-CABLE installé',
-      message: 'Le composant audio virtuel a été installé.',
-      detail: 'VB-CABLE nécessite un redémarrage de Windows pour fonctionner correctement.\n\nRedémarrer maintenant ? (délai de 60 s, annulable avec « shutdown /a »)',
-      buttons: ['Redémarrer', 'Plus tard'],
-      defaultId: 0,
-      cancelId: 1,
-    }).then((r) => {
-      if (r.response !== 0) return;
-      armPostRebootRelaunch();
-      try {
-        execFileSync('shutdown', ['/r', '/t', '60', '/c', 'SoundFart : redemarrage pour activer VB-CABLE'], { timeout: 10000 });
-        log('[cable] redemarrage programme dans 60 s');
-      } catch (e) { log('[cable] shutdown echoue: ' + e.message); }
-    });
-  } catch (e) { log('[cable] offerCableReboot: ' + e.message); }
+  return cableCheckPromise;
 }
 
 // Watchdog : re-verifie periodiquement que l'entree par defaut est toujours sur le cable.
@@ -1031,9 +1012,13 @@ app.whenReady().then(() => {
     }).catch((e) => { log('[displaymedia] getSources: ' + e.message); callback({}); });
   });
   createWindow();
-  // Si aucun cable virtuel n'est present, installer VB-CABLE silencieusement en arriere-plan.
-  ensureCableDriver().then((ok) => {
-    if (ok && win && !win.isDestroyed()) win.webContents.send('sf:cableReady');
+  // Verification VB-CABLE au boot : l'app n'installe ni n'embarque le pilote
+  // (VB-Audio l'interdit sans accord) ; on notifie le renderer de l'etat pour
+  // afficher un message visible + lien officiel si absent.
+  ensureCableDriver().then((st) => {
+    if (!win || win.isDestroyed()) return;
+    win.webContents.send('sf:cableState', st.state);
+    if (st.state === 'ready') win.webContents.send('sf:cableReady');
   });
   setInterval(watchdogMic, 10000);
 });

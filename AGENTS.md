@@ -3,7 +3,7 @@
 ## Stack
 - Electron 45 (main: `main.js`, preload: `preload.js`, renderer: `src/app.js` + `src/index.html` + `src/style.css`)
 - Vanila JS, pas de framework. Outils natifs C# compilés à la volée via `csc.exe` dans `%APPDATA%\SoundFart\tools\`
-- Build : `npm run dist` → `dist\SoundFart-Setup-X.Y.Z.exe` (installateur NSIS, deux phases VB-CABLE) + `dist\SoundFart.exe` (portable, dev/test)
+- Build : `npm run dist` → `dist\SoundFart.exe` — application PORTABLE uniquement, aucun installeur ni désinstalleur.
 - Config : `%APPDATA%\SoundFart\config.json` — Log : `%APPDATA%\SoundFart\soundfart.log`
 
 ## Règles de travail OBLIGATOIRES
@@ -32,12 +32,12 @@
 ### Code
 - Pas de commentaires superflus ; style compact ; suivre les conventions existantes.
 - Les originaux audio ne sont JAMAIS modifiés.
-- Les outils (yt-dlp, ffmpeg, AudioEndpoint, AudioTap, VB-CABLE setup) se téléchargent/compilent à la volée dans `%APPDATA%\SoundFart\tools\`.
+- Les outils (yt-dlp, ffmpeg, AudioEndpoint, AudioTap) se téléchargent/compilent à la volée dans `%APPDATA%\SoundFart\tools\`.
 - Sécurité : `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true` — ne jamais contourner.
 
 ## Architecture audio (rappel)
 - Sortie sons → Web Audio → `CABLE Input` (rendu) ; monitoring → périphérique `monId`.
 - Micro → `getUserMedia` avec EC/NS/AGC → mixé vers CABLE Input + monitoring.
-- Enregistreur : sources micro + audio PC (via `AudioTap.exe` loopback WASAPI → CABLE Input → `CABLE Output`) + câble SoundFart, mixées.
-- `AudioEndpoint.exe` : bascule auto du micro par défaut vers CABLE Output au lancement, restauration au rôle « défaut Windows » à la fermeture.
-- `VB-CABLE` : installateur bundlé (`vendor/VBCABLE_Setup_x64.exe`), install silencieuse `/S` si absent.
+- Enregistreur : sources micro + audio PC (via `AudioTap.exe` loopback WASAPI en mode `pcm` → IPC → AudioWorklet, SANS passer par le câble) + câble SoundFart, mixées.
+- `AudioEndpoint.exe` : bascule auto du micro par défaut vers CABLE Output au lancement ; restauration à la fermeture, après crash (`guard <pid>` détaché), ou manuellement (bouton « Restaurer mon micro Windows »).
+- `VB-CABLE` : JAMAIS embarqué ni installé par SoundFart (licence VB-Audio : redistribution interdite sans accord). L'utilisateur l'installe depuis https://vb-audio.com/Cable/ ; l'app détecte les endpoints et invite via un lien dans les réglages.

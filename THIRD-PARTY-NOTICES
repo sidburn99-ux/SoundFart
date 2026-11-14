@@ -1,0 +1,30 @@
+THIRD-PARTY NOTICES — SoundFart
+================================
+
+SoundFart utilise les composants tiers suivants :
+
+1. yt-dlp (https://github.com/yt-dlp/yt-dlp)
+   - Licence : Unlicense (domaine public)
+   - Usage : telechargement d'extraits audio depuis YouTube et sites supportes.
+   - L'executable yt-dlp.exe est telecharge au premier usage et verifie par
+     SHA-256 contre les sommes publiees avec chaque release.
+
+2. ffmpeg (https://www.gyan.dev/ffmpeg/)
+   - Licence : GPL/LGPL selon les composants (build « essentials » de gyan.dev)
+   - Usage : decoupe physique des extraits audio (MP3) et conversion.
+   - Le binaire ffmpeg.exe est telecharge au premier usage depuis les builds
+     officiels gyan.dev et verifie par SHA-256.
+
+3. VB-CABLE (https://www.vb-audio.com/Cable/)
+   - Licence : donationware — « VB-CABLE is a donationware » (readme.txt du pack
+     officiel). L'auteur (Vincent Burel / VB-Audio) interdit son integration dans
+     la procedure d'installation d'un autre logiciel sans son accord.
+   - CONSEQUENCE : SoundFart ne contient PAS VB-CABLE, ne l'embarque pas et ne
+     l'installe pas. L'utilisateur le telecharge et l'installe lui-meme depuis
+     https://www.vb-audio.com/Cable/ ; SoundFart se contente de detecter les
+     peripheriques crees.
+   - Le pilote VB-CABLE n'est gere en aucune facon par SoundFart (ni installation
+     ni desinstallation).
+
+4. Electron (https://www.electronjs.org)
+   - Licence : MIT.

@@ -903,10 +903,26 @@ function settingsModal() {
   const exportBtn = el('button', { text: 'Exporter la configuration', onclick: exportConfig });
   const importBtn = el('button', { text: 'Importer une configuration', onclick: () => importConfig(closeSettings) });
 
+  const cableDlBtn = el('button', { class: 'ghost', text: 'Télécharger VB-CABLE', onclick: () => window.sf.openExternal('https://vb-audio.com/Cable/') });
+  const cableCheckBtn = el('button', { class: 'ghost', text: 'Revérifier', onclick: async () => {
+    cableCheckBtn.disabled = true; cableCheckBtn.textContent = 'Vérification…';
+    try {
+      const st = await window.sf.cableEnsure();
+      const msgs = {
+        ready: 'VB-CABLE détecté — périphériques prêts.',
+        'needs-reboot': 'Pilote VB-CABLE installé mais inactif : redémarre Windows.',
+        missing: 'VB-CABLE absent : installe-le depuis vb-audio.com/Cable puis revérifie.',
+        error: 'Vérification impossible : ' + (st && st.err || 'erreur inconnue'),
+      };
+      toast(msgs[st && st.state] || msgs.error, st && st.state === 'ready' ? '' : 'warn');
+      if (st && st.state === 'ready') { await refreshDevices(false); resolveDevices(); await applyAudio(); }
+    } finally { cableCheckBtn.disabled = false; cableCheckBtn.textContent = 'Revérifier'; }
+  } });
+
   const closeSettings = modal('Réglages audio', [
-    field('Sortie vers Discord (micro virtuel)', cableSel,
+    field('Sortie vers Discord (micro virtuel)', el('div', { class: 'row' }, cableSel, cableCheckBtn, cableDlBtn),
       hasCable ? 'Choisis « CABLE Input ». Dans Discord, mets « CABLE Output » comme micro.'
-        : 'Aucun câble virtuel détecté : installe VB-CABLE puis redémarre le PC.'),
+        : 'Aucun câble virtuel détecté : VB-CABLE est un pilote gratuit de VB-Audio, à installer toi-même (lien ci-dessus), puis redémarre le PC.'),
     field('Écoute locale (ton casque)', monSel, 'Tu entends les sons dans ton casque, jamais ta propre voix.'),
     field('Mon micro', micSel),
     el('label', { class: 'check' }, mix,
@@ -915,6 +931,11 @@ function settingsModal() {
       el('span', { text: 'Au lancement, l\'entrée micro Windows passe sur « CABLE Output » et revient à ton micro à la fermeture. Dans Discord, choisis « Défaut » comme périphérique d\'entrée pour que ça suive.' }))),
     field('Surveillance micro automatique', el('label', { class: 'check' }, watchMic,
       el('span', { text: 'Pendant que SoundFart tourne, revérifie régulièrement que l\'entrée micro est toujours sur le câble. Si tu changes le micro toi-même (ou qu\'une app le change), la surveillance se met en pause jusqu\'au prochain lancement.' }))),
+    field('Récupération micro', el('button', { class: 'ghost', text: 'Restaurer mon micro Windows', onclick: () => {
+      window.sf.restoreMic();
+      toast('Restauration du micro demandée — si l\'entrée était bloquée sur le câble, elle revient sur ton micro.', 'info');
+    } }),
+      'À utiliser si ton micro Windows est resté bloqué sur « CABLE Output » (coupure, crash). Ramène l\'entrée sur ton vrai micro.'),
     field('Dossier de stockage', el('div', { class: 'row' }, dirLbl, pickDirBtn, resetDirBtn),
       'Les fichiers créés par SoundFart (imports YouTube, enregistrements, extraits MP3) iront dans ce dossier (sous-dossiers imports/, recordings/, cuts/).'),
     field('Raccourci global STOP', el('div', { class: 'row' }, stopBtn), stopHint),
@@ -1605,6 +1626,10 @@ async function init() {
   window.sf.audioAutoSetup({ enabled: cfg.settings.autoSwitchMic, cableLabel: cfg.settings.cableLabel }).then((r) => {
     if (r && r.changed) toast('Entrée micro basculée sur ' + r.device + ' (restaurée à la fermeture).');
     else if (r && !r.ok) console.warn('bascule micro auto :', r.err);
+  });
+  window.sf.onCableState && window.sf.onCableState((state) => {
+    if (state === 'missing') toast('VB-CABLE non détecté — installe-le depuis vb-audio.com/Cable, puis revérifie dans les réglages.', 'warn');
+    else if (state === 'needs-reboot') toast('VB-CABLE installé — redémarre Windows pour activer le périphérique audio.', 'warn');
   });
   window.sf.onCableReady(() => {
     toast('Composant audio virtuel installé — périphériques rechargés.');
