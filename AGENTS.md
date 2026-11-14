@@ -15,8 +15,8 @@
 
 ## Always / Ask first
 
-- **Always** : `node --check` sur chaque JS modifié ; `npm test` ; `npm run dist` après changement fonctionnel ; statuts honnêtes dans `suivi.tsv`.
-- **Ask first** : nouvelle dépendance, refonte d'un module, changement de comportement audio, push sur `main`, force-push ou réécriture d'historique.
+- **Always** : `node --check` sur chaque JS modifié ; `npm test` ; `npm run dist` après changement fonctionnel ; `git push` après chaque commit ; statuts honnêtes dans `suivi.tsv`.
+- **Ask first** : nouvelle dépendance, refonte d'un module, changement de comportement audio, push sur `main` sans autorisation, force-push ou réécriture d'historique.
 
 ## Architecture (contraignante)
 
@@ -65,7 +65,7 @@ node --check <f>  # syntaxe JS
 ## Git
 
 - `C:\Program Files\Git\cmd\git.exe`. Remote : `git@github.com:sidburn99-ux/SoundFart.git` — **SSH uniquement** (`~/.ssh/id_ed25519`).
-- Commits locaux sur la branche de travail ; `git push` quand le lot est cohérent et vérifié — jamais de push direct sur `main` sans autorisation (PR via `gh pr create` pour docs et changements multi-fichiers ; correctif ciblé : demander avant de pousser sur `main`).
+- Commits locaux sur la branche de travail, `git push` après chaque commit — jamais de push direct sur `main` sans autorisation (PR via `gh pr create` pour docs et changements multi-fichiers).
 - Un commit par changement cohérent, message en français axé « pourquoi » + trailer Devin. Vérifier le diff avant ; jamais de secrets, temporaires ou changements étrangers.
 
 ## Travail
@@ -81,8 +81,10 @@ node --check <f>  # syntaxe JS
 
 ## Documentation
 
+- Livraison/release : invoquer le skill `release` (`.devin/skills/release/SKILL.md`) — il exécute la Definition of Done.
 - `suivi.tsv` + `suivi.html` (régénérer via `regen-suivi.ps1`) : à jour à chaque changement significatif ; le TSV est la source, le HTML jamais édité à la main.
-- Mettre à jour les docs impactées ; jamais de comportement documenté qui n'existe pas.
+- Tout changement de comportement → mettre à jour les docs impactées (`SPECIFICATION.md` pour le technique, `GUIDE.md` pour l'utilisateur, `README.md` si visible) ; jamais de comportement documenté qui n'existe pas.
+- `TECHNICAL_HARDENING_PLAN.md` : vidé ou archivé en fin de mission hardening — ne pas le laisser pourrir avec des constats obsolètes.
 
 ## Pour faire X, lis Y
 
