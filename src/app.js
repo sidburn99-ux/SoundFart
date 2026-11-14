@@ -1408,9 +1408,19 @@ async function init() {
       else if (a.startsWith('view:')) { cfg.ui.cat = a.slice(5); save(); renderAll(); }
       else if (a === 'about') {
         const v = await window.sf.getVersion().catch(() => '?');
+        const year = new Date().getFullYear();
         modal('SoundFart', [
-          el('p', { text: 'Soundboard pour Discord — version ' + v }),
-          el('p', { class: 'hint', text: 'Glisse des sons, choisis « CABLE Input » comme sortie Discord et « CABLE Output » comme micro dans Discord. Appuie sur F11 pour ce menu.' }),
+          el('div', { class: 'about-hero' }, [
+            el('div', { class: 'about-logo', text: '🎷' }),
+            el('div', {}, [
+              el('div', { class: 'about-name', text: 'SoundFart' }),
+              el('div', { class: 'about-ver', text: 'Version ' + v }),
+            ]),
+          ]),
+          el('p', { class: 'about-desc', text: 'Soundboard pour Discord — joue tes sons dans tes appels vocaux via VB-CABLE.' }),
+          el('p', { class: 'about-credit', text: 'Développé par Benoit Prudent' }),
+          el('p', { class: 'about-copy', text: '© ' + year + ' Benoit Prudent — Tous droits réservés' }),
+          el('p', { class: 'hint', text: 'Propulsé par Electron · VB-CABLE par VB-Audio · yt-dlp & ffmpeg (outils libres)' }),
         ], [{ label: 'Fermer', onclick: (c) => c() }]);
       }
     } catch (e) { toast('Menu : ' + e.message, 'warn'); }

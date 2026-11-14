@@ -152,3 +152,13 @@ canvas.wave { display: block; width: 100%; height: 96px; background: var(--panel
   background: linear-gradient(135deg, hsl(var(--h) 72% 52%), hsl(calc(var(--h) + 45) 72% 30%));
   box-shadow: inset 0 -14px 22px -12px rgba(0,0,0,.55); pointer-events: none; }
 .thumb span { filter: drop-shadow(0 3px 5px rgba(0,0,0,.45)); }
+
+/* ---- À propos ---- */
+.about-hero { display: flex; align-items: center; gap: 14px; margin-bottom: 12px; }
+.about-logo { width: 56px; height: 56px; border-radius: 16px; display: grid; place-items: center; font-size: 30px;
+  background: linear-gradient(135deg, var(--acc, #7c5cff), #3b82f6); box-shadow: 0 6px 18px -6px rgba(124,92,255,.6); }
+.about-name { font-size: 22px; font-weight: 800; letter-spacing: .3px; }
+.about-ver { color: var(--mut, #8b93a7); font-size: 13px; margin-top: 2px; }
+.about-desc { margin: 4px 0 14px; color: var(--txt, #e6e8ee); }
+.about-credit { font-weight: 600; margin: 0 0 4px; }
+.about-copy { color: var(--mut, #8b93a7); font-size: 12px; margin: 0 0 12px; }
