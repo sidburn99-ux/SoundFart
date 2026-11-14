@@ -188,7 +188,10 @@ async function applyAudio() {
   } catch (e) {
     warns.push('Erreur de sortie audio : ' + e.message);
   }
-  if (s.micMix) {
+  // Mixage micro requis des que la bascule auto est active : sinon Discord n'entend que les
+  // sons, jamais la voix. micMix reste un interrupteur manuel complementaire.
+  const micMixOn = s.micMix || s.autoSwitchMic;
+  if (micMixOn) {
     try {
       if (!audio.cable) warns.push('Mixage micro : choisis d\'abord une sortie Discord.');
       else if (!VIRTUAL_RE.test(s.cableLabel)) warns.push('Mixage micro désactivé : la sortie Discord n\'est pas un câble virtuel (tu t\'entendrais dans ton casque).');
