@@ -570,8 +570,9 @@ ipcMain.handle('audio:tapStop', () => {
 // ---------- installation silencieuse de VB-CABLE (bundled, driver noyau obligatoire) ----------
 // Un peripherique audio virtuel ne peut exister sans driver noyau : on embarque l'installateur
 // officiel VB-Audio et on le lance en /S (elevation UAC automatique, aucune fenetre d'install).
-const cableSetupSrc = () => path.join(__dirname, 'vendor', 'VBCABLE_Setup_x64.exe');
-const cableSetupDst = () => path.join(toolsDir(), 'VBCABLE_Setup_x64.exe');
+const cableSetupSrc = () => path.join(__dirname, 'vendor', 'vbcable');
+const cableSetupDir = () => path.join(toolsDir(), 'vbcable');
+const cableSetupExe = () => path.join(cableSetupDir(), 'VBCABLE_Setup_x64.exe');
 const cableSnoozeFile = () => path.join(app.getPath('userData'), 'cable-install-snooze.json');
 const CABLE_SNOOZE_MS = 7 * 24 * 3600 * 1000; // ne re-demande pas l'UAC avant 7 jours si refuse
 let cableInstallPromise = null;
@@ -595,17 +596,18 @@ async function ensureCableDriver() {
         const sn = JSON.parse(fs.readFileSync(cableSnoozeFile(), 'utf-8'));
         if (sn && Date.now() - sn.at < CABLE_SNOOZE_MS) return false;
       } catch {}
-      if (!fs.existsSync(cableSetupSrc())) { log('[cable] installateur VB-CABLE absent du bundle'); return false; }
-      fs.mkdirSync(toolsDir(), { recursive: true });
-      if (!fs.existsSync(cableSetupDst())) {
-        const part = cableSetupDst() + '.part';
-        fs.copyFileSync(cableSetupSrc(), part);
-        fs.renameSync(part, cableSetupDst());
+      if (!fs.existsSync(cableSetupSrc())) { log('[cable] pack VB-CABLE absent du bundle'); return false; }
+      // L'installateur a besoin de tout le pack (.inf/.sys/.cat) a cote de lui, pas juste l'exe.
+      fs.mkdirSync(cableSetupDir(), { recursive: true });
+      for (const f of fs.readdirSync(cableSetupSrc())) {
+        const dst = path.join(cableSetupDir(), f);
+        if (!fs.existsSync(dst)) fs.copyFileSync(path.join(cableSetupSrc(), f), dst);
       }
+      if (!fs.existsSync(cableSetupExe())) { log('[cable] VBCABLE_Setup_x64.exe introuvable'); return false; }
       log('[cable] aucun peripherique virtuel detecte -> installation silencieuse VB-CABLE');
       // Start-Process -Verb RunAs declenche l'UAC ; /S = install silencieuse. Si l'user refuse l'UAC, ca leve une erreur.
       await execFileP('powershell.exe', ['-NoProfile', '-Command',
-        `Start-Process -FilePath '${cableSetupDst().replace(/'/g, "''")}' -ArgumentList '/S' -Verb RunAs -Wait`],
+        `Start-Process -FilePath '${cableSetupExe().replace(/'/g, "''")}' -ArgumentList '/S' -Verb RunAs -Wait`],
         { timeout: 300000 });
       for (let i = 0; i < 20; i++) {
         await new Promise((r) => setTimeout(r, 1500));
