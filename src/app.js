@@ -100,8 +100,13 @@ function normalizeCfg(saved) {
     if (typeof s.shortcut !== 'string' || s.shortcut.length > 64) s.shortcut = null;
     if (!Number.isFinite(+s.volume)) s.volume = 100; else s.volume = Math.min(300, Math.max(0, +s.volume));
     if (!Number.isFinite(+s.norm) || +s.norm <= 0) s.norm = 1; else s.norm = Math.min(4, +s.norm);
+    // Compteurs/tri : NaN casse les tris added-desc/plays-desc ; fades/trims
+    // negatifs produisent des ramps dans le passe.
+    if (!Number.isFinite(+s.addedAt)) s.addedAt = 0; else s.addedAt = +s.addedAt;
+    if (!Number.isFinite(+s.plays)) s.plays = 0; else s.plays = Math.max(0, +s.plays);
     for (const k of ['trimStart', 'trimEnd', 'fadeIn', 'fadeOut']) {
       if (s[k] != null && !Number.isFinite(+s[k])) s[k] = k === 'trimEnd' ? null : 0;
+      else if (s[k] != null && +s[k] < 0) s[k] = k === 'trimEnd' ? null : 0;
     }
     if (s.trimEnd != null && Number.isFinite(+s.trimStart) && +s.trimEnd <= +s.trimStart) s.trimEnd = null;
   });
@@ -201,6 +206,7 @@ const voices = new Set();
 let playGen = 0; // generation audio : stopAll/teardownAudio l'incrementent pour avorter les play() en vol
 let bufCacheBytes = 0;
 
+const bufInflight = new Map(); // path -> Promise<buf> : evite le double decodage concurrent
 async function getBuffer(path) {
   if (bufCache.has(path)) {
     const e = bufCache.get(path);
@@ -208,8 +214,13 @@ async function getBuffer(path) {
     bufCache.set(path, e);
     return e.buf;
   }
-  const data = await window.sf.readFile(path);
-  const ab = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+  if (bufInflight.has(path)) return bufInflight.get(path);
+  const p = (async () => {
+    const data = await window.sf.readFile(path);
+    // Garde anti-OOM : le PCM decode tient ~22 Mo/min ; au-dela d'un fichier
+    // tres lourd on refuse AVANT decodeAudioData (crash renderer connu).
+    if (data.byteLength > 150 * 1024 * 1024) throw new Error('Fichier trop volumineux pour être joué (' + Math.round(data.byteLength / 1048576) + ' Mo).');
+    const ab = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
   const buf = await decoder.decodeAudioData(ab);
   const bytes = bufBytes(buf);
   // Fichier tres long : un buffer decode tient ~22 Mo/min stereo — on previent une fois.
@@ -224,7 +235,10 @@ async function getBuffer(path) {
     bufCacheBytes -= bufCache.get(k).bytes;
     bufCache.delete(k);
   }
-  return buf;
+    return buf;
+  })();
+  bufInflight.set(path, p);
+  try { return await p; } finally { bufInflight.delete(path); }
 }
 
 async function makeOutput(deviceId) {
@@ -235,6 +249,14 @@ async function makeOutput(deviceId) {
     ctx.close();
     throw e;
   }
+  // Etat 'interrupted' (session Windows coupee sans devicechange) : sans
+  // ecoute, les voix restent zombies et le silence est indetectable.
+  ctx.addEventListener('statechange', () => {
+    if (ctx.state === 'interrupted' || ctx.state === 'closed') {
+      uiLog('sortie audio ' + ctx.state + ' (device=' + (deviceId || 'defaut') + ')');
+      if (ctx.state === 'interrupted') toast('Sortie audio interrompue — réessaie de jouer un son.', 'warn');
+    }
+  });
   const bus = ctx.createGain();
   bus.gain.value = cfg.settings.master / 100;
   const lim = ctx.createDynamicsCompressor(); // limiteur : evite la saturation quand on monte le volume d'un son
@@ -299,6 +321,12 @@ async function applyAudioInner() {
           audio: { deviceId: micDev ? { exact: micDev } : undefined, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
         });
         audio.micStream = stream;
+        // Micro perdu sans devicechange (debranchement, BT qui coupe) : le
+        // track meurt -> Discord n'entend plus la voix, sans aucun signal.
+        stream.getTracks().forEach((t) => {
+          t.addEventListener('ended', () => { if (audio.micStream === stream) { toast('Micro perdu — voix coupée sur le câble.', 'warn'); audio.micStream = null; applyAudio(); } });
+          t.addEventListener('mute', () => { if (audio.micStream === stream) toast('Micro muet par le système — voix coupée.', 'warn'); });
+        });
         const src = audio.cable.ctx.createMediaStreamSource(stream);
         src.connect(audio.cable.lim);
       }
@@ -408,6 +436,10 @@ function play(sound, opts = {}) {
     return Promise.resolve(null);
   }
   let fileErr = false;
+  // Dedup par deviceId : si cable et mon pointent sur le meme peripherique,
+  // jouer deux fois sur le meme device = +6 dB et echos possibles.
+  const seenDev = new Set();
+  const uniq = active.filter((o) => !seenDev.has(o.deviceId || o.ctx.destination) && seenDev.add(o.deviceId || o.ctx.destination));
   return getBuffer(sound.path)
     .catch((e) => { fileErr = true; throw e; })
     .then((buf) => {
@@ -422,9 +454,11 @@ function play(sound, opts = {}) {
     let fo = (opts.fadeOut ?? sound.fadeOut ?? 0) / 1000;
     if (fi + fo > dur) { const k = dur / (fi + fo); fi *= k; fo *= k; }
     const voice = { soundId: sound.id, nodes: [], preview: !!opts.preview };
-    let remaining = active.length;
-    for (const out of active) {
-      if (out.ctx.state !== 'running') out.ctx.resume();
+    let remaining = uniq.length;
+    voices.add(voice); // AVANT la boucle : une voix demarree partiellement reste stoppable
+    try {
+    for (const out of uniq) {
+      if (out.ctx.state !== 'running') out.ctx.resume().catch(() => {});
       const src = out.ctx.createBufferSource();
       src.buffer = buf;
       const g = out.ctx.createGain();
@@ -438,7 +472,13 @@ function play(sound, opts = {}) {
       if (!voice.out) { voice.out = out; voice.t0 = t0; }
       src.start(t0, offset, dur);
     }
-    voices.add(voice);
+    } catch (e) {
+      // Demarrage partiel : on stoppe les sources deja lancees pour ne pas
+      // laisser des voix non trackees jouer hors de voices/STOP.
+      for (const n of voice.nodes) { try { n.src.stop(); } catch {} try { n.g.disconnect(); } catch {} }
+      voices.delete(voice);
+      throw e;
+    }
     setPlaying(sound.id, +1);
     if (missing.delete(sound.id)) renderGrid();
     if (!opts.preview) { sound.plays = (sound.plays || 0) + 1; save(); }
@@ -500,6 +540,7 @@ function buildAccel(e) {
   if (['Control', 'Alt', 'Shift', 'Meta'].includes(e.key)) return null;
   let k = e.key;
   if (k === ' ') k = 'Space';
+  else if (k === '+') k = 'Plus';
   else if (k === 'ArrowUp') k = 'Up';
   else if (k === 'ArrowDown') k = 'Down';
   else if (k === 'ArrowLeft') k = 'Left';
@@ -520,6 +561,9 @@ function findShortcutOwner(acc, excludeSoundId) {
   const a = (acc || '').toLowerCase();
   if (!a) return null;
   if ((cfg.settings.stopShortcut || '').toLowerCase() === a) return 'le raccourci STOP';
+  // Accelerateurs du menu applicatif (fenetre focus) : un raccourci de son
+  // identique produirait une double action (jouer + ouvrir la dialog).
+  if (['ctrl+f', 'cmdorctrl+f', 'ctrl+o', 'cmdorctrl+o', 'f12'].includes(a)) return 'un raccourci du menu';
   const s = cfg.sounds.find((x) => x.id !== excludeSoundId && (x.shortcut || '').toLowerCase() === a);
   return s ? '« ' + s.name + ' »' : null;
 }
@@ -602,6 +646,8 @@ async function addPaths(rawPaths) {
 async function removeSound(s) {
   if (!(await confirmBox('Retirer ce son ?', `« ${s.name} » sera retiré de SoundFart. Le fichier audio d'origine n'est pas supprimé.`, 'Retirer'))) return;
   cfg.sounds = cfg.sounds.filter((x) => x.id !== s.id);
+  // Libere le buffer decode du son supprime (sinon jusqu'a 256 Mo d'orphelins).
+  try { bufCache.delete(s.path); longWarned.delete(s.path); } catch {}
   save(); renderAll();
   applyShortcuts(); // desenregistre le raccourci global du son supprime
 }
@@ -940,7 +986,8 @@ function askDestDir() {
       { label: 'Choisir…', onclick: async () => { const d = await window.sf.pickDir(); if (d) inp.value = d; } },
       { label: 'OK', kind: 'primary', onclick: (c) => {
         const d = inp.value.trim();
-        if (d) { cfg.settings.lastDestDir = d; save(); }
+        if (d) { cfg.settings.lastDestDir = d; } else { delete cfg.settings.lastDestDir; }
+        save();
         c(); resolve(d || '');
       } },
     ]);
@@ -968,7 +1015,7 @@ function importConfig(onDone) {
       await applyAudio();
       applyShortcuts();
       renderAll();
-      checkMissing(); // re-verifie les chemins des sons importes
+      checkMissing().catch((e) => logErr('checkMissing', e)); // re-verifie les chemins des sons importes
       toast('Configuration importée.');
       if (onDone) onDone();
     } catch (e) { toast('Import impossible : ' + e.message, 'warn'); }
@@ -1040,7 +1087,13 @@ function settingsModal() {
   });
 
   // dossier de stockage des fichiers crees par l'app (imports YouTube, enregistrements, extraits)
-  const dirLbl = el('div', { class: 'hint path', text: (s.storageDir || 'Dossier SoundFart par défaut (SoundFart-data)') + ' — les fichiers vont dans imports/, recordings/, cuts/ à l\'intérieur' });
+  // Vrai dossier de donnees (userData : SoundFart-data portable, %APPDATA% sinon).
+  window.sf.getDataDir().then((d) => {
+    const lbl = 'Dossier de données : ' + d + ' — les fichiers vont dans imports/, recordings/, cuts/ à l\'intérieur';
+    dirLbl.textContent = s.storageDir || lbl;
+    resetDirBtn.onclick = () => { s.storageDir = ''; dirLbl.textContent = lbl; };
+  }).catch(() => {});
+  const dirLbl = el('div', { class: 'hint path', text: (s.storageDir || 'Dossier de données par défaut') + ' — les fichiers vont dans imports/, recordings/, cuts/ à l\'intérieur' });
   const openDirBtn = el('button', { class: 'ghost', text: 'Ouvrir', title: 'Ouvre le dossier de stockage dans l\'Explorateur', onclick: () => window.sf.openDir(s.storageDir || '') });
   const pickDirBtn = el('button', { text: 'Choisir…', title: 'Choisit le dossier racine où SoundFart range ses fichiers (imports/, recordings/, cuts/).', onclick: async () => {
     const d = await window.sf.pickDir();
@@ -1291,7 +1344,7 @@ async function recorderModal() {
   let streams = [], actx = null, rec = null, chunks = [];
   let recordedSound = null, recTimer = null, recStart = 0, looseTracks = [];
   let dead = false; // passe a true a la fermeture : avorte les startBtn encore en vol
-  let tapNode = null, pcmQ = [], pcmSeen = false, tapLost = false;
+  let tapNode = null, pcmQ = [], pcmSeen = false, tapLost = false, pcmDrops = 0;
   const killTapNode = () => { if (tapNode) { try { tapNode.disconnect(); } catch {} tapNode = null; } pcmQ = []; };
   const offTapDead = window.sf.onTapDead ? window.sf.onTapDead(() => {
     window.sf.uiLog('tapDead rec=' + (rec ? rec.state : 'null') + ' dead=' + dead);
@@ -1304,6 +1357,7 @@ async function recorderModal() {
     if (!pcmSeen) { pcmSeen = true; window.sf.uiLog('tapPcm: premier flux recu (' + ab.byteLength + 'o)'); }
     if (tapNode) { try { tapNode.port.postMessage(ab); } catch {} }
     else if (pcmQ.length < 600) pcmQ.push(ab);
+    else if (!pcmDrops) { pcmDrops = 1; window.sf.uiLog('pcmQ saturee : chunks AudioTap jetes (renderer occupe)'); }
   }) : null;
 
   // « default » exclu : apres la bascule micro auto, il pointerait sur CABLE Output (on enregistrerait la soundboard, pas le micro)
@@ -1450,6 +1504,14 @@ async function recorderModal() {
         try {
           const st = await fn();
           if (dead) { deadCleanup(st); return; }
+          // Source morte en cours d'enregistrement : le fichier serait
+          // silencieux sur cette source sans avertissement.
+          st.getTracks().forEach((t) => t.addEventListener('ended', () => {
+            if (!dead && rec && rec.state === 'recording') {
+              toast('Une source audio est morte — enregistrement arrêté.', 'warn');
+              try { rec.stop(); } catch {}
+            }
+          }));
           streams.push(st);
         }
         catch (e) { window.sf.uiLog('recorder src ' + label + ': ' + (e && e.name) + ' ' + (e && e.message)); streams.forEach((st) => st.getTracks().forEach((t) => t.stop())); streams = []; throw new Error(label + ' : ' + e.message); }
@@ -1634,6 +1696,9 @@ function youtubeModal() {
     const start = parseTs(startIn.value);
     const hasTimeline = endIn.value.trim() !== '' && startIn.value.trim() !== '';
     const end = endIn.value.trim() === '' ? 0 : parseTs(endIn.value);
+    if (endIn.value.trim() !== '' && startIn.value.trim() === '') {
+      prog.textContent = 'Fin sans début : renseigne aussi le début, ou vide les deux pour le fichier complet.'; return;
+    }
     if (!hasTimeline && startIn.value.trim() !== '0' && startIn.value.trim() !== '') {
       prog.textContent = 'Timeline incomplète : définis le début ET la fin, ou laisse les deux vides pour le fichier complet.'; return;
     }
@@ -1743,7 +1808,7 @@ async function init() {
       else if (a === 'stop') stopAll(false);
       else if (a === 'search') { const i = $('#search'); i.focus(); i.select(); }
       else if (a === 'group') { cfg.settings.groupByCat = !cfg.settings.groupByCat; save(); renderAll(); }
-      else if (a.startsWith('view:')) { cfg.ui.cat = a.slice(5); save(); renderAll(); }
+      else if (a.startsWith('view:')) { const v = a.slice(5); cfg.ui.cat = ['all', 'fav', 'none'].includes(v) || cfg.categories.some((c) => c.id === v) ? v : 'all'; save(); renderAll(); }
       else if (a === 'about') {
         const v = await window.sf.getVersion().catch(() => '?');
         const year = new Date().getFullYear();
@@ -1812,7 +1877,7 @@ async function init() {
     depth = 0;
     overlay.classList.remove('on');
     const paths = [...e.dataTransfer.files].map((f) => window.sf.pathForFile(f)).filter(Boolean);
-    if (paths.length) addPaths(paths);
+    if (paths.length) addPaths(paths).catch((e) => logErr('addPaths', e));
   });
 
   // Bibliotheque vide (premier lancement) : injecter les sons par defaut bundled dans l'exe.
@@ -1834,9 +1899,9 @@ async function init() {
   await refreshDevices(true);
   resolveDevices();
   save();
-  checkMissing();
+  checkMissing().catch((e) => logErr('checkMissing', e));
   const ok = await applyAudio();
-  applyShortcuts();
+  applyShortcuts().catch((e) => logErr('applyShortcuts', e));
   updateCableUi();
   showCableScreen();
   if (cablePresent()) window.sf.audioAutoSetup({ enabled: cfg.settings.autoSwitchMic, cableLabel: cfg.settings.cableLabel }).then((r) => {

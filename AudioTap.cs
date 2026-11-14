@@ -146,8 +146,12 @@ internal static class AudioTap
                 subTag = Marshal.ReadInt16(p, 24);
             }
             f.isFloat = subTag == 3;
-            if (subTag != 1 && subTag != 3) throw new Exception("format audio non supporte (tag " + subTag + ")");
+            if (subTag != 1 && subTag != 3) throw new Exception("format audio non supporte (tag " + subTag + ", bits " + f.bits + ", canaux " + f.channels + ")");
             if (f.bits != 16 && f.bits != 32) throw new Exception("profondeur " + f.bits + " bits non supportee");
+            // blockAlign doit correspondre a channels * bits/8 : sinon les canaux
+            // seraient lus decales (padding/24-in-32) -> audio corrompu.
+            if (f.blockAlign != f.channels * (f.bits / 8))
+                throw new Exception("blockAlign " + f.blockAlign + " != " + f.channels + " canaux x " + (f.bits / 8) + " o");
             f.frameBytes = f.blockAlign;
             return f;
         }
@@ -164,7 +168,9 @@ internal static class AudioTap
         int sFrameBytes = sf.frameBytes, dFrameBytes = df.frameBytes;
         int sFrames = src.Length / sFrameBytes;
         int sCh = sf.channels, dCh = df.channels;
-        int samplesPer = sf.bits / 8;
+        // Le pas inter-canal est blockAlign/channels (et non bits/8) : couvre
+        // les layouts avec padding sans dupliquer la verification de FromPtr.
+        int samplesPer = sf.channels > 0 ? sf.blockAlign / sf.channels : sf.bits / 8;
 
         // entrees en float par canal source
         var chan = new float[sCh][];
@@ -461,21 +467,26 @@ internal static class AudioTap
             {
                 uint packet;
                 int pkHr = cap.GetNextPacketSize(out packet);
-                if (pkHr != 0)
+                // Seuls les codes d'echec (HRESULT negatif) sont fatals : les codes
+                // S_ 0x8889xxxx (BUFFER_EMPTY, OPERATION_PENDING) sont des succes.
+                if (pkHr < 0)
                 {
                     Console.Error.WriteLine("AudioTap: GetNextPacketSize echoue hr=0x" + pkHr.ToString("X8") + " (peripherique invalide ?)");
                     try { src.Stop(); if (dst != null) dst.Stop(); } catch {}
                     return 2;
                 }
+                if (pkHr != 0) continue; // code S_ : rien a faire ce tour
                 if (packet == 0) break;
                 IntPtr data; uint frames; int flags; ulong pos, qpc;
                 int gbHr = cap.GetBuffer(out data, out frames, out flags, out pos, out qpc);
-                if (gbHr != 0)
+                if (gbHr < 0)
                 {
                     Console.Error.WriteLine("AudioTap: GetBuffer echoue hr=0x" + gbHr.ToString("X8") + " (peripherique invalide ?)");
                     try { src.Stop(); if (dst != null) dst.Stop(); } catch {}
                     return 2;
                 }
+                if (gbHr > 0) continue; // code S_ : pas de donnees a consommer ce tour
+                if (frames == 0) { cap.ReleaseBuffer(0); continue; }
                 int bytes = (int)(frames * sf.frameBytes);
                 bool silent = (flags & 0x2) != 0;
                 byte[] buf = new byte[bytes];

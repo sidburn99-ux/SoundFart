@@ -8,6 +8,7 @@ const on = (channel) => (cb) => {
 
 contextBridge.exposeInMainWorld('sf', {
   getVersion: () => ipcRenderer.invoke('app:version'),
+  getDataDir: () => ipcRenderer.invoke('app:dataDir'),
   loadConfig: () => ipcRenderer.invoke('config:load'),
   saveConfig: (cfg) => ipcRenderer.invoke('config:save', cfg),
   pickFiles: () => ipcRenderer.invoke('files:pick'),
