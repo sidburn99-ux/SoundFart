@@ -719,15 +719,28 @@ ipcMain.on('audio:restore', () => {
   try {
     const tool = audioToolPath();
     if (!tool || !fs.existsSync(tool)) return;
-    if (fs.existsSync(restoreFile()) && restoreMicNow(tool)) return;
+    // Securite : sans audio-restore.json, SoundFart n'a jamais bascule le micro
+    // (ou l'a deja restaure) -> on ne touche a RIEN, meme si une entree pointe
+    // sur un peripherique virtuel (choix volontaire possible : Voicemeeter,
+    // CABLE Output utilise par une autre app, etc.).
+    if (!fs.existsSync(restoreFile())) return;
+    if (restoreMicNow(tool)) return;
+    // restoreFile present = bascule faite par SoundFart mais restauration
+    // incomplete (cible introuvable, JSON corrompu...) : dernier recours borne,
+    // on sort les roles coinces sur un virtuel vers le premier non virtuel.
     const eps = parseEndpoints(audioExec(tool, ['list']));
     const nameOf = (id) => { const e = eps.find((x) => x.id === id); return e ? e.name : ''; };
     const cur = parseGet(audioExec(tool, ['get', 'capture']));
     const stuck = [cur.console, cur.comm, cur.multi].some((id) => id && VIRTUAL_RE_MAIN.test(nameOf(id)));
     if (!stuck) return;
     const fb = eps.find((e) => e.flow === 'capture' && !VIRTUAL_RE_MAIN.test(e.name));
-    if (fb) audioExec(tool, ['set', 'capture', fb.id, fb.id, fb.id]);
-    log('[mic-restore] micro force hors peripherique virtuel -> ' + (fb ? fb.name : '?'));
+    if (fb) {
+      audioExec(tool, ['set', 'capture', fb.id, fb.id, fb.id]);
+      // Etat force = nouvelle base : on consomme le marqueur pour ne pas
+      // re-deranger l'utilisateur a la prochaine restauration.
+      try { fs.unlinkSync(restoreFile()); } catch {}
+      log('[mic-restore] micro force hors peripherique virtuel -> ' + fb.name);
+    }
   } catch {}
 });
 
