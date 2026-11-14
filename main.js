@@ -532,7 +532,7 @@ ipcMain.handle('audio:autoSetup', async (_e, { enabled, cableLabel }) => {
     }
     if (!target) { restoreMicNow(tool); return { ok: false, err: 'peripherique « CABLE Output » introuvable (VB-CABLE non installe)' }; }
     let cur = parseGet(audioExec(tool, ['get', 'capture']));
-    if (cur.console === target.id && cur.comm === target.id) {
+    if (cur.console === target.id && cur.comm === target.id && cur.multi === target.id) {
       // Deja bascule : on ne touche a rien (restoreFile reste = marqueur de bascule active)
       return { ok: true, changed: false, device: target.name };
     }
@@ -741,7 +741,7 @@ function watchdogMic() {
     const target = findCableCapture(eps, st.cableLabel);
     if (!target) return;
     const cur = parseGet(audioExec(tool, ['get', 'capture']));
-    if (cur.console !== target.id || cur.comm !== target.id) {
+    if (cur.console !== target.id || cur.comm !== target.id || cur.multi !== target.id) {
       audioExec(tool, ['set', 'capture', target.id, target.id, target.id]);
       log('[mic-watchdog] entree re-basculee sur ' + target.name);
     }

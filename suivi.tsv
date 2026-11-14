@@ -30,3 +30,4 @@ date	feature	statut	note
 2026-10-14	Correctifs audit: 31 bugs (main.js, app.js, AudioTap.cs)	OK	Recorder orphelin, races, fuites COM, validations, perfs
 2026-10-15	Installateur NSIS deux phases: VB-CABLE d'abord, reboot, puis app	OK	Phase1 cable present->install directe testee; phase2 simulee /S->install+launch+cleanup OK; reste test E2E reel cable absent+reboot
 2026-10-15	RunOnce post-reboot dans ensureCableDriver (filet securite runtime)	OK	armPostRebootRelaunch avant shutdown /r /t 60
+2026-10-15	Verification bascule micro: lancement+watchdog+restore	OK	3 roles cables au set; watchdog 10s; restore prouve live (G930 restaure a la fermeture); fix role multimedia ajoute aux checks
