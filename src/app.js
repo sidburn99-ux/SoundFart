@@ -1214,6 +1214,7 @@ async function recorderModal() {
         streams.forEach((st) => st.getTracks().forEach((t) => t.stop()));
         stopLoose();
         window.sf.audioTapStop().catch(() => {});
+        if (actx) { actx.close().catch(() => {}); actx = null; }
         startBtn.disabled = false; stopBtn.disabled = true;
         micSel.disabled = micOn.disabled = pcOn.disabled = cableOn.disabled = false;
       };
@@ -1469,7 +1470,9 @@ async function init() {
   });
   window.sf.onCableReady(() => {
     toast('Composant audio virtuel installé — périphériques rechargés.');
-    refreshDevices(false).then(() => {
+    refreshDevices(false).then(async () => {
+      resolveDevices();
+      await applyAudio();
       window.sf.audioAutoSetup({ enabled: cfg.settings.autoSwitchMic, cableLabel: cfg.settings.cableLabel })
         .then((r) => { if (r && r.changed) toast('Entrée micro basculée sur ' + r.device); });
     });

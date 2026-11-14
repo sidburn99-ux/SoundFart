@@ -440,17 +440,19 @@ function restoreMicNow(tool) {
     const eps = parseEndpoints(audioExec(tool, ['list']));
     const nameOf = (id) => { const e = eps.find((x) => x.id === id); return e ? e.name : ''; };
     const nonVirtual = (id) => !!id && !!nameOf(id) && !VIRTUAL_RE_MAIN.test(nameOf(id));
-    let id = '';
+    const fb = eps.find((e) => e.flow === 'capture' && !VIRTUAL_RE_MAIN.test(e.name));
+    const fallbackId = fb ? fb.id : '';
+    // Priorite : peripherique par defaut Windows (role multimedia), puis les ids d'origine
+    // par role (console ET comm preserves separement), puis le 1er non virtuel.
+    let defId = '';
     try {
       const g = parseGet(audioExec(tool, ['get', 'capture']));
-      if (nonVirtual(g.multi)) id = g.multi;
+      if (nonVirtual(g.multi)) defId = g.multi;
     } catch {}
-    if (!id && nonVirtual(prev.console)) id = prev.console;
-    if (!id) {
-      const fb = eps.find((e) => e.flow === 'capture' && !VIRTUAL_RE_MAIN.test(e.name));
-      if (fb) id = fb.id;
-    }
-    if (id) audioExec(tool, ['set', 'capture', id, id]);
+    const cId = defId || (nonVirtual(prev.console) ? prev.console : '') || fallbackId;
+    const mId = defId || (nonVirtual(prev.comm) ? prev.comm : '') || fallbackId;
+    if (!cId && !mId) return false; // garde restoreFile pour reessayer plus tard
+    audioExec(tool, ['set', 'capture', cId || mId, mId || cId]);
     try { fs.unlinkSync(restoreFile()); } catch {}
     return true;
   } catch { return false; }
@@ -482,7 +484,6 @@ ipcMain.handle('audio:autoSetup', async (_e, { enabled, cableLabel }) => {
   try {
     const tool = await ensureAudioTool();
     if (!tool) return { ok: false, err: 'outil audio introuvable (csc.exe absent ?)' };
-    if (fs.existsSync(restoreFile())) restoreMicNow(tool); // recuperation apres un crash
     if (!enabled) { restoreMicNow(tool); return { ok: true, changed: false }; }
     let eps = parseEndpoints(audioExec(tool, ['list']));
     let target = findCableCapture(eps, cableLabel);
@@ -490,11 +491,16 @@ ipcMain.handle('audio:autoSetup', async (_e, { enabled, cableLabel }) => {
       eps = parseEndpoints(audioExec(tool, ['list']));
       target = findCableCapture(eps, cableLabel);
     }
-    if (!target) return { ok: false, err: 'peripherique « CABLE Output » introuvable (VB-CABLE non installe)' };
-    const cur = parseGet(audioExec(tool, ['get', 'capture']));
+    if (!target) { restoreMicNow(tool); return { ok: false, err: 'peripherique « CABLE Output » introuvable (VB-CABLE non installe)' }; }
+    let cur = parseGet(audioExec(tool, ['get', 'capture']));
     if (cur.console === target.id && cur.comm === target.id) {
-      try { fs.unlinkSync(restoreFile()); } catch {}
+      // Deja bascule : on ne touche a rien (restoreFile reste = marqueur de bascule active)
       return { ok: true, changed: false, device: target.name };
+    }
+    // Pas encore sur le cable : recuperer un eventuel etat incoherent puis memoriser le vrai peripherique
+    if (fs.existsSync(restoreFile())) {
+      restoreMicNow(tool);
+      cur = parseGet(audioExec(tool, ['get', 'capture']));
     }
     if (!fs.existsSync(restoreFile())) {
       fs.writeFileSync(restoreFile(), JSON.stringify({ console: cur.console, comm: cur.comm }));
@@ -560,10 +566,14 @@ ipcMain.handle('audio:tapStop', () => {
 // officiel VB-Audio et on le lance en /S (elevation UAC automatique, aucune fenetre d'install).
 const cableSetupSrc = () => path.join(__dirname, 'vendor', 'VBCABLE_Setup_x64.exe');
 const cableSetupDst = () => path.join(toolsDir(), 'VBCABLE_Setup_x64.exe');
+const cableSnoozeFile = () => path.join(app.getPath('userData'), 'cable-install-snooze.json');
+const CABLE_SNOOZE_MS = 7 * 24 * 3600 * 1000; // ne re-demande pas l'UAC avant 7 jours si refuse
 let cableInstallPromise = null;
 
 function hasVirtualCable(endpoints) {
-  return endpoints.some((e) => e.flow === 'render' && VIRTUAL_RE_MAIN.test(e.name));
+  // Specifiquement VB-CABLE (« CABLE » dans le nom) — pas n'importe quel device virtuel
+  // (Voicemeeter, Sonic Studio…) sinon l'installateur ne serait jamais lance.
+  return endpoints.some((e) => e.flow === 'render' && /cable/i.test(e.name) && VIRTUAL_RE_MAIN.test(e.name));
 }
 
 async function ensureCableDriver() {
@@ -573,10 +583,19 @@ async function ensureCableDriver() {
       const tool = await ensureAudioTool();
       if (!tool) { log('[cable] outil audio introuvable'); return false; }
       let eps = parseEndpoints(audioExec(tool, ['list']));
-      if (hasVirtualCable(eps)) return true;
+      if (hasVirtualCable(eps)) { try { fs.unlinkSync(cableSnoozeFile()); } catch {} return true; }
+      // Si l'utilisateur a refuse l'UAC recemment, ne pas re-demander tout de suite.
+      try {
+        const sn = JSON.parse(fs.readFileSync(cableSnoozeFile(), 'utf-8'));
+        if (sn && Date.now() - sn.at < CABLE_SNOOZE_MS) return false;
+      } catch {}
       if (!fs.existsSync(cableSetupSrc())) { log('[cable] installateur VB-CABLE absent du bundle'); return false; }
       fs.mkdirSync(toolsDir(), { recursive: true });
-      if (!fs.existsSync(cableSetupDst())) fs.copyFileSync(cableSetupSrc(), cableSetupDst());
+      if (!fs.existsSync(cableSetupDst())) {
+        const part = cableSetupDst() + '.part';
+        fs.copyFileSync(cableSetupSrc(), part);
+        fs.renameSync(part, cableSetupDst());
+      }
       log('[cable] aucun peripherique virtuel detecte -> installation silencieuse VB-CABLE');
       // Start-Process -Verb RunAs declenche l'UAC ; /S = install silencieuse. Si l'user refuse l'UAC, ca leve une erreur.
       await execFileP('powershell.exe', ['-NoProfile', '-Command',
@@ -588,9 +607,12 @@ async function ensureCableDriver() {
         if (hasVirtualCable(eps)) { log('[cable] VB-CABLE installe'); return true; }
       }
       log('[cable] VB-CABLE toujours absent apres installation');
+      try { fs.writeFileSync(cableSnoozeFile(), JSON.stringify({ at: Date.now() })); } catch {}
       return false;
     } catch (e) {
       log('[cable] installation VB-CABLE echouee/annulee: ' + e.message);
+      // UAC refuse ou erreur : on retentera dans 7 jours (ou au prochain lancement si le fichier est absent)
+      try { fs.writeFileSync(cableSnoozeFile(), JSON.stringify({ at: Date.now() })); } catch {}
       return false;
     } finally {
       cableInstallPromise = null;
@@ -669,8 +691,12 @@ app.whenReady().then(() => {
     log(`[displaymedia] requete audio=${request.audioRequested} video=${request.videoRequested}`);
     desktopCapturer.getSources({ types: ['screen'] }).then((sources) => {
       log(`[displaymedia] ${sources.length} source(s) ecran`);
-      if (sources.length) callback({ video: sources[0], audio: 'loopback' });
-      else callback({});
+      if (sources.length) {
+        const opts = {};
+        if (request.videoRequested) opts.video = sources[0];
+        if (request.audioRequested) opts.audio = 'loopback';
+        callback(Object.keys(opts).length ? opts : {});
+      } else callback({});
     }).catch((e) => { log('[displaymedia] getSources: ' + e.message); callback({}); });
   });
   createWindow();

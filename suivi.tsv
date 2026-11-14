@@ -18,3 +18,11 @@ date	feature	statut	note
 2026-11-14	Seed 5 sons sur profil frais	OK_PARTIEL	Migration ancienne config prioritaire (31 sons restaurés) ; seed non déclenché car bibliotheque non vide — comportement correct. Seed réel à valider sur machine sans ancienne config
 2026-11-14	Test en VM	IMPOSSIBLE	Pas d'hyperviseur sur la machine (pas de Hyper-V/VirtualBox/VMware)
 2026-11-14	Git versioning + AGENTS.md + suivi.tsv/html	OK	Infrastructure en place
+2026-10-14	Audit complet 3 subagents (main/app/preload/cs)	OK	~50 constats, 8 majeurs corriges
+2026-10-14	Fix hasVirtualCable trop large (VB-CABLE jamais installe)	OK	Match specifique « cable » requis
+2026-10-14	Fix UAC re-prompt a chaque lancement	OK	Snooze 7 jours (cable-install-snooze.json)
+2026-10-14	Fix autoSetup flicker + perte marqueur restore	OK	Early-return si deja sur cable, restoreFile conserve
+2026-10-14	Fix restoreMicNow roles console/comm separes	OK	Multi prioritaire, prev par role, unlink seulement si succes
+2026-10-14	Fix displayMedia rendait video pour requete audio-seule	OK	Respecte audioRequested/videoRequested
+2026-10-14	Fix onCableReady sans applyAudio + actx fuiter enregistreur	OK	resolveDevices+applyAudio, actx.close au stop
+2026-10-14	Correctifs differe (contexte): AudioTap parent-death, tapDead event, dedup compilations, normalizeCfg validation, applyAudio try/catch separes, PropVariantClear/RCW COM	A_FAIRE	Documente pour prochaine session
