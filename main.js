@@ -611,8 +611,12 @@ async function ensureCableDriver() {
         { timeout: 300000 });
       for (let i = 0; i < 20; i++) {
         await new Promise((r) => setTimeout(r, 1500));
-        eps = parseEndpoints(audioExec(tool, ['list']));
-        if (hasVirtualCable(eps)) { log('[cable] VB-CABLE installe'); return true; }
+        try { eps = parseEndpoints(audioExec(tool, ['list'])); } catch { continue; }
+        if (hasVirtualCable(eps)) {
+          log('[cable] VB-CABLE installe');
+          offerCableReboot();
+          return true;
+        }
       }
       log('[cable] VB-CABLE toujours absent apres installation');
       try { fs.writeFileSync(cableSnoozeFile(), JSON.stringify({ at: Date.now() })); } catch {}
@@ -627,6 +631,28 @@ async function ensureCableDriver() {
     }
   })();
   return cableInstallPromise;
+}
+
+// VB-CABLE n'est pleinement actif qu'apres un reboot : on propose le redemarrage a l'utilisateur.
+function offerCableReboot() {
+  try {
+    if (!win || win.isDestroyed()) return;
+    dialog.showMessageBox(win, {
+      type: 'info',
+      title: 'SoundFart — VB-CABLE installé',
+      message: 'Le composant audio virtuel a été installé.',
+      detail: 'VB-CABLE nécessite un redémarrage de Windows pour fonctionner correctement.\n\nRedémarrer maintenant ? (délai de 60 s, annulable avec « shutdown /a »)',
+      buttons: ['Redémarrer', 'Plus tard'],
+      defaultId: 0,
+      cancelId: 1,
+    }).then((r) => {
+      if (r.response !== 0) return;
+      try {
+        execFileSync('shutdown', ['/r', '/t', '60', '/c', 'SoundFart : redemarrage pour activer VB-CABLE'], { timeout: 10000 });
+        log('[cable] redemarrage programme dans 60 s');
+      } catch (e) { log('[cable] shutdown echoue: ' + e.message); }
+    });
+  } catch (e) { log('[cable] offerCableReboot: ' + e.message); }
 }
 
 ipcMain.handle('cable:ensure', () => ensureCableDriver());
