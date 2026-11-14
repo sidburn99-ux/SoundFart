@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain, dialog, shell, session, Menu, globalShortcu
 const path = require('path');
 const fs = require('fs');
 const https = require('https');
+const os = require('os');
 const { spawn, execFile, execFileSync } = require('child_process');
 const { promisify } = require('util');
 const execFileP = promisify(execFile);
@@ -25,6 +26,11 @@ if (!app.requestSingleInstanceLock()) {
       win.focus();
     }
   });
+}
+
+// Mode test : --test-profile isole config/outils/logs dans %TEMP%\SoundFart-test (config reelle intacte)
+if (process.argv.includes('--test-profile')) {
+  app.setPath('userData', path.join(os.tmpdir(), 'SoundFart-test'));
 }
 
 const configFile = () => path.join(app.getPath('userData'), 'config.json');
