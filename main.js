@@ -655,6 +655,27 @@ function offerCableReboot() {
   } catch (e) { log('[cable] offerCableReboot: ' + e.message); }
 }
 
+// Watchdog : re-verifie periodiquement que l'entree par defaut est toujours sur le cable.
+// Couvre le cas ou Discord (ou un peripherique) demarre/change le defaut pendant que
+// SoundFart tourne — la bascule est re-appliquee automatiquement.
+function watchdogMic() {
+  try {
+    const tool = audioToolPath();
+    if (!tool || !fs.existsSync(tool) || !fs.existsSync(restoreFile()) || !fs.existsSync(configFile())) return;
+    const cfg = JSON.parse(fs.readFileSync(configFile(), 'utf-8'));
+    const st = cfg && cfg.settings;
+    if (!st || !st.autoSwitchMic) return;
+    const eps = parseEndpoints(audioExec(tool, ['list']));
+    const target = findCableCapture(eps, st.cableLabel);
+    if (!target) return;
+    const cur = parseGet(audioExec(tool, ['get', 'capture']));
+    if (cur.console !== target.id || cur.comm !== target.id) {
+      audioExec(tool, ['set', 'capture', target.id, target.id]);
+      log('[mic-watchdog] entree re-basculee sur ' + target.name);
+    }
+  } catch (e) { log('[mic-watchdog] ' + e.message); }
+}
+
 ipcMain.handle('cable:ensure', () => ensureCableDriver());
 
 // ---------- fenetre ----------
@@ -738,6 +759,7 @@ app.whenReady().then(() => {
   ensureCableDriver().then((ok) => {
     if (ok && win && !win.isDestroyed()) win.webContents.send('sf:cableReady');
   });
+  setInterval(watchdogMic, 10000);
 });
 
 app.on('window-all-closed', () => app.quit());
