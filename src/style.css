@@ -53,6 +53,8 @@ main { display: flex; flex-direction: column; min-width: 0; height: 100vh; }
 .sort { display: flex; align-items: center; gap: 8px; color: var(--muted); }
 select { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 9px 10px; outline: none; }
 select:focus { border-color: var(--accent); }
+select.rec { border-color: var(--accent2); box-shadow: 0 0 0 1px var(--accent2), 0 0 12px -4px var(--accent2); }
+select.warn { border-color: var(--danger); }
 .section-head { display: flex; align-items: baseline; gap: 12px; padding: 8px 24px; }
 .section-head h1 { margin: 0; font-size: 22px; }
 .section-head span { color: var(--muted); }

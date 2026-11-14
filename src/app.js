@@ -964,7 +964,28 @@ function settingsModal() {
   const monSel = el('select', {}, opts(audio.devices.out, s.monId, true));
   const micSel = el('select', {}, opts(audio.devices.inp, s.micId, false));
   const mix = el('input', { type: 'checkbox', checked: s.micMix });
-  const lbl = (sel) => (sel.value ? sel.selectedOptions[0].textContent : '');
+  // Surbrillance des choix recommandes : ★ = a privilegier, ⚠ = a eviter.
+  // dataset.label garde le libelle propre (sans prefixe) pour le stockage.
+  const markSel = (sel, test) => {
+    for (const o of sel.options) {
+      o.dataset.label = o.text;
+      const m = test(o.text);
+      if (m === 1) o.text = '★ ' + o.text;
+      else if (m === -1) o.text = '⚠ ' + o.text;
+    }
+    const refresh = () => {
+      const o = sel.selectedOptions[0];
+      sel.classList.toggle('rec', !!o && o.text.startsWith('★'));
+      sel.classList.toggle('warn', !!o && o.text.startsWith('⚠'));
+    };
+    sel.addEventListener('change', refresh);
+    refresh();
+    return sel;
+  };
+  markSel(cableSel, (t) => (/cable input/i.test(t) ? 1 : /cable/i.test(t) ? -1 : 0));
+  markSel(monSel, (t) => (/cable/i.test(t) ? -1 : 0)); // ecoute locale sur le cable = boucle
+  markSel(micSel, (t) => (VIRTUAL_RE.test(t) ? -1 : 1)); // vrai micro recommande, virtuel evite
+  const lbl = (sel) => { const o = sel.selectedOptions[0]; return o ? (o.dataset.label || o.textContent) : ''; };
 
   // raccourci global STOP
   let stopSc = s.stopShortcut || '';
@@ -1011,8 +1032,6 @@ function settingsModal() {
   const exportBtn = el('button', { text: 'Exporter la configuration', onclick: exportConfig });
   const importBtn = el('button', { text: 'Importer une configuration', onclick: () => importConfig(closeSettings) });
 
-  // Surligne la sortie cable recommandee dans le select Discord.
-  for (const o of cableSel.options) if (/cable input/i.test(o.text)) o.text += '  ★';
   const cableVerifyBtn = el('button', { class: 'ghost', text: 'Vérifier', onclick: async () => {
     cableVerifyBtn.disabled = true; cableVerifyBtn.textContent = 'Vérification…';
     await refreshDevices(false); resolveDevices(); updateCableUi(); await applyAudio();
@@ -1023,13 +1042,14 @@ function settingsModal() {
   const cableInstallBtn = el('button', { class: 'ghost', text: 'Installer VB-CABLE…', onclick: () => showCableScreen() });
 
   const closeSettings = modal('Réglages audio', [
+    el('div', { class: 'hint', text: '★ = choix recommandé (bordure rose) · ⚠ = à éviter (bordure rouge). Pour faire fonctionner la soundboard : sortie Discord = CABLE Input, écoute locale = ton casque, micro = ton vrai micro.' }),
     field('Sortie vers Discord (micro virtuel)', el('div', { class: 'row' }, cableSel, cableVerifyBtn, cableInstallBtn),
       cablePresent() ? 'Choisis « CABLE Input ». Dans Discord, mets « CABLE Output » comme micro.'
         : 'Aucun câble virtuel détecté : la diffusion vers Discord est désactivée. VB-CABLE est un pilote gratuit de VB-Audio, à installer toi-même (vb-audio.com/Cable), puis redémarre le PC.'),
     field('Écoute locale (ton casque)', monSel, s.monId && s.monId === s.cableId
       ? '⚠ Écoute locale = sortie Discord : tu risks une boucle/écho — choisis un périphérique différent.'
-      : 'Tu entends les sons dans ton casque, jamais ta propre voix.'),
-    field('Mon micro', micSel),
+      : 'Choisis ton casque/écoute habituelle — pas un périphérique « CABLE » (boucle).'),
+    field('Mon micro', micSel, 'Le vrai micro est ★ ; les périphériques virtuels (CABLE Output, Voicemeeter…) sont ⚠ déconseillés ici.'),
     el('label', { class: 'check' }, mix,
       el('span', { text: 'Mixer mon micro dans la sortie Discord (sinon tes potes n\'entendent que les sons). Décoche si tu utilises « Écouter ce périphérique » de Windows.' })),
     field('Bascule micro automatique', el('label', { class: 'check' }, autoMic,
@@ -1264,7 +1284,11 @@ async function recorderModal() {
   // « default » exclu : apres la bascule micro auto, il pointerait sur CABLE Output (on enregistrerait la soundboard, pas le micro)
   const devs = (await navigator.mediaDevices.enumerateDevices())
     .filter((d) => d.kind === 'audioinput' && d.deviceId !== 'communications' && d.deviceId !== 'default');
-  const micSel = el('select', {}, devs.map((d) => el('option', { value: d.deviceId, text: d.label || d.deviceId, selected: d.deviceId === cfg.settings.micId })));
+  const micSel = el('select', {}, devs.map((d) => {
+    const o = el('option', { value: d.deviceId, text: (VIRTUAL_RE.test(d.label || '') ? '⚠ ' : '') + (d.label || d.deviceId), selected: d.deviceId === cfg.settings.micId });
+    o.dataset.label = d.label || d.deviceId;
+    return o;
+  }));
   if (!micSel.value && devs.length) micSel.value = devs[0].deviceId;
   const micOn = el('input', { type: 'checkbox', checked: true, title: 'Enregistre la voix via ton micro (avec réduction d\'écho et de bruit).' });
   const pcOn = el('input', { type: 'checkbox', checked: false, title: 'Enregistre tout ce que tu entends sur le PC (vidéo, jeu, musique) — capturé directement à la sortie, sans repasser par le câble.' });
@@ -1501,7 +1525,7 @@ async function recorderModal() {
       || (audio.devices.inp || []).find((x) => /cable/i.test(x.label));
     return d ? d.label : 'CABLE Output (introuvable)';
   };
-  const micLabel = () => (micSel.selectedOptions[0] ? micSel.selectedOptions[0].textContent : 'aucun micro');
+  const micLabel = () => { const o = micSel.selectedOptions[0]; return o ? (o.dataset.label || o.textContent) : 'aucun micro'; };
   const srcNames = el('div', { class: 'hint' });
   const syncSrcNames = () => { srcNames.textContent = 'Sources : micro = ' + micLabel() + ' · audio du PC = sortie système · câble = ' + cableDevLabel(); };
   micSel.addEventListener('change', syncSrcNames);
