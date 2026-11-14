@@ -1,0 +1,20 @@
+date	feature	statut	note
+2026-11-13	Bibliotheque sons (import, categories, favoris, vignettes)	OK	Fichiers originaux jamais modifies
+2026-11-13	Diffusion audio vers Discord via VB-CABLE	OK	Web Audio -> CABLE Input
+2026-11-13	Pre-ecoute + monitoring peripherique	OK	Routing monId
+2026-11-13	Editeur (trim, fades, volume, normalisation, export MP3)	OK	ffmpeg bundle, coupe physique YouTube
+2026-11-13	Import YouTube (yt-dlp + ffmpeg)	OK	Telechargement paresseux tools/
+2026-11-13	Raccourcis clavier globaux par son + STOP global	OK	globalShortcut
+2026-11-13	Enregistreur multi-sources (micro + audio PC + cable)	OK	Mix + limiteur
+2026-11-13	Echo cancellation / noise suppression / AGC micro seul	OK	getUserMedia constraints
+2026-11-13	Bascule micro auto CABLE Output + restauration defaut Windows	OK	AudioEndpoint.exe, role multimedia en priorite
+2026-11-13	AudioTap.exe : loopback WASAPI -> CABLE Input	OK_TESTE_CLI	Capture/reinjecte teste en ligne de commande, non teste via UI
+2026-11-13	VB-CABLE bundlé + install silencieuse /S	A_TESTER	Installateur embarque, UAC auto, non teste sur machine sans cable
+2026-11-13	5 sons par defaut bundled (assets/sounds)	A_TESTER	Seed si bibliotheque vide
+2026-11-13	Menu F11 (Fichier/Edition/Audio/Affichage/Aide)	OK	Menu natif Electron
+2026-11-13	Regroupement par categorie dans Tous les sons	OK	Option topbar + menu
+2026-11-13	Version affichee a cote du nom	OK	v1.3.0 fallback HTML
+2026-11-14	Exe packagé quitte silencieusement	RESOLU	Faux positif : ELECTRON_RUN_AS_NODE=1 dans le shell de test, pas un bug app. Exe vérifié OK (fenêtre + processus)
+2026-11-14	Seed 5 sons sur profil frais	OK_PARTIEL	Migration ancienne config prioritaire (31 sons restaurés) ; seed non déclenché car bibliotheque non vide — comportement correct. Seed réel à valider sur machine sans ancienne config
+2026-11-14	Test en VM	IMPOSSIBLE	Pas d'hyperviseur sur la machine (pas de Hyper-V/VirtualBox/VMware)
+2026-11-14	Git versioning + AGENTS.md + suivi.tsv/html	OK	Infrastructure en place

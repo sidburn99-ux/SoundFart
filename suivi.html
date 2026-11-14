@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>SoundFart — Suivi</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0f1117; color: #e6e8ee; padding: 24px; }
+  h1 { font-size: 20px; margin-bottom: 4px; }
+  .sub { color: #8b93a7; font-size: 13px; margin-bottom: 20px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; padding: 10px 12px; background: #1a1e2b; color: #9aa3b8; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .5px; }
+  td { padding: 9px 12px; border-bottom: 1px solid #1f2333; vertical-align: top; }
+  tr:hover td { background: #161a26; }
+  .st { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 11px; font-weight: 700; white-space: nowrap; }
+  .OK { background: #14532d; color: #4ade80; }
+  .OK_TESTE_CLI { background: #1e3a5f; color: #60a5fa; }
+  .A_TESTER { background: #713f12; color: #fbbf24; }
+  .BUG { background: #7f1d1d; color: #f87171; }
+  .IMPOSSIBLE { background: #3f3f46; color: #a1a1aa; }
+  .date { color: #8b93a7; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .feat { font-weight: 600; }
+  .note { color: #8b93a7; font-size: 12px; }
+  .filters { margin-bottom: 14px; display: flex; gap: 8px; flex-wrap: wrap; }
+  .filters button { background: #1a1e2b; color: #c7cddb; border: 1px solid #2a3043; border-radius: 8px; padding: 5px 12px; font-size: 12px; cursor: pointer; }
+  .filters button.on { background: #3b4a7a; color: #fff; border-color: #4a5c96; }
+</style>
+</head>
+<body>
+<h1>SoundFart — Suivi des fonctionnalités</h1>
+<div class="sub">Généré depuis <code>suivi.tsv</code> — ouvrir via <code>file:///</code>, aucun serveur requis.</div>
+<div class="filters" id="filters"></div>
+<table>
+<thead><tr><th>Date</th><th>Fonctionnalité</th><th>Statut</th><th>Note</th></tr></thead>
+<tbody id="rows"></tbody>
+</table>
+<script>
+const TSV = `date	feature	statut	note\n2026-11-13	Bibliotheque sons (import, categories, favoris, vignettes)	OK	Fichiers originaux jamais modifies\n2026-11-13	Diffusion audio vers Discord via VB-CABLE	OK	Web Audio -> CABLE Input\n2026-11-13	Pre-ecoute + monitoring peripherique	OK	Routing monId\n2026-11-13	Editeur (trim, fades, volume, normalisation, export MP3)	OK	ffmpeg bundle, coupe physique YouTube\n2026-11-13	Import YouTube (yt-dlp + ffmpeg)	OK	Telechargement paresseux tools/\n2026-11-13	Raccourcis clavier globaux par son + STOP global	OK	globalShortcut\n2026-11-13	Enregistreur multi-sources (micro + audio PC + cable)	OK	Mix + limiteur\n2026-11-13	Echo cancellation / noise suppression / AGC micro seul	OK	getUserMedia constraints\n2026-11-13	Bascule micro auto CABLE Output + restauration defaut Windows	OK	AudioEndpoint.exe, role multimedia en priorite\n2026-11-13	AudioTap.exe : loopback WASAPI -> CABLE Input	OK_TESTE_CLI	Capture/reinjecte teste en ligne de commande, non teste via UI\n2026-11-13	VB-CABLE bundlé + install silencieuse /S	A_TESTER	Installateur embarque, UAC auto, non teste sur machine sans cable\n2026-11-13	5 sons par defaut bundled (assets/sounds)	A_TESTER	Seed si bibliotheque vide\n2026-11-13	Menu F11 (Fichier/Edition/Audio/Affichage/Aide)	OK	Menu natif Electron\n2026-11-13	Regroupement par categorie dans Tous les sons	OK	Option topbar + menu\n2026-11-13	Version affichee a cote du nom	OK	v1.3.0 fallback HTML\n2026-11-14	Exe packagé quitte silencieusement	RESOLU	Faux positif : ELECTRON_RUN_AS_NODE=1 dans le shell de test, pas un bug app. Exe vérifié OK (fenêtre + processus)\n2026-11-14	Seed 5 sons sur profil frais	OK_PARTIEL	Migration ancienne config prioritaire (31 sons restaurés) ; seed non déclenché car bibliotheque non vide — comportement correct. Seed réel à valider sur machine sans ancienne config\n2026-11-14	Test en VM	IMPOSSIBLE	Pas d'hyperviseur sur la machine (pas de Hyper-V/VirtualBox/VMware)\n2026-11-14	Git versioning + AGENTS.md + suivi.tsv/html	OK	Infrastructure en place\n`;
+const rows = TSV.trim().split('\n').slice(1).map(l => l.split('\t'));
+const statuses = [...new Set(rows.map(r => r[2]))];
+let filter = 'ALL';
+const fdiv = document.getElementById('filters');
+function renderFilters() {
+  fdiv.innerHTML = '';
+  ['ALL', ...statuses].forEach(s => {
+    const b = document.createElement('button');
+    b.textContent = s === 'ALL' ? 'Tous' : s;
+    b.className = filter === s ? 'on' : '';
+    b.onclick = () => { filter = s; renderFilters(); renderRows(); };
+    fdiv.appendChild(b);
+  });
+}
+function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function renderRows() {
+  document.getElementById('rows').innerHTML = rows
+    .filter(r => filter === 'ALL' || r[2] === filter)
+    .map(r => `<tr><td class="date">${esc(r[0])}</td><td class="feat">${esc(r[1])}</td><td><span class="st ${esc(r[2])}">${esc(r[2])}</span></td><td class="note">${esc(r[3]||'')}</td></tr>`)
+    .join('');
+}
+renderFilters(); renderRows();
+</script>
+</body>
+</html>
