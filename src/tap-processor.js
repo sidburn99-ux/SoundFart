@@ -9,6 +9,9 @@ class TapProcessor extends AudioWorkletProcessor {
     this.buf = new Float32Array(this.cap);
     this.r = 0; this.w = 0; this.len = 0;
     this.port.onmessage = (e) => {
+      // 'flush' : vide le buffer circulaire (appele juste avant rec.start pour
+      // eliminer le pre-roll capture pendant la preparation des sources).
+      if (e.data === 'flush') { this.r = 0; this.w = 0; this.len = 0; return; }
       const inc = new Float32Array(e.data);
       for (let i = 0; i < inc.length; i++) {
         if (this.len >= this.cap - 2) { this.r = (this.r + 2) & (this.cap - 1); this.len -= 2; }

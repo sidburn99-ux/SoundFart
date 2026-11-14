@@ -1250,15 +1250,21 @@ async function recorderModal() {
   const cleanup = () => {
     dead = true;
     if (recTimer) { clearInterval(recTimer); recTimer = null; }
-    try { if (rec && rec.state !== 'inactive') { rec.onstop = null; rec.stop(); } } catch {}
+    if (offTapDead) offTapDead();
+    if (offTapPcm) offTapPcm();
+    // Enregistrement existant (en cours ou onstop en vol) : on laisse onstop
+    // faire la sauvegarde + tout le menage (streams, tap, actx, boutons) —
+    // l'annuler ici perdrait silencieusement l'enregistrement.
+    if (rec) {
+      if (rec.state !== 'inactive') { try { rec.stop(); } catch {} }
+      return;
+    }
     streams.forEach((st) => st.getTracks().forEach((t) => t.stop()));
     stopLoose();
     killTapNode();
     window.sf.audioTapStop().catch(() => {});
     if (actx) actx.close().catch(() => {});
-    if (offTapDead) offTapDead();
-    if (offTapPcm) offTapPcm();
-    streams = []; actx = rec = null;
+    streams = []; actx = null;
   };
 
   // Capture l'audio systeme (Discord, musique...) = tout ce qui sort par le peripherique par defaut.
@@ -1321,6 +1327,7 @@ async function recorderModal() {
   });
 
   startBtn.addEventListener('click', async () => {
+    startBtn.disabled = true; // desactive des le clic : evite le double demarrage
     try {
       streams = [];
       // « Audio du PC » : AudioTap capture le loopback systeme en PCM float32 48 kHz sur
@@ -1364,8 +1371,9 @@ async function recorderModal() {
       if (tapOn) {
         try {
           await actx.audioWorklet.addModule('tap-processor.js');
-          tapNode = new AudioWorkletNode(actx, 'tap-processor');
-          tapNode.connect(comp);
+          // outputChannelCount [2] : sans ca la sortie du worklet peut etre mono
+          // (seul le canal gauche serait enregistre). numberOfInputs 0 : inutilise.
+          tapNode = new AudioWorkletNode(actx, 'tap-processor', { numberOfInputs: 0, outputChannelCount: [2] });
           pcmQ.forEach((ab) => tapNode.port.postMessage(ab));
           pcmQ = [];
         } catch (e) {
@@ -1384,13 +1392,16 @@ async function recorderModal() {
       rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
       rec.onstop = async () => {
         if (recTimer) { clearInterval(recTimer); recTimer = null; }
+        const recMime = rec ? rec.mimeType : '';
         try {
-          const blob = new Blob(chunks, { type: rec.mimeType || mime || 'audio/webm' });
+          const blob = new Blob(chunks, { type: recMime || mime || 'audio/webm' });
           const ab = await blob.arrayBuffer();
           const fname = nameIn.value.trim() || 'enregistrement';
           const destDir = await askDestDir();
-          if (destDir === null) { status.textContent = 'Enregistrement annulé (dossier).'; return; }
-          const path = await window.sf.saveRecording({ data: ab, name: fname, ext: extFor(rec.mimeType || mime), dir: destDir || cfg.settings.storageDir || '' });
+          if (destDir === null) {
+            status.textContent = 'Enregistrement annulé (dossier).';
+          } else {
+          const path = await window.sf.saveRecording({ data: ab, name: fname, ext: extFor(recMime || mime), dir: destDir || cfg.settings.storageDir || '' });
           recordedSound = {
             id: uid(), name: fname, path, volume: 100, plays: 0, addedAt: Date.now(),
             categoryId: null, favorite: false, norm: 1, shortcut: null,
@@ -1398,6 +1409,7 @@ async function recorderModal() {
           };
           status.textContent = 'Enregistrement prêt (' + fmtTime((Date.now() - recStart) / 1000) + ') : ' + path;
           previewBtn.disabled = false;
+          }
         } catch (e) {
           status.textContent = 'Sauvegarde impossible : ' + e.message;
         }
@@ -1406,11 +1418,19 @@ async function recorderModal() {
         killTapNode();
         window.sf.audioTapStop().catch(() => {});
         if (actx) { actx.close().catch(() => {}); actx = null; }
+        rec = null;
         startBtn.disabled = false; stopBtn.disabled = true;
         micSel.disabled = micOn.disabled = pcOn.disabled = cableOn.disabled = false;
       };
       // modal ferme pendant la preparation : ne pas demarrer l'enregistrement
       if (dead) { deadCleanup(); if (actx) { actx.close().catch(() => {}); actx = null; } return; }
+      if (tapNode) {
+        // Flush du ring buffer : le PCM arrive des l'audioTapStart, avant les
+        // getUserMedia -> sans ca le debut du fichier contiendrait de l'audio
+        // capture AVANT le clic sur « Enregistrer ».
+        tapNode.port.postMessage('flush');
+        tapNode.connect(comp);
+      }
       rec.start(250);
       recStart = Date.now();
       recTimer = setInterval(() => { status.textContent = '● Enregistrement… ' + fmtTime((Date.now() - recStart) / 1000); }, 250);
@@ -1426,6 +1446,7 @@ async function recorderModal() {
       killTapNode();
       window.sf.audioTapStop().catch(() => {});
       if (actx) { actx.close().catch(() => {}); actx = null; }
+      startBtn.disabled = false;
     }
   });
 

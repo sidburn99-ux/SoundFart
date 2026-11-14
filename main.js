@@ -758,6 +758,7 @@ H('cable:openPage', () => { shell.openExternal('https://vb-audio.com/Cable/'); }
 // renvoient « Could not start audio source » ou du silence sur certaines configs).
 let audioTapProc = null;
 let audioTapKilling = false; // vrai entre kill() et l'evenement 'exit' (anti double spawn)
+let audioTapFailed = false;  // spawn en echec (evenement 'error') sur le processus courant
 let tapPcmRem = Buffer.alloc(0); // reste PCM non aligne (stdout livre des chunks arbitraires)
 
 async function ensureAudioTap() {
@@ -782,9 +783,13 @@ H('audio:tapStart', async () => {
     // args[1] = pid du parent : AudioTap s'auto-termine si ce process meurt (anti-orphelin).
     // Mode « pcm » : PCM float32 stereo 48 kHz sur stdout -> relaie au renderer pour
     // l'enregistreur, SANS passer par le cable (evite l'echo Discord dans le micro).
-    audioTapProc = spawn(tool, ['CABLE Input', String(process.pid), '0', '', 'pcm'], { stdio: ['ignore', 'pipe', 'pipe'] });
-    audioTapProc.stdout.on('data', (chunk) => {
-      if (!win || win.isDestroyed()) return;
+    const proc = spawn(tool, ['CABLE Input', String(process.pid), '0', '', 'pcm'], { stdio: ['ignore', 'pipe', 'pipe'] });
+    audioTapProc = proc;
+    audioTapFailed = false;
+    proc.stdout.on('data', (chunk) => {
+      // Un ancien processus encore en train de mourir ne doit pas injecter
+      // son PCM dans le flux du nouveau (mixage/echo).
+      if (audioTapProc !== proc || !win || win.isDestroyed()) return;
       // N'envoyer au renderer que des frames completes : float32 stereo = 8 octets/frame.
       tapPcmRem = Buffer.concat([tapPcmRem, chunk]);
       const aligned = tapPcmRem.length - (tapPcmRem.length % 8);
@@ -796,17 +801,23 @@ H('audio:tapStart', async () => {
       const line = String(d).trim();
       if (/ERREUR|echoue|introuvable/i.test(line)) log('[audiotap] ' + line.slice(0, 300), 'error');
     });
-    audioTapProc.on('exit', () => {
+    proc.on('exit', () => {
       const wasKilled = audioTapKilling;
-      audioTapProc = null;
       audioTapKilling = false;
+      // Sortie d'un processus obsolete (remplace entre-temps) : ne pas toucher
+      // a la reference ni envoyer tapDead pour le NOUVEAU processus.
+      if (audioTapProc !== proc) return;
+      audioTapProc = null;
       tapPcmRem = Buffer.alloc(0);
       // Mort non volontaire (crash AudioTap / peripherique disparu) : on previent le renderer
       if (!wasKilled && win && !win.isDestroyed()) win.webContents.send('sf:tapDead', true);
     });
-    audioTapProc.on('error', () => { audioTapProc = null; audioTapKilling = false; tapPcmRem = Buffer.alloc(0); });
+    proc.on('error', () => {
+      if (audioTapProc !== proc) return;
+      audioTapFailed = true; audioTapKilling = false; tapPcmRem = Buffer.alloc(0);
+    });
     await new Promise((r) => setTimeout(r, 700));
-    if (!audioTapProc || audioTapProc.exitCode !== null)
+    if (!audioTapProc || audioTapProc.exitCode !== null || audioTapFailed)
       return { ok: false, err: 'AudioTap s\'est arrêté au démarrage' };
     return { ok: true };
   } catch (e) { return { ok: false, err: e.message }; }
