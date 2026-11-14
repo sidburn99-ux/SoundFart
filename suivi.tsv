@@ -65,3 +65,10 @@ date	feature	statut	note
 2026-11-14	CHANTIER-A1 Fix « coche au moins une source » a tort quand seul « Audio du PC » coche et AudioTap reussi (source PCM/worklet non comptee dans want)	Testé partiel	Bug reproduit par lecture; fix = tapOn compte comme source; enregistrement reel NON teste (pas de clic UI)
 2026-11-14	CHANTIER-A2 Enregistreur: libelle des sources reelles affiche (micro=<label>, audio du PC=sortie systeme, cable=<label CABLE Output>)	Testé partiel	Code en place; build OK; lancement sans erreur page
 2026-11-14	CHANTIER-A3 Enregistrement court par source avec mesure de niveau	NON testé	Necessite interaction UI + peripheriques reels
+2026-11-14	CHANTIER-B1 YouTube sans timeline -> telechargement audio complet (flag full, plus d'extraction); avec timeline -> extrait MP3 ffmpeg inchange	Testé réel	yt-dlp.exe reel: complet .webm 246Ko OK; extrait --download-sections *5-10 -> mp3 64Ko OK
+2026-11-14	CHANTIER-B2 Barre de progression YouTube (sf:ytprogress deja cable: yt-dlp %, ffmpeg ~80Mo, etat -1 indetermine)	Testé réel	Progression % visible dans les logs yt-dlp; rendu UI non regarde en vrai
+2026-11-14	CHANTIER-B3/D1 askDestDir() avant telechargement YouTube et avant sauvegarde enregistrement; lastDestDir memorise	Testé partiel	Code en place; modale non cliquee en vrai
+2026-11-14	CHANTIER-D2/D3 Reglages: bouton Ouvrir dossier + chemins imports/recordings/cuts affiches; toast YouTube avec chemin complet	Testé partiel	Build OK
+2026-11-14	CHANTIER-C1/C2/C3 Note routage (seul le micro est bascule), CABLE Input surligne, avertissement ecoute locale=cable Discord	Testé partiel	Statique; build OK
+2026-11-14	CHANTIER-E Icone exe: assets/icon.ico (16/32/48/256, degrade violet->rose + emoji) + icon.png; win.icon + BrowserWindow.icon + signAndEditExecutable	Testé partiel	Build OK, rcedit execute; verification visuelle exe/tache NON faite
+2026-11-14	CHANTIER-F Bulles d'aide title sur bascule micro, surveillance, restaurer micro, normalisation, STOP, sources enregistreur, trim/fondus, dossier stockage; message erreur YouTube actionnable	Testé partiel	Natif title, CSP-safe

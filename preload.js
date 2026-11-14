@@ -34,6 +34,7 @@ contextBridge.exposeInMainWorld('sf', {
   audioTapStart: () => ipcRenderer.invoke('audio:tapStart'),
   audioTapStop: () => ipcRenderer.invoke('audio:tapStop'),
   cableDownload: () => ipcRenderer.invoke('cable:openPage'),
+  openDir: (d) => ipcRenderer.invoke('shell:openDir', d),
   seedSounds: () => ipcRenderer.invoke('sounds:seed'),
   onTapDead: on('sf:tapDead'),
   onTapPcm: on('sf:tapPcm'),

@@ -790,8 +790,10 @@ function editSound(s) {
 
   const scClear = el('button', { class: 'ghost', text: 'Effacer', onclick: () => { sc = ''; scBtn.textContent = 'Aucun — cliquer pour définir'; scHint.textContent = ''; } });
   const times = el('div', { class: 'times' },
-    el('label', { text: 'Début (s)' }), startIn, el('label', { text: 'Fin (s)' }), endIn,
-    el('label', { text: 'Fondu d\'entrée (ms)' }), fiIn, el('label', { text: 'Fondu de sortie (ms)' }), foIn);
+    el('label', { text: 'Début (s)', title: 'Le son ne jouera qu\'à partir de cet instant. Le fichier d\'origine n\'est jamais modifié.' }), startIn,
+    el('label', { text: 'Fin (s)', title: 'Le son s\'arrêtera à cet instant. Vide = jusqu\'à la fin du fichier.' }), endIn,
+    el('label', { text: 'Fondu d\'entrée (ms)', title: 'Le volume monte progressivement de 0 au niveau normal sur cette durée.' }), fiIn,
+    el('label', { text: 'Fondu de sortie (ms)', title: 'Le volume redescend à 0 sur cette durée avant la fin du son.' }), foIn);
 
   modal('Modifier le son', [
     field('Nom', nameIn),
@@ -858,6 +860,27 @@ function exportConfig() {
   toast('Configuration exportée (références uniquement, pas les fichiers audio).');
 }
 
+// Propose le dossier de destination avant un ajout (YouTube, enregistrement).
+// Pre-rempli avec le dernier choix (lastDestDir) ou le dossier de stockage.
+function askDestDir() {
+  return new Promise((resolve) => {
+    const inp = el('input', { type: 'text', value: cfg.settings.lastDestDir || cfg.settings.storageDir || '' });
+    inp.style.width = '100%';
+    modal('Dossier de destination', [
+      el('div', { class: 'hint', text: 'Le fichier sera enregistré dans ce dossier (sous-dossier imports/ ou recordings/ selon la source). Laisse vide pour le dossier SoundFart par défaut.' }),
+      inp,
+    ], [
+      { label: 'Annuler', onclick: (c) => { c(); resolve(null); } },
+      { label: 'Choisir…', onclick: async () => { const d = await window.sf.pickDir(); if (d) inp.value = d; } },
+      { label: 'OK', kind: 'primary', onclick: (c) => {
+        const d = inp.value.trim();
+        if (d) { cfg.settings.lastDestDir = d; save(); }
+        c(); resolve(d || '');
+      } },
+    ]);
+  });
+}
+
 function importConfig(onDone) {
   const inp = el('input', { type: 'file', accept: '.json,application/json' });
   inp.style.display = 'none';
@@ -901,7 +924,7 @@ function settingsModal() {
 
   // raccourci global STOP
   let stopSc = s.stopShortcut || '';
-  const stopBtn = el('button', { text: stopSc ? fmtAccel(stopSc) : 'Aucun — cliquer pour définir' });
+  const stopBtn = el('button', { text: stopSc ? fmtAccel(stopSc) : 'Aucun — cliquer pour définir', title: 'Raccourci clavier GLOBAL : interrompt tous les sons en cours, même fenêtre minimisée ou dans une autre application.' });
   const stopHint = el('div', { class: 'hint', text: 'Interrompt immédiatement tous les sons en cours, même fenêtre minimisée.' });
   let stopCleanup = () => {};
   stopBtn.addEventListener('click', () => {
@@ -930,19 +953,22 @@ function settingsModal() {
   });
 
   // dossier de stockage des fichiers crees par l'app (imports YouTube, enregistrements, extraits)
-  const dirLbl = el('div', { class: 'hint path', text: s.storageDir || 'Dossier SoundFart par défaut (%APPDATA%\\SoundFart)' });
-  const pickDirBtn = el('button', { text: 'Choisir…', onclick: async () => {
+  const dirLbl = el('div', { class: 'hint path', text: (s.storageDir || 'Dossier SoundFart par défaut (SoundFart-data)') + ' — les fichiers vont dans imports/, recordings/, cuts/ à l\'intérieur' });
+  const openDirBtn = el('button', { class: 'ghost', text: 'Ouvrir', title: 'Ouvre le dossier de stockage dans l\'Explorateur', onclick: () => window.sf.openDir(s.storageDir || '') });
+  const pickDirBtn = el('button', { text: 'Choisir…', title: 'Choisit le dossier racine où SoundFart range ses fichiers (imports/, recordings/, cuts/).', onclick: async () => {
     const d = await window.sf.pickDir();
     if (d) { s.storageDir = d; dirLbl.textContent = d; }
   } });
-  const resetDirBtn = el('button', { class: 'ghost', text: 'Réinitialiser', onclick: () => { s.storageDir = ''; dirLbl.textContent = 'Dossier SoundFart par défaut (%APPDATA%\\SoundFart)'; } });
-  const autoMic = el('input', { type: 'checkbox', checked: !!s.autoSwitchMic });
-  const watchMic = el('input', { type: 'checkbox', checked: s.watchdogMic !== false });
+  const resetDirBtn = el('button', { class: 'ghost', text: 'Réinitialiser', onclick: () => { s.storageDir = ''; dirLbl.textContent = 'Dossier SoundFart par défaut (SoundFart-data) — les fichiers vont dans imports/, recordings/, cuts/ à l\'intérieur'; } });
+  const autoMic = el('input', { type: 'checkbox', checked: !!s.autoSwitchMic, title: 'Au lancement, l\'entrée micro Windows bascule sur « CABLE Output » (pour que Discord capte ta voix via le câble), puis revient à ton vrai micro à la fermeture ou en cas de crash.' });
+  const watchMic = el('input', { type: 'checkbox', checked: s.watchdogMic !== false, title: 'Revérifie périodiquement que l\'entrée micro est toujours sur le câble. Se met en pause pour la session si tu changes le micro toi-même (Discord inclus).' });
 
-  const normAllBtn = el('button', { text: 'Normaliser toute la bibliothèque', onclick: () => { closeSettings(); normalizeAll(); } });
+  const normAllBtn = el('button', { text: 'Normaliser toute la bibliothèque', title: 'Ramène le volume de chaque son à un niveau cible commun. Les fichiers audio ne sont jamais modifiés — seul le gain en lecture change.', onclick: () => { closeSettings(); normalizeAll(); } });
   const exportBtn = el('button', { text: 'Exporter la configuration', onclick: exportConfig });
   const importBtn = el('button', { text: 'Importer une configuration', onclick: () => importConfig(closeSettings) });
 
+  // Surligne la sortie cable recommandee dans le select Discord.
+  for (const o of cableSel.options) if (/cable input/i.test(o.text)) o.text += '  ★';
   const cableVerifyBtn = el('button', { class: 'ghost', text: 'Vérifier', onclick: async () => {
     cableVerifyBtn.disabled = true; cableVerifyBtn.textContent = 'Vérification…';
     await refreshDevices(false); resolveDevices(); updateCableUi(); await applyAudio();
@@ -956,21 +982,23 @@ function settingsModal() {
     field('Sortie vers Discord (micro virtuel)', el('div', { class: 'row' }, cableSel, cableVerifyBtn, cableInstallBtn),
       cablePresent() ? 'Choisis « CABLE Input ». Dans Discord, mets « CABLE Output » comme micro.'
         : 'Aucun câble virtuel détecté : la diffusion vers Discord est désactivée. VB-CABLE est un pilote gratuit de VB-Audio, à installer toi-même (vb-audio.com/Cable), puis redémarre le PC.'),
-    field('Écoute locale (ton casque)', monSel, 'Tu entends les sons dans ton casque, jamais ta propre voix.'),
+    field('Écoute locale (ton casque)', monSel, s.monId && s.monId === s.cableId
+      ? '⚠ Écoute locale = sortie Discord : tu risks une boucle/écho — choisis un périphérique différent.'
+      : 'Tu entends les sons dans ton casque, jamais ta propre voix.'),
     field('Mon micro', micSel),
     el('label', { class: 'check' }, mix,
       el('span', { text: 'Mixer mon micro dans la sortie Discord (sinon tes potes n\'entendent que les sons). Décoche si tu utilises « Écouter ce périphérique » de Windows.' })),
     field('Bascule micro automatique', el('label', { class: 'check' }, autoMic,
-      el('span', { text: 'Au lancement, l\'entrée micro Windows passe sur « CABLE Output » et revient à ton micro à la fermeture. Dans Discord, choisis « Défaut » comme périphérique d\'entrée pour que ça suive.' }))),
+      el('span', { text: 'Au lancement, SEUL le micro (entrée Windows) passe sur « CABLE Output » et revient à ton micro à la fermeture — tes sorties (Discord, écoute locale) restent sur tes périphériques habituels. Dans Discord, choisis « Défaut » comme périphérique d\'entrée pour que ça suive.' }))),
     field('Surveillance micro automatique', el('label', { class: 'check' }, watchMic,
       el('span', { text: 'Pendant que SoundFart tourne, revérifie régulièrement que l\'entrée micro est toujours sur le câble. Si tu changes le micro toi-même (ou qu\'une app le change), la surveillance se met en pause jusqu\'au prochain lancement.' }))),
-    field('Récupération micro', el('button', { class: 'ghost', text: 'Restaurer mon micro Windows', onclick: () => {
+    field('Récupération micro', el('button', { class: 'ghost', text: 'Restaurer mon micro Windows', title: 'Force le retour de l\'entrée micro Windows sur ton vrai micro — à utiliser si elle est restée bloquée sur « CABLE Output » (crash, coupure).', onclick: () => {
       window.sf.restoreMic();
       toast('Restauration du micro demandée — si l\'entrée était bloquée sur le câble, elle revient sur ton micro.', 'info');
     } }),
       'À utiliser si ton micro Windows est resté bloqué sur « CABLE Output » (coupure, crash). Ramène l\'entrée sur ton vrai micro.'),
-    field('Dossier de stockage', el('div', { class: 'row' }, dirLbl, pickDirBtn, resetDirBtn),
-      'Les fichiers créés par SoundFart (imports YouTube, enregistrements, extraits MP3) iront dans ce dossier (sous-dossiers imports/, recordings/, cuts/).'),
+    field('Dossier de stockage', el('div', { class: 'row' }, dirLbl, pickDirBtn, openDirBtn, resetDirBtn),
+      'Dossier par défaut des fichiers créés par SoundFart (imports YouTube, enregistrements, extraits MP3) — un choix de dossier est aussi proposé avant chaque ajout.'),
     field('Raccourci global STOP', el('div', { class: 'row' }, stopBtn), stopHint),
     field('Niveaux audio', el('div', { class: 'row' }, normAllBtn),
       'Normalise le volume de tous les sons vers un niveau cible (les fichiers ne sont pas modifiés).'),
@@ -1194,9 +1222,9 @@ async function recorderModal() {
     .filter((d) => d.kind === 'audioinput' && d.deviceId !== 'communications' && d.deviceId !== 'default');
   const micSel = el('select', {}, devs.map((d) => el('option', { value: d.deviceId, text: d.label || d.deviceId, selected: d.deviceId === cfg.settings.micId })));
   if (!micSel.value && devs.length) micSel.value = devs[0].deviceId;
-  const micOn = el('input', { type: 'checkbox', checked: true });
-  const pcOn = el('input', { type: 'checkbox', checked: false });
-  const cableOn = el('input', { type: 'checkbox', checked: false });
+  const micOn = el('input', { type: 'checkbox', checked: true, title: 'Enregistre la voix via ton micro (avec réduction d\'écho et de bruit).' });
+  const pcOn = el('input', { type: 'checkbox', checked: false, title: 'Enregistre tout ce que tu entends sur le PC (vidéo, jeu, musique) — capturé directement à la sortie, sans repasser par le câble.' });
+  const cableOn = el('input', { type: 'checkbox', checked: false, title: 'Enregistre ce que SoundFart envoie vers Discord (les sons de la soundboard).' });
   const status = el('div', { class: 'hint', text: 'Choisis les sources, puis lance l\'enregistrement.' });
   const nameIn = el('input', { type: 'text', value: 'Enregistrement ' + new Date().toLocaleString('fr-FR'), maxlength: 80 });
   const catSel = el('select', {},
@@ -1360,7 +1388,9 @@ async function recorderModal() {
           const blob = new Blob(chunks, { type: rec.mimeType || mime || 'audio/webm' });
           const ab = await blob.arrayBuffer();
           const fname = nameIn.value.trim() || 'enregistrement';
-          const path = await window.sf.saveRecording({ data: ab, name: fname, ext: extFor(rec.mimeType || mime), dir: cfg.settings.storageDir || '' });
+          const destDir = await askDestDir();
+          if (destDir === null) { status.textContent = 'Enregistrement annulé (dossier).'; return; }
+          const path = await window.sf.saveRecording({ data: ab, name: fname, ext: extFor(rec.mimeType || mime), dir: destDir || cfg.settings.storageDir || '' });
           recordedSound = {
             id: uid(), name: fname, path, volume: 100, plays: 0, addedAt: Date.now(),
             categoryId: null, favorite: false, norm: 1, shortcut: null,
@@ -1484,22 +1514,31 @@ function youtubeModal() {
   const dlBtn = el('button', { text: 'Télécharger l\'extrait', onclick: async () => {
     if (!info || busy) return;
     const start = parseTs(startIn.value);
-    const end = parseTs(endIn.value);
-    if (isNaN(start) || isNaN(end)) { prog.textContent = 'Heure invalide : utilise des secondes ou hh:mm:ss.'; return; }
-    if (!(end > start)) { prog.textContent = 'La fin doit être après le début.'; return; }
+    const hasTimeline = endIn.value.trim() !== '' && startIn.value.trim() !== '';
+    const end = endIn.value.trim() === '' ? 0 : parseTs(endIn.value);
+    if (!hasTimeline && startIn.value.trim() !== '0' && startIn.value.trim() !== '') {
+      prog.textContent = 'Timeline incomplète : définis le début ET la fin, ou laisse les deux vides pour le fichier complet.'; return;
+    }
+    if (hasTimeline && (isNaN(start) || isNaN(end) || !(end > start))) {
+      prog.textContent = 'Heure invalide : la fin doit être après le début.'; return;
+    }
+    const dest = await askDestDir();
+    if (dest === null) return;
     busy = true;
     dl = null;
     prog.textContent = 'Préparation…';
     barFill.style.width = '0%'; barFill.style.opacity = '1';
     try {
       offProg = offProg || window.sf.onYtProgress(setProg);
-      const r = await window.sf.ytDownload({ url: urlIn.value.trim(), start, end, dir: cfg.settings.storageDir || '' });
-      dl = { path: r.path, sectioned: r.sectioned, start, end };
+      const r = await window.sf.ytDownload({ url: urlIn.value.trim(), start: hasTimeline ? start : 0, end: hasTimeline ? end : 0, dir: dest || cfg.settings.storageDir || '', full: !hasTimeline });
+      dl = { path: r.path, sectioned: r.sectioned, start: hasTimeline ? start : 0, end: hasTimeline ? end : null };
       prog.textContent = r.sectioned
         ? 'Extrait MP3 prêt (' + fmtTime(end - start) + ').'
-        : 'Audio complet téléchargé ; seul l\'extrait choisi sera joué (' + fmtTime(end - start) + ' sur ' + fmtTime(info.duration) + ').';
+        : hasTimeline
+          ? 'Audio complet téléchargé ; seul l\'extrait choisi sera joué (' + fmtTime(end - start) + ' sur ' + fmtTime(info.duration) + ').'
+          : 'Fichier audio complet téléchargé — ajuste le début/fin dans l\'éditeur si besoin.';
     } catch (e) {
-      prog.textContent = 'Téléchargement impossible : ' + e.message;
+      prog.textContent = 'Téléchargement impossible : ' + e.message + ' — vérifie le lien, ta connexion, et réessaie.';
     } finally {
       busy = false;
     }
@@ -1527,7 +1566,7 @@ function youtubeModal() {
     prog, bar,
     field('Nom', nameIn),
     field('Catégorie', catSel),
-    el('div', { class: 'hint', text: 'Le fichier audio est enregistré dans le dossier « imports » de SoundFart. Respecte les droits d\'auteur et les conditions de YouTube.' }),
+    el('div', { class: 'hint', text: 'Le fichier audio est enregistré dans le dossier « imports » du dossier choisi ci-dessus. Respecte les droits d\'auteur et les conditions de YouTube.' }),
   ], [
     { label: 'Fermer', onclick: (c) => c() },
     { label: 'Ajouter à la bibliothèque', kind: 'primary', onclick: (c) => {
@@ -1545,7 +1584,7 @@ function youtubeModal() {
       };
       cfg.sounds.push(s);
       save(); renderAll(); c();
-      toast('Son YouTube ajouté.');
+      toast('Son YouTube ajouté : ' + dl.path);
     } },
   ], { onClose: () => { if (offProg) offProg(); } });
 }

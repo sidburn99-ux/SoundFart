@@ -32,7 +32,8 @@
       "target": [
         "portable"
       ],
-      "signAndEditExecutable": false
+      "icon": "assets/icon.ico",
+      "signAndEditExecutable": true
     },
     "portable": {
       "artifactName": "SoundFart.exe"

@@ -525,9 +525,9 @@ H('yt:info', async (_e, url) => {
   return { title: j.title || '', duration: j.duration || 0, url: j.webpage_url || url };
 });
 
-H('yt:download', async (_e, { url, start, end, dir }) => {
+H('yt:download', async (_e, { url, start, end, dir, full }) => {
   if (!validHttpUrl(url)) throw new Error('URL invalide');
-  if (!Number.isFinite(+start) || !Number.isFinite(+end) || +end <= +start) throw new Error('bornes invalides');
+  if (!full && (!Number.isFinite(+start) || !Number.isFinite(+end) || +end <= +start)) throw new Error('bornes invalides');
   await ensureYtDlp();
   const tryDownload = async () => {
     const impDir = path.join(storageRoot(dir), 'imports');
@@ -539,7 +539,8 @@ H('yt:download', async (_e, { url, start, end, dir }) => {
     // ffmpeg permet de ne telecharger + convertir que l'extrait (MP3 leger) ; sinon repli sur l'audio complet + trim
     let ffDir = null;
     try { ffDir = await ensureFfmpeg(); } catch {}
-    if (ffDir && end > start) {
+    // Sans timeline : on prend l'audio complet (trim dans l'editeur ensuite), pas d'extraction.
+    if (!full && ffDir && end > start) {
       try {
         await runYt([...baseArgs, '--ffmpeg-location', ffDir, '-f', 'bestaudio', '-x', '--audio-format', 'mp3', '--download-sections', `*${start}-${end}`, url], ytProgress);
         sectioned = true;
@@ -730,6 +731,11 @@ ipcMain.on('audio:restore', () => {
   } catch {}
 });
 
+H('shell:openDir', (_e, d) => {
+  const p = d && path.isAbsolute(String(d)) ? String(d) : app.getPath('userData');
+  return shell.openPath(p);
+});
+
 // VB-CABLE : ouvre la page officielle de telechargement. L'URL est FIXE ici,
 // jamais fournie par le renderer — pas d'openExternal generique.
 H('cable:openPage', () => { shell.openExternal('https://vb-audio.com/Cable/'); });
@@ -851,6 +857,7 @@ function createWindow() {
     minHeight: 600,
     backgroundColor: '#0e0d18',
     title: 'SoundFart',
+    icon: path.join(__dirname, 'assets', 'icon.png'),
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
