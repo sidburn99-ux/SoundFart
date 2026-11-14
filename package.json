@@ -1,12 +1,12 @@
 {
   "name": "soundfart",
   "productName": "SoundFart",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "SoundFart - soundboard pour Discord",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder --win portable"
+    "dist": "electron-builder --win"
   },
   "devDependencies": {
     "electron": "^45.3.1",
@@ -17,11 +17,18 @@
     "productName": "SoundFart",
     "files": ["main.js", "preload.js", "AudioEndpoint.cs", "AudioTap.cs", "vendor/**/*", "assets/**/*", "src/**/*", "index.html", "style.css", "app.js"],
     "win": {
-      "target": "portable",
+      "target": ["portable", "nsis"],
       "signAndEditExecutable": false
     },
     "portable": {
       "artifactName": "SoundFart.exe"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": false,
+      "artifactName": "SoundFart-Setup-${version}.${ext}",
+      "include": "build/installer.nsh"
     }
   }
 }

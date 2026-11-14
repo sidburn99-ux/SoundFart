@@ -694,6 +694,16 @@ async function ensureCableDriver() {
   return cableInstallPromise;
 }
 
+// Arme une relance unique de l'app au prochain demarrage (RunOnce, supprime par Windows
+// apres execution) : le reboot d'activation VB-CABLE ramene l'utilisateur sur SoundFart.
+function armPostRebootRelaunch() {
+  try {
+    execFileSync('reg', ['add', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\RunOnce',
+      '/v', 'SoundFart', '/t', 'REG_SZ', '/d', `"${process.execPath}"`, '/f'], { timeout: 5000 });
+    log('[cable] relance post-reboot enregistree');
+  } catch (e) { log('[cable] armPostRebootRelaunch: ' + e.message); }
+}
+
 // VB-CABLE n'est pleinement actif qu'apres un reboot : on propose le redemarrage a l'utilisateur.
 function offerCableReboot() {
   try {
@@ -708,6 +718,7 @@ function offerCableReboot() {
       cancelId: 1,
     }).then((r) => {
       if (r.response !== 0) return;
+      armPostRebootRelaunch();
       try {
         execFileSync('shutdown', ['/r', '/t', '60', '/c', 'SoundFart : redemarrage pour activer VB-CABLE'], { timeout: 10000 });
         log('[cable] redemarrage programme dans 60 s');

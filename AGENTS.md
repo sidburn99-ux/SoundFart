@@ -3,7 +3,7 @@
 ## Stack
 - Electron 45 (main: `main.js`, preload: `preload.js`, renderer: `src/app.js` + `src/index.html` + `src/style.css`)
 - Vanila JS, pas de framework. Outils natifs C# compilés à la volée via `csc.exe` dans `%APPDATA%\SoundFart\tools\`
-- Build : `npm run dist` → `dist\SoundFart.exe` (portable, electron-builder)
+- Build : `npm run dist` → `dist\SoundFart-Setup-X.Y.Z.exe` (installateur NSIS, deux phases VB-CABLE) + `dist\SoundFart.exe` (portable, dev/test)
 - Config : `%APPDATA%\SoundFart\config.json` — Log : `%APPDATA%\SoundFart\soundfart.log`
 
 ## Règles de travail OBLIGATOIRES
@@ -20,7 +20,7 @@
 
 ### Vérification
 - Après chaque modification : `node --check` sur les JS modifiés.
-- Rebuild `dist\SoundFart.exe` après tout changement fonctionnel.
+- Rebuild `npm run dist` après tout changement fonctionnel.
 - Tests de régression : relancer l'app, vérifier `soundfart.log`, tester les flux touchés.
 - NE JAMAIS prétendre qu'une feature audio marche sans test réel (niveau non nul mesuré, pas juste "fichier créé").
 
