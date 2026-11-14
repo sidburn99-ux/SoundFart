@@ -86,10 +86,34 @@ function normalizeCfg(saved) {
     s.volume ??= 100; s.plays ??= 0; s.addedAt ??= 0; s.categoryId ??= null;
     s.favorite ??= false; s.norm ??= 1; s.shortcut ??= null;
     s.trimStart ??= 0; s.trimEnd ??= null; s.fadeIn ??= 0; s.fadeOut ??= 0;
+    // Coercions : une config importée avec des types invalides ne doit pas
+    // crasher le rendu (shortcut non-string -> fmtAccel) ni casser l'audio.
+    if (typeof s.shortcut !== 'string' || s.shortcut.length > 64) s.shortcut = null;
+    if (!Number.isFinite(+s.volume)) s.volume = 100; else s.volume = Math.min(300, Math.max(0, +s.volume));
+    if (!Number.isFinite(+s.norm) || +s.norm <= 0) s.norm = 1; else s.norm = Math.min(4, +s.norm);
+    for (const k of ['trimStart', 'trimEnd', 'fadeIn', 'fadeOut']) {
+      if (s[k] != null && !Number.isFinite(+s[k])) s[k] = k === 'trimEnd' ? null : 0;
+    }
+    if (s.trimEnd != null && Number.isFinite(+s.trimStart) && +s.trimEnd <= +s.trimStart) s.trimEnd = null;
   });
+  // ids de categories dupliques : garde le premier (catById serait ambigu)
+  {
+    const seenCat = new Set();
+    c.categories = c.categories.filter((cat) => {
+      if (!cat || typeof cat.id !== 'string' || typeof cat.name !== 'string') return false;
+      if (seenCat.has(cat.id)) return false;
+      seenCat.add(cat.id); return true;
+    });
+  }
   c.categories.forEach((cat) => {
     if (cat && cat.color != null && (typeof cat.color !== 'string' || !/^#[0-9a-fA-F]{3,8}$/.test(cat.color))) cat.color = null;
   });
+  // settings : types invalides -> valeurs par defaut (master NaN cassait les deux sorties)
+  const st = c.settings;
+  if (!Number.isFinite(+st.master)) st.master = 80; else st.master = Math.min(100, Math.max(0, +st.master));
+  if (typeof st.stopShortcut !== 'string' || st.stopShortcut.length > 64) st.stopShortcut = defaults().settings.stopShortcut;
+  if (st.storageDir != null && typeof st.storageDir !== 'string') st.storageDir = '';
+  if (st.lastDestDir != null && typeof st.lastDestDir !== 'string') delete st.lastDestDir;
   const hasCat = (id) => c.categories.some((x) => x.id === id);
   if (!['all', 'none', 'fav'].includes(c.ui.cat) && !hasCat(c.ui.cat)) c.ui.cat = 'all';
   return c;

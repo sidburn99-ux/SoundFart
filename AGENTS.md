@@ -34,7 +34,7 @@
 ### Code
 - Pas de commentaires superflus ; style compact ; suivre les conventions existantes.
 - Les originaux audio ne sont JAMAIS modifiés.
-- Les outils (yt-dlp, ffmpeg, AudioEndpoint, AudioTap) se téléchargent/compilent à la volée dans `%APPDATA%\SoundFart\tools\`.
+- Les outils (yt-dlp, ffmpeg, AudioEndpoint, AudioTap) se téléchargent/compilent à la volée dans `SoundFart-data\tools\` (repli `%APPDATA%\SoundFart\tools`).
 - Sécurité : `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true` — ne jamais contourner.
 
 ## Architecture audio (rappel)

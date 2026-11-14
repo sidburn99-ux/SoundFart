@@ -1,6 +1,6 @@
 # SoundFart — Spécification fonctionnelle (pour évaluation par IA)
 
-> Document de référence décrivant **fidèlement** ce que fait le programme tel qu'implémenté (v1.3.x). Utilisable tel quel comme prompt d'évaluation.
+> Document de référence décrivant **fidèlement** ce que fait le programme tel qu'implémenté (v1.4.0). Utilisable tel quel comme prompt d'évaluation.
 
 ---
 
@@ -8,10 +8,10 @@
 
 **SoundFart** est une soundboard Windows pour Discord, développée en **Electron 45** (JavaScript vanilla, zéro framework, zéro dépendance runtime). Objectif : jouer des sons dans un salon vocal Discord via un câble virtuel audio (VB-CABLE), pendant qu'on joue, avec une interface sombre et compacte.
 
-- **Livrable** : `dist\SoundFart.exe` portable (~110 Mo), aucun prérequis (Node, Python…) pour l'utilisateur final.
-- **Config** : `%APPDATA%\SoundFart\config.json` — les sons sont des **références** à des fichiers existants, jamais copiés ni modifiés.
-- **Journal** : `%APPDATA%\SoundFart\soundfart.log`.
-- **Outils téléchargés au premier usage** dans `%APPDATA%\SoundFart\tools\` : `yt-dlp.exe` (~15 Mo, import YouTube), `ffmpeg.exe` (~115 Mo, coupes MP3), `AudioEndpoint.exe` (compilé localement depuis `AudioEndpoint.cs` via le `csc.exe` de .NET Framework, bascule micro).
+- **Livrable** : `dist\SoundFart.exe` portable (~375 Mo, compression `store`), aucun prérequis (Node, Python…) pour l'utilisateur final.
+- **Config** : `SoundFart-data\config.json` à côté de l'exe (repli `%APPDATA%\SoundFart\`) — les sons sont des **références** à des fichiers existants, jamais copiés ni modifiés.
+- **Journal** : `SoundFart-data\soundfart.log`.
+- **Outils téléchargés au premier usage** dans `SoundFart-data\tools\` : `yt-dlp.exe` (~15 Mo, import YouTube), `ffmpeg.exe` (~115 Mo, coupes MP3), `AudioEndpoint.exe` + `AudioTap.exe` (compilés localement depuis les `.cs` via le `csc.exe` de .NET Framework — bascule micro et capture loopback).
 
 ## Architecture
 
@@ -30,7 +30,7 @@ Sécurité : CSP stricte (`default-src 'self'`), `contextIsolation`, `sandbox`, 
 ## Fonctionnalités implémentées
 
 ### 1. Bibliothèque et import
-- Glisser-déposer de **fichiers et dossiers** (expansion récursive, profondeur max 4).
+- Glisser-déposer de **fichiers et dossiers** (expansion récursive, profondeur max 3).
 - Formats : mp3, wav, ogg, flac, m4a, aac, opus, webm, mp4, mkv, mov, m4v.
 - Référence au fichier original (chemin mémorisé, jamais copié/modifié).
 - **Fichier manquant** : badge « Fichier introuvable » + action « Retrouver le fichier… » (sélecteur de fichier).

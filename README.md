@@ -4,7 +4,7 @@ Soundboard Windows pour Discord : joue des sons dans tes appels, enregistre ta v
 
 ## Fonctionnalités
 
-- **Bibliothèque de sons** : catégories, favoris, miniatures, recherche, tri, volume par son, lecture aléatoire
+- **Bibliothèque de sons** : catégories, favoris, miniatures, recherche, tri, volume par son
 - **Édition non destructive** : découpe début/fin, fondus d'entrée/sortie, normalisation — l'original n'est jamais modifié
 - **Raccourcis clavier** par son + raccourci global **STOP** (interrompt tout, même fenêtre minimisée)
 - **Enregistreur intégré** : micro, audio du PC (loopback WASAPI sans repasser par le câble) et sortie SoundFart→Discord
