@@ -1104,6 +1104,17 @@ async function recorderModal() {
   let streams = [], actx = null, rec = null, chunks = [];
   let recordedSound = null, recTimer = null, recStart = 0, looseTracks = [];
   let dead = false; // passe a true a la fermeture : avorte les startBtn encore en vol
+  let tapNode = null, pcmQ = [];
+  const killTapNode = () => { if (tapNode) { try { tapNode.disconnect(); } catch {} tapNode = null; } pcmQ = []; };
+  const offTapDead = window.sf.onTapDead ? window.sf.onTapDead(() => {
+    if (dead || !rec || rec.state === 'inactive') return;
+    toast('Source « Audio du PC » perdue — enregistrement arrêté.', 'warn');
+    try { rec.stop(); } catch {}
+  }) : null;
+  const offTapPcm = window.sf.onTapPcm ? window.sf.onTapPcm((ab) => {
+    if (tapNode) { try { tapNode.port.postMessage(ab); } catch {} }
+    else if (pcmQ.length < 600) pcmQ.push(ab);
+  }) : null;
 
   // « default » exclu : apres la bascule micro auto, il pointerait sur CABLE Output (on enregistrerait la soundboard, pas le micro)
   const devs = (await navigator.mediaDevices.enumerateDevices())
@@ -1131,6 +1142,7 @@ async function recorderModal() {
   const deadCleanup = (st) => {
     if (st) st.getTracks().forEach((t) => t.stop());
     stopLoose();
+    killTapNode();
     window.sf.audioTapStop().catch(() => {});
   };
 
@@ -1140,8 +1152,11 @@ async function recorderModal() {
     try { if (rec && rec.state !== 'inactive') { rec.onstop = null; rec.stop(); } } catch {}
     streams.forEach((st) => st.getTracks().forEach((t) => t.stop()));
     stopLoose();
+    killTapNode();
     window.sf.audioTapStop().catch(() => {});
     if (actx) actx.close().catch(() => {});
+    if (offTapDead) offTapDead();
+    if (offTapPcm) offTapPcm();
     streams = []; actx = rec = null;
   };
 
@@ -1207,8 +1222,10 @@ async function recorderModal() {
   startBtn.addEventListener('click', async () => {
     try {
       streams = [];
-      // « Audio du PC » : AudioTap injecte la sortie systeme dans CABLE Input -> on l'enregistre
-      // via la source « CABLE Output » (fiable). Repli sur getDisplayMedia si le tap echoue.
+      // « Audio du PC » : AudioTap capture le loopback systeme en PCM float32 48 kHz sur
+      // stdout -> IPC -> AudioWorklet -> enregistreur. Ne passe PLUS par le cable :
+      // la voix des amis Discord n'est plus reinjectee dans l'appel (anti-echo).
+      // Repli sur getDisplayMedia si le tap echoue.
       let tapOn = false;
       if (pcOn.checked) {
         try {
@@ -1223,7 +1240,7 @@ async function recorderModal() {
         audio: { deviceId: micSel.value ? { exact: micSel.value } : undefined, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       })]);
       if (pcOn.checked && !tapOn) want.push(['audio du PC', systemStream]);
-      if (cableOn.checked || tapOn) want.push(['câble SoundFart', cableStream]);
+      if (cableOn.checked) want.push(['câble SoundFart', cableStream]);
       if (!want.length) throw new Error('coche au moins une source');
       for (const [label, fn] of want) {
         try {
@@ -1241,6 +1258,24 @@ async function recorderModal() {
       comp.threshold.value = -12; comp.knee.value = 20; comp.ratio.value = 8;
       comp.connect(dest);
       streams.forEach((st) => actx.createMediaStreamSource(st).connect(comp));
+      if (tapOn) {
+        try {
+          await actx.audioWorklet.addModule('tap-processor.js');
+          tapNode = new AudioWorkletNode(actx, 'tap-processor');
+          tapNode.connect(comp);
+          pcmQ.forEach((ab) => tapNode.port.postMessage(ab));
+          pcmQ = [];
+        } catch (e) {
+          window.sf.uiLog('tap worklet: ' + (e && e.message));
+          killTapNode();
+          try {
+            const st = await systemStream();
+            if (dead) { deadCleanup(st); return; }
+            streams.push(st);
+            actx.createMediaStreamSource(st).connect(comp);
+          } catch (e2) { window.sf.uiLog('recorder src audio du PC (repli): ' + (e2 && e2.message)); }
+        }
+      }
       chunks = [];
       rec = new MediaRecorder(dest.stream, mime ? { mimeType: mime } : undefined);
       rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
@@ -1263,6 +1298,7 @@ async function recorderModal() {
         }
         streams.forEach((st) => st.getTracks().forEach((t) => t.stop()));
         stopLoose();
+        killTapNode();
         window.sf.audioTapStop().catch(() => {});
         if (actx) { actx.close().catch(() => {}); actx = null; }
         startBtn.disabled = false; stopBtn.disabled = true;
@@ -1282,6 +1318,7 @@ async function recorderModal() {
       // meme liberation que rec.onstop : pas de micro/tap/contexte leaving trainer
       streams.forEach((st) => st.getTracks().forEach((t) => t.stop()));
       stopLoose();
+      killTapNode();
       window.sf.audioTapStop().catch(() => {});
       if (actx) { actx.close().catch(() => {}); actx = null; }
     }
@@ -1291,7 +1328,7 @@ async function recorderModal() {
 
   modal('Enregistreur', [
     field('Micro', el('div', { class: 'row' }, micOn, micSel), 'Voix via le périphérique d\'entrée choisi.'),
-    field('Audio du PC', pcOn, 'Coche pour mixer ce que tu entends : voix Discord, musique, sons du jeu. Injecté dans le câble VB-CABLE le temps de l\'enregistrement (tu continues d\'entendre normalement).'),
+    field('Audio du PC', pcOn, 'Coche pour mixer ce que tu entends (musique, voix Discord, jeu) directement dans l\'enregistrement — le flux passe par SoundFart sans repasser par le câble, donc sans écho pour tes amis.'),
     field('Câble SoundFart', cableOn, 'Coche pour ajouter ce qui passe dans le câble virtuel (sons de la soundboard + micro mixé).'),
     el('div', { class: 'hint', text: 'Tu peux combiner plusieurs sources : elles sont mixées avec un limiteur anti-saturation. Le son est enregistré en qualité numérique, sans passer par les haut-parleurs.' }),
     el('div', { class: 'row' }, startBtn, stopBtn, previewBtn),

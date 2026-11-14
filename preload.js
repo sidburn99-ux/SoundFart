@@ -36,4 +36,6 @@ contextBridge.exposeInMainWorld('sf', {
   cableEnsure: () => ipcRenderer.invoke('cable:ensure'),
   seedSounds: () => ipcRenderer.invoke('sounds:seed'),
   onCableReady: on('sf:cableReady'),
+  onTapDead: on('sf:tapDead'),
+  onTapPcm: on('sf:tapPcm'),
 });

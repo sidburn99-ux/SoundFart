@@ -24,8 +24,12 @@ function log(msg) {
   } catch {}
 }
 
-if (!app.requestSingleInstanceLock()) {
-  app.quit();
+// Instance unique : la 2e instance sort immediatement via app.exit(0) — PAS app.quit(),
+// qui declencherait will-quit et restaurerait le micro pendant que l'instance 1 tourne
+// (couperait l'audio vers Discord). app.exit() n'emet ni before-quit ni will-quit.
+const isPrimary = app.requestSingleInstanceLock();
+if (!isPrimary) {
+  app.exit(0);
 } else {
   app.on('second-instance', () => {
     if (win) {
@@ -542,9 +546,16 @@ ipcMain.handle('audio:autoSetup', async (_e, { enabled, cableLabel }) => {
       cur = parseGet(audioExec(tool, ['get', 'capture']));
     }
     if (!fs.existsSync(restoreFile())) {
-      fs.writeFileSync(restoreFile(), JSON.stringify({ console: cur.console, comm: cur.comm }));
+      fs.writeFileSync(restoreFile(), JSON.stringify({ console: cur.console, comm: cur.comm, owner: process.pid }));
     }
     audioExec(tool, ['set', 'capture', target.id, target.id, target.id]);
+    // Garde externe : si ce process meurt sans will-quit (kill, crash, BSOD), le guard
+    // detache restaure le micro a la mort du parent. Sans effet si fermeture propre
+    // (restoreFile deja supprime) ou si un autre SoundFart a repris la bascule (owner).
+    try {
+      const g = spawn(tool, ['guard', String(process.pid), restoreFile()], { detached: true, stdio: 'ignore' });
+      g.unref();
+    } catch (e) { log('[mic-guard] spawn: ' + e.message); }
     return { ok: true, changed: true, device: target.name };
   } catch (e) {
     return { ok: false, err: e.message };
@@ -563,6 +574,7 @@ ipcMain.on('audio:restore', () => {
 // renvoient « Could not start audio source » ou du silence sur certaines configs).
 let audioTapProc = null;
 let audioTapKilling = false; // vrai entre kill() et l'evenement 'exit' (anti double spawn)
+let tapPcmRem = Buffer.alloc(0); // reste PCM non aligne (stdout livre des chunks arbitraires)
 
 let audioTapPromise = null; // evite deux csc.exe simultanes sur le meme exe
 
@@ -598,8 +610,19 @@ ipcMain.handle('audio:tapStart', async () => {
       while (audioTapKilling && Date.now() - t0 < 3000) await new Promise((r) => setTimeout(r, 200));
       if (audioTapKilling) return { ok: false, err: 'arrêt de l\'ancien AudioTap en cours' };
     }
-    // args[1] = pid du parent : AudioTap s'auto-termine si ce process meurt (anti-orphelin)
-    audioTapProc = spawn(tool, ['CABLE Input', String(process.pid)], { stdio: ['ignore', 'ignore', 'pipe'] });
+    // args[1] = pid du parent : AudioTap s'auto-termine si ce process meurt (anti-orphelin).
+    // Mode « pcm » : PCM float32 stereo 48 kHz sur stdout -> relaie au renderer pour
+    // l'enregistreur, SANS passer par le cable (evite l'echo Discord dans le micro).
+    audioTapProc = spawn(tool, ['CABLE Input', String(process.pid), '0', '', 'pcm'], { stdio: ['ignore', 'pipe', 'pipe'] });
+    audioTapProc.stdout.on('data', (chunk) => {
+      if (!win || win.isDestroyed()) return;
+      // N'envoyer au renderer que des frames completes : float32 stereo = 8 octets/frame.
+      tapPcmRem = Buffer.concat([tapPcmRem, chunk]);
+      const aligned = tapPcmRem.length - (tapPcmRem.length % 8);
+      if (aligned <= 0) return;
+      try { win.webContents.send('sf:tapPcm', tapPcmRem.buffer.slice(tapPcmRem.byteOffset, tapPcmRem.byteOffset + aligned)); } catch {}
+      tapPcmRem = tapPcmRem.slice(aligned);
+    });
     audioTapProc.stderr.on('data', (d) => {
       const line = String(d).trim();
       if (/ERREUR|echoue|introuvable/i.test(line)) log('[audiotap] ' + line.slice(0, 300));
@@ -608,10 +631,11 @@ ipcMain.handle('audio:tapStart', async () => {
       const wasKilled = audioTapKilling;
       audioTapProc = null;
       audioTapKilling = false;
+      tapPcmRem = Buffer.alloc(0);
       // Mort non volontaire (crash AudioTap / peripherique disparu) : on previent le renderer
       if (!wasKilled && win && !win.isDestroyed()) win.webContents.send('sf:tapDead', true);
     });
-    audioTapProc.on('error', () => { audioTapProc = null; audioTapKilling = false; });
+    audioTapProc.on('error', () => { audioTapProc = null; audioTapKilling = false; tapPcmRem = Buffer.alloc(0); });
     await new Promise((r) => setTimeout(r, 700));
     if (!audioTapProc || audioTapProc.exitCode !== null)
       return { ok: false, err: 'AudioTap s\'est arrêté au démarrage' };
@@ -625,6 +649,7 @@ ipcMain.handle('audio:tapStop', () => {
     try { audioTapProc.kill(); } catch { audioTapKilling = false; }
   }
   audioTapProc = null;
+  tapPcmRem = Buffer.alloc(0);
   return { ok: true };
 });
 
@@ -835,7 +860,17 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => app.quit());
+// Filet de securite : une exception fatale ne doit pas laisser le micro coince sur le cable.
+process.on('uncaughtException', (e) => {
+  log('[fatal] uncaughtException: ' + (e && e.stack || e));
+  try {
+    const t = audioToolPath();
+    if (fs.existsSync(t) && fs.existsSync(restoreFile())) restoreMicNow(t);
+  } catch {}
+});
+process.on('unhandledRejection', (e) => log('[fatal] unhandledRejection: ' + (e && e.stack || e)));
 app.on('will-quit', () => {
+  if (!isPrimary) return; // ne jamais restaurer le micro depuis une 2e instance
   globalShortcut.unregisterAll();
   try { if (audioTapProc) audioTapProc.kill(); } catch {}
   audioTapProc = null;
