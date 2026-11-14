@@ -7,7 +7,8 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder --win"
+    "dist": "electron-builder --win",
+    "test": "node --test test/"
   },
   "devDependencies": {
     "electron": "^45.3.1",
@@ -17,9 +18,20 @@
     "compression": "store",
     "appId": "fr.soundfart.app",
     "productName": "SoundFart",
-    "files": ["main.js", "preload.js", "AudioEndpoint.cs", "AudioTap.cs", "assets/**/*", "src/**/*", "THIRD-PARTY-NOTICES"],
+    "files": [
+      "main.js",
+      "preload.js",
+      "AudioEndpoint.cs",
+      "AudioTap.cs",
+      "lib/**/*",
+      "assets/**/*",
+      "src/**/*",
+      "THIRD-PARTY-NOTICES"
+    ],
     "win": {
-      "target": ["portable"],
+      "target": [
+        "portable"
+      ],
       "signAndEditExecutable": false
     },
     "portable": {

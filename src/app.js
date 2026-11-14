@@ -508,19 +508,8 @@ async function normalizeAll() {
 }
 
 // ================================================================ utilitaires
-const fmtTime = (sec) => {
-  sec = Math.max(0, sec || 0);
-  const m = Math.floor(sec / 60), s = sec - m * 60;
-  return m + ':' + s.toFixed(1).padStart(4, '0');
-};
-
-function parseTs(v) {
-  const t = String(v || '').trim();
-  if (!t) return 0;
-  const parts = t.split(':');
-  if (parts.length > 3 || parts.some((p) => !/^\d+(\.\d+)?$/.test(p))) return NaN;
-  return parts.reduce((a, b) => a * 60 + parseFloat(b), 0);
-}
+// fmtTime/parseTs : fonctions pures partagees, testees via node:test (lib/audio-utils.js)
+const { fmtTime, parseTs } = window.SFUtils;
 
 // ================================================================ donnees : sons & categories
 async function addPaths(rawPaths) {

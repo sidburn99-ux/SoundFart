@@ -7,13 +7,18 @@ const { spawn, execFile, execFileSync } = require('child_process');
 const { promisify } = require('util');
 const crypto = require('crypto');
 const execFileP = promisify(execFile);
-
-const AUDIO_EXT = ['.mp3', '.wav', '.ogg', '.flac', '.m4a', '.aac', '.opus', '.webm', '.mp4', '.mkv', '.mov', '.m4v'];
+const { AUDIO_EXT, VIRTUAL_RE: VIRTUAL_RE_MAIN, parseEndpoints, parseGet, findCableCapture, chooseRestoreIds, safeName, expandPaths: expand } = require('./lib/audio-utils');
 let win = null;
 
-// ---------- journal d'erreurs : %APPDATA%\SoundFart\soundfart.log ----------
-function log(msg) {
+// ---------- journal d'erreurs : SoundFart-data\soundfart.log ----------
+// Niveaux : info (defaut) / warn / error. Identifiant de session unique par
+// lancement pour correller les evenements. Borne de taille conservee (2 Mo).
+const SESSION_ID = crypto.randomBytes(3).toString('hex');
+const LOG_LEVELS = { info: 0, warn: 1, error: 2 };
+let logLevel = LOG_LEVELS.info;
+function log(msg, lvl = 'info') {
   try {
+    if ((LOG_LEVELS[lvl] || 0) < logLevel) return;
     const f = path.join(app.getPath('userData'), 'soundfart.log');
     // Borne la taille : au-dela de 2 Mo on ne garde que les 500 derniers Ko
     try {
@@ -21,7 +26,7 @@ function log(msg) {
         fs.writeFileSync(f, fs.readFileSync(f).slice(-500 * 1024));
       }
     } catch {}
-    fs.appendFileSync(f, new Date().toISOString() + ' ' + msg + '\n');
+    fs.appendFileSync(f, new Date().toISOString() + ' [' + lvl + '] [s' + SESSION_ID + '] ' + msg + '\n');
   } catch {}
 }
 
@@ -181,22 +186,7 @@ H('config:save', (_e, cfg) => {
 });
 
 // ---------- fichiers ----------
-function expand(paths, depth = 0, seen = { n: 0 }) {
-  const out = [];
-  for (const p of paths) {
-    if (seen.n >= 5000) break; // garde-fou : pas plus de 5000 entrees inspectees
-    seen.n++;
-    try {
-      const st = fs.statSync(p);
-      if (st.isDirectory()) {
-        if (depth < 3) out.push(...expand(fs.readdirSync(p).map((n) => path.join(p, n)), depth + 1, seen));
-      } else if (AUDIO_EXT.includes(path.extname(p).toLowerCase())) {
-        out.push(p);
-      }
-    } catch {}
-  }
-  return out;
-}
+// expand() vient de lib/audio-utils.js (expandPaths) — testable via node:test.
 
 H('files:expand', (_e, paths) => {
   if (!Array.isArray(paths) || paths.length > 2000 || paths.some((p) => typeof p !== 'string')) throw new Error('chemins invalides');
@@ -254,7 +244,6 @@ H('shortcuts:apply', (_e, entries) => {
 });
 
 // ---------- enregistreur : sauvegarde d'un fichier audio ----------
-const safeName = (s) => String(s || '').replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, ' ').trim().slice(0, 80) || 'son';
 
 H('rec:save', async (_e, { data, name, ext, dir }) => {
   const rdir = path.join(storageRoot(dir), 'recordings');
@@ -480,10 +469,10 @@ async function maybeUpdateYtDlp(force = false) {
       await installYtDlp(latest);
       return true;
     } catch (e) {
-      log('[yt] mise a jour echouee (version precedente conservee): ' + e.message);
+      log('[yt] mise a jour echouee (version precedente conservee): ' + e.message, 'warn');
       return false;
     }
-  } catch (e) { log('[yt] check mise a jour: ' + e.message); return false; }
+  } catch (e) { log('[yt] check mise a jour: ' + e.message, 'warn'); return false; }
 }
 
 async function ensureYtDlp() {
@@ -575,7 +564,6 @@ H('yt:download', async (_e, { url, start, end, dir }) => {
 // A la fermeture (ou au prochain lancement si crash) : le peripherique d'origine est restaure.
 // Discord doit utiliser « Defaut / OS default » comme peripherique d'entree pour suivre ce changement.
 const restoreFile = () => path.join(app.getPath('userData'), 'audio-restore.json');
-const VIRTUAL_RE_MAIN = /cable|virtual|voicemeeter|vb-audio/i;
 const CSC_CANDIDATES = [
   'C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe',
   'C:\\Windows\\Microsoft.NET\\Framework\\v4.0.30319\\csc.exe',
@@ -626,70 +614,29 @@ async function ensureAudioTool() {
   const p = audioToolPath();
   if (fs.existsSync(p)) return p;
   try { return await compileCs('AudioEndpoint', 'AudioEndpoint'); }
-  catch (e) { lastToolErr = e.message; log('[audio] compilation AudioEndpoint: ' + e.message); return null; }
+  catch (e) { lastToolErr = e.message; log('[audio] compilation AudioEndpoint: ' + e.message, 'error'); return null; }
 }
 
 function audioExec(tool, args) {
   return execFileSync(tool, args, { encoding: 'utf8', timeout: 15000 });
 }
 
-function parseEndpoints(out) {
-  return String(out).split(/\r?\n/).filter(Boolean).map((l) => {
-    const [flow, id, ...rest] = l.split('|');
-    return { flow, id, name: rest.join('|') || id };
-  });
-}
-
-function parseGet(out) {
-  const r = { console: '', comm: '' };
-  for (const line of String(out).split(/\r?\n/)) {
-    const m = /^(console|comm|multi)=(.*)$/.exec(line.trim());
-    if (m) r[m[1]] = m[2];
-  }
-  return r;
-}
-
-function findCableCapture(endpoints, cableLabel) {
-  const caps = endpoints.filter((e) => e.flow === 'capture');
-  if (!caps.length) return null;
-  const base = String(cableLabel || '');
-  const candidates = [];
-  if (base) {
-    candidates.push(base.replace(/input/ig, 'Output'));
-    candidates.push(base.replace(/input/ig, 'output'));
-    candidates.push(base);
-  }
-  for (const cand of candidates) {
-    const hit = caps.find((e) => e.name.toLowerCase().includes(cand.toLowerCase()));
-    if (hit) return hit;
-  }
-  return caps.find((e) => /output/i.test(e.name) && VIRTUAL_RE_MAIN.test(e.name))
-    || caps.find((e) => /cable/i.test(e.name));
-}
+// parseEndpoints/parseGet/findCableCapture viennent de lib/audio-utils.js.
 
 function restoreMicNow(tool) {
   try {
     if (!tool || !fs.existsSync(restoreFile())) return false;
     const prev = JSON.parse(fs.readFileSync(restoreFile(), 'utf-8'));
-    // Priorite : peripherique par defaut Windows (role multimedia, non ecrase par le role comm),
-    // puis le peripherique d'origine enregistre, puis le 1er peripherique non virtuel.
-    // Comme ca la restauration suit le micro par defaut de l'utilisateur, quel qu'il soit.
     const eps = parseEndpoints(audioExec(tool, ['list']));
-    const nameOf = (id) => { const e = eps.find((x) => x.id === id); return e ? e.name : ''; };
-    const nonVirtual = (id) => !!id && !!nameOf(id) && !VIRTUAL_RE_MAIN.test(nameOf(id));
-    const fb = eps.find((e) => e.flow === 'capture' && !VIRTUAL_RE_MAIN.test(e.name));
-    const fallbackId = fb ? fb.id : '';
-    // Priorite : peripherique par defaut Windows (role multimedia), puis les ids d'origine
-    // par role (console ET comm preserves separement), puis le 1er non virtuel.
-    let defId = '';
-    try {
-      const g = parseGet(audioExec(tool, ['get', 'capture']));
-      if (nonVirtual(g.multi)) defId = g.multi;
-    } catch {}
-    const cId = defId || (nonVirtual(prev.console) ? prev.console : '') || fallbackId;
-    const mId = defId || (nonVirtual(prev.comm) ? prev.comm : '') || fallbackId;
+    // Priorite : peripherique par defaut Windows non virtuel (role multi), puis
+    // les ids d'origine par role, puis le 1er peripherique non virtuel.
+    // Comme ca la restauration suit le micro par defaut de l'utilisateur.
+    let cur = { console: '', comm: '', multi: '' };
+    try { cur = parseGet(audioExec(tool, ['get', 'capture'])); } catch {}
+    const r = chooseRestoreIds(eps, prev, cur);
+    const cId = r.consoleId, mId = r.commId;
     if (!cId && !mId) return false; // garde restoreFile pour reessayer plus tard
-    audioExec(tool, ['set', 'capture', cId || mId, mId || cId, defId || cId || mId]);
+    audioExec(tool, ['set', 'capture', cId || mId, mId || cId, r.multiId || cId || mId]);
     try { fs.unlinkSync(restoreFile()); } catch {}
     return true;
   } catch { return false; }
@@ -750,7 +697,7 @@ H('audio:autoSetup', async (_e, { enabled, cableLabel }) => {
     try {
       const g = spawn(tool, ['guard', String(process.pid), restoreFile()], { detached: true, stdio: 'ignore' });
       g.unref();
-    } catch (e) { log('[mic-guard] spawn: ' + e.message); }
+    } catch (e) { log('[mic-guard] spawn: ' + e.message, 'warn'); }
     return { ok: true, changed: true, device: target.name };
   } catch (e) {
     return { ok: false, err: e.message };
@@ -793,7 +740,7 @@ async function ensureAudioTap() {
   const p = audioTapPath();
   if (fs.existsSync(p)) return p;
   try { return await compileCs('AudioTap', 'AudioTap'); }
-  catch (e) { lastToolErr = e.message; log('[audiotap] compilation: ' + e.message); return null; }
+  catch (e) { lastToolErr = e.message; log('[audiotap] compilation: ' + e.message, 'error'); return null; }
 }
 
 H('audio:tapStart', async () => {
@@ -823,7 +770,7 @@ H('audio:tapStart', async () => {
     });
     audioTapProc.stderr.on('data', (d) => {
       const line = String(d).trim();
-      if (/ERREUR|echoue|introuvable/i.test(line)) log('[audiotap] ' + line.slice(0, 300));
+      if (/ERREUR|echoue|introuvable/i.test(line)) log('[audiotap] ' + line.slice(0, 300), 'error');
     });
     audioTapProc.on('exit', () => {
       const wasKilled = audioTapKilling;
@@ -883,10 +830,10 @@ async function watchdogMic() {
     const cur = parseGet(await audioExecP(tool, ['get', 'capture']));
     if (cur.console !== target.id || cur.comm !== target.id || cur.multi !== target.id) {
       micWatchSuspended = true;
-      log('[mic-watchdog] entree modifiee hors SoundFart -> surveillance suspendue pour la session');
+      log('[mic-watchdog] entree modifiee hors SoundFart -> surveillance suspendue pour la session', 'warn');
       if (win && !win.isDestroyed()) win.webContents.send('sf:micWatchOff', target.name);
     }
-  } catch (e) { log('[mic-watchdog] ' + e.message); }
+  } catch (e) { log('[mic-watchdog] ' + e.message, 'warn'); }
   finally { watchdogBusy = false; }
 }
 
@@ -928,18 +875,18 @@ function createWindow() {
     const d = (event && typeof event === 'object' && 'message' in event)
       ? { level: event.level, message: event.message, line: event.lineNumber, sourceId: event.sourceId }
       : { level, message, line, sourceId };
-    if (d.level === 3 || d.level === 'error') log(`[page] ${d.message} (${d.sourceId}:${d.line})`);
+    if (d.level === 3 || d.level === 'error') log(`[page] ${d.message} (${d.sourceId}:${d.line})`, 'error');
   });
-  win.webContents.on('render-process-gone', (_e, details) => log('[crash] ' + JSON.stringify(details)));
+  win.webContents.on('render-process-gone', (_e, details) => log('[crash] ' + JSON.stringify(details), 'error'));
   win.webContents.on('did-fail-load', (_e, code, desc, url) => {
-    log(`[load] ${code} ${desc} ${url}`);
+    log(`[load] ${code} ${desc} ${url}`, 'error');
     dialog.showErrorBox('SoundFart', `Impossible de charger l'interface (${desc}).\n\nVerifie que le dossier « src » (index.html, style.css, app.js) est bien a cote de main.js.`);
   });
 
   // index.html est normalement dans « src » ; on accepte aussi le meme dossier que main.js
   const indexPath = [path.join(__dirname, 'src', 'index.html'), path.join(__dirname, 'index.html')].find((p) => fs.existsSync(p));
   if (!indexPath) {
-    log('[load] index.html introuvable dans ' + __dirname);
+    log('[load] index.html introuvable dans ' + __dirname, 'error');
     dialog.showErrorBox('SoundFart', "Fichiers de l'interface introuvables.\n\nLe dossier « src » (contenant index.html, style.css et app.js) doit se trouver a cote de main.js.\n\nDossier actuel : " + __dirname);
     app.quit();
     return;
@@ -964,7 +911,7 @@ app.whenReady().then(() => {
         if (request.audioRequested) opts.audio = 'loopback';
         callback(Object.keys(opts).length ? opts : {});
       } else callback({});
-    }).catch((e) => { log('[displaymedia] getSources: ' + e.message); callback({}); });
+    }).catch((e) => { log('[displaymedia] getSources: ' + e.message, 'warn'); callback({}); });
   });
   createWindow();
   setInterval(watchdogMic, 10000);
@@ -973,13 +920,13 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => app.quit());
 // Filet de securite : une exception fatale ne doit pas laisser le micro coince sur le cable.
 process.on('uncaughtException', (e) => {
-  log('[fatal] uncaughtException: ' + (e && e.stack || e));
+  log('[fatal] uncaughtException: ' + (e && e.stack || e), 'error');
   try {
     const t = audioToolPath();
     if (fs.existsSync(t) && fs.existsSync(restoreFile())) restoreMicNow(t);
   } catch {}
 });
-process.on('unhandledRejection', (e) => log('[fatal] unhandledRejection: ' + (e && e.stack || e)));
+process.on('unhandledRejection', (e) => log('[fatal] unhandledRejection: ' + (e && e.stack || e), 'error'));
 app.on('will-quit', () => {
   if (!isPrimary) return; // ne jamais restaurer le micro depuis une 2e instance
   globalShortcut.unregisterAll();

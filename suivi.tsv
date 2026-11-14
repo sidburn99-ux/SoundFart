@@ -53,3 +53,7 @@ date	feature	statut	note
 2026-11-14	LOT3-3.4 Suggestion de redemarrage apres « Verifier » infructueux	OK	Toast dans ecran et reglages
 2026-11-14	LOT3-3.5 THIRD-PARTY-NOTICES + GUIDE.md (portable, VB-CABLE manuel, SoundFart-data, restauration micro)	OK	Doc a jour
 2026-11-14	LOT3-3.6 Test machine sans VB-CABLE: lancement + ecran affiche (log ui); clic bouton/verification post-install NON teste (pas de clic UI, cable a installer)	NON testé partiellement	Machine reelle sans cable: ecran confirme par log; suite a jouer sur VM
+2026-11-14	LOT4-4.1 Fonctions pures extraites dans lib/audio-utils.js (UMD: node + window.SFUtils), main.js et app.js les utilisent; npm test = node --test	Testé réel	14/14 tests node:test passent (parseEndpoints/parseGet, findCableCapture localise, chooseRestoreIds restauration, safeName, parseTs/fmtTime, expandPaths)
+2026-11-14	LOT4-4.2 npm audit: 6 moderates, toutes dans minimatch via electron-builder (devDep, non embarque dans l'app); fix = downgrade cassant -> non applique, liste comme risque residuel	OK	Rien d'embarque dans le runtime
+2026-11-14	LOT4-4.3 Log avec niveaux info/warn/error + identifiant de session [sXXXXXX], bornes 2 Mo conservees	Testé réel	Lancement: [info] [s38f76e] [ui] ecran VB-CABLE requis affiche
+2026-11-14	LOT4-4.4 Revue src/app.js (editeur, raccourcis, modales, AudioContext)	OK	Rien de clairement bug: playGen anti-race, onended cleanup, teardownAudio ferme contextes, ecouteurs canvas lies aux elements, onClose modales libere preview/stopCleanup; points residuels notes dans le rapport
