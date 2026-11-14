@@ -208,7 +208,16 @@ async function teardownAudio() {
   if (audio.micStream) { audio.micStream.getTracks().forEach((t) => t.stop()); audio.micStream = null; }
 }
 
-async function applyAudio() {
+// applyAudio est appele depuis 6 endroits (devicechange, reglages, import...) :
+// sans serialisation, deux appels s'entrelacent et leakent AudioContext + stream micro.
+let audioApplyChain = Promise.resolve();
+function applyAudio() {
+  const p = audioApplyChain.then(applyAudioInner);
+  audioApplyChain = p.catch(() => {});
+  return p;
+}
+
+async function applyAudioInner() {
   await teardownAudio();
   const s = cfg.settings;
   const warns = [];
@@ -352,12 +361,17 @@ function play(sound, opts = {}) {
       : 'Aucune sortie audio active : ouvre les réglages audio.', 'warn');
     return Promise.resolve(null);
   }
-  return getBuffer(sound.path).then((buf) => {
+  let fileErr = false;
+  return getBuffer(sound.path)
+    .catch((e) => { fileErr = true; throw e; })
+    .then((buf) => {
     if (gen !== playGen) return null; // lecture percutee par un stop : ne pas demarrer la voix
     const vol = ((opts.volume ?? sound.volume) / 100) * (sound.norm ?? 1);
     const offset = Math.min(Math.max(0, opts.trimStart ?? sound.trimStart ?? 0), Math.max(0, buf.duration - 0.05));
     const endRaw = opts.trimEnd !== undefined ? opts.trimEnd : sound.trimEnd;
-    const dur = Math.max(0.05, Math.min(endRaw ?? buf.duration, buf.duration) - offset);
+    const endEff = endRaw ?? buf.duration;
+    if (endEff <= offset + 0.01) return null; // trim vide/invalide : ne rien jouer
+    const dur = Math.max(0.05, Math.min(endEff, buf.duration) - offset);
     let fi = (opts.fadeIn ?? sound.fadeIn ?? 0) / 1000;
     let fo = (opts.fadeOut ?? sound.fadeOut ?? 0) / 1000;
     if (fi + fo > dur) { const k = dur / (fi + fo); fi *= k; fo *= k; }
@@ -392,9 +406,15 @@ function play(sound, opts = {}) {
       requestAnimationFrame(step);
     }
     return voice;
-  }).catch(() => {
-    toast(`Impossible de lire « ${sound.name} » : fichier introuvable ou illisible.`, 'warn');
-    missing.add(sound.id);
+  }).catch((e) => {
+    // Seules les erreurs de lecture du FICHIER marquent le son « introuvable » ;
+    // une erreur Web Audio transitoire ne doit pas afficher un faux badge missing.
+    if (fileErr) {
+      toast(`Impossible de lire « ${sound.name} » : fichier introuvable ou illisible.`, 'warn');
+      missing.add(sound.id);
+    } else {
+      toast(`Erreur de lecture de « ${sound.name} » : ${e && e.message || 'audio indisponible'}`, 'warn');
+    }
     renderGrid();
     return null;
   });

@@ -64,11 +64,12 @@ if (process.argv.includes('--test-profile')) {
 
 const configFile = () => path.join(app.getPath('userData'), 'config.json');
 
-// Garde IPC : seuls les evenements venant de la page de l'app (src/index.html) sont acceptes.
+// Garde IPC : seuls les evenements venant de la page de l'app (index.html,
+// dans src/ ou a la racine — le fallback racine existe, voir loadFile) sont acceptes.
 const fromApp = (e) => {
   try {
     const u = new URL(e.senderFrame.url);
-    return u.protocol === 'file:' && /src[\\/]index\.html$/.test(u.pathname);
+    return u.protocol === 'file:' && /[\\/]index\.html$/.test(u.pathname);
   } catch { return false; }
 };
 const H = (channel, fn) => ipcMain.handle(channel, (e, ...args) => {
@@ -170,6 +171,9 @@ H('config:load', () => {
     if (e.code === 'ENOENT') return migrateOldConfig();
     // horodate : plusieurs configs cassees successives ne s'ecrasent pas
     try { fs.renameSync(f, `${f}.broken-${new Date().toISOString().replace(/[:.]/g, '-')}`); } catch {}
+    // Dernier recours : la sauvegarde .bak (ecrite a chaque config:save) contient
+    // la derniere config validee — mieux que de demarrer sur une bibliotheque vide.
+    try { return JSON.parse(fs.readFileSync(f + '.bak', 'utf-8')); } catch {}
     return null;
   }
 });
@@ -319,6 +323,7 @@ async function ensureFfmpeg() {
 
 H('media:cut', async (_e, { input, start, end, dir }) => {
   if (typeof input !== 'string' || !path.isAbsolute(input)) throw new Error('chemin source invalide');
+  if (!AUDIO_EXT.includes(path.extname(String(input)).toLowerCase())) throw new Error('format audio non supporté');
   if (!Number.isFinite(+start) || !Number.isFinite(+end) || +end <= +start) throw new Error('bornes de coupe invalides');
   const fdir = await ensureFfmpeg();
   const outDir = path.join(storageRoot(dir), 'cuts');
@@ -327,8 +332,9 @@ H('media:cut', async (_e, { input, start, end, dir }) => {
   let out = path.join(outDir, base + '.mp3');
   for (let i = 1; fs.existsSync(out); i++) out = path.join(outDir, `${base}-${i}.mp3`);
   const dur = Math.max(0.1, (+end || 0) - (+start || 0));
+  // protocol_whitelist file : ffmpeg ne doit pas suivre de playlist/URL externe
   await execFileP(path.join(fdir, 'ffmpeg.exe'),
-    ['-y', '-ss', String(Math.max(0, +start || 0)), '-i', String(input), '-t', String(dur), '-vn', '-c:a', 'libmp3lame', '-q:a', '4', out],
+    ['-y', '-protocol_whitelist', 'file', '-ss', String(Math.max(0, +start || 0)), '-i', String(input), '-t', String(dur), '-vn', '-c:a', 'libmp3lame', '-q:a', '4', out],
     { timeout: 600000 });
   return out;
 });
@@ -355,7 +361,7 @@ function storageRoot(dir) {
 }
 
 const validHttpUrl = (u) => {
-  try { const x = new URL(String(u)); return x.protocol === 'https:' || x.protocol === 'http:'; } catch { return false; }
+  try { const x = new URL(String(u)); return x.protocol === 'https:'; } catch { return false; }
 };
 
 function downloadFile(url, dest, onProgress) {
@@ -499,14 +505,21 @@ async function ensureYtDlp() {
 function runYt(args, onProgress) {
   return new Promise((resolve, reject) => {
     const p = spawn(ytdlpPath(), args);
-    let err = '';
-    p.stderr.on('data', (d) => { err += d; });
+    let err = '', done = false;
+    // Timeout global : un yt-dlp fige ne doit pas pendre le telechargement
+    // indefiniment (le timeout inactivite de downloadVerified ne s'applique pas ici).
+    const timer = setTimeout(() => { done = true; try { p.kill(); } catch {} reject(new Error('yt-dlp : délai dépassé (2 min)')); }, 120000);
+    p.stderr.on('data', (d) => { if (err.length < 65536) err += d; });
     p.stdout.on('data', (d) => {
       const m = /\[download\]\s+([\d.]+)%/.exec(String(d));
       if (m) onProgress(parseFloat(m[1]));
     });
-    p.on('error', reject);
-    p.on('close', (code) => (code === 0 ? resolve() : reject(new Error('yt-dlp a échoué : ' + err.slice(-500).trim()))));
+    p.on('error', (e) => { if (!done) { done = true; clearTimeout(timer); reject(e); } });
+    p.on('close', (code) => {
+      if (done) return;
+      done = true; clearTimeout(timer);
+      code === 0 ? resolve() : reject(new Error('yt-dlp a échoué : ' + err.slice(-500).trim()));
+    });
   });
 }
 
@@ -532,8 +545,10 @@ H('yt:download', async (_e, { url, start, end, dir, full }) => {
   const tryDownload = async () => {
     const impDir = path.join(storageRoot(dir), 'imports');
     fs.mkdirSync(impDir, { recursive: true });
-    const before = new Set(fs.readdirSync(impDir));
-    const outTpl = path.join(impDir, '%(id)s.%(ext)s');
+    // Template unique par requete : le « plus recent » ne peut pas etre un
+    // fichier etranger cree pendant le telechargement (ni un autre import).
+    const tag = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    const outTpl = path.join(impDir, 'sf-' + tag + '-%(id)s.%(ext)s');
     const baseArgs = ['--no-playlist', '--no-warnings', '-o', outTpl];
     let sectioned = false;
     // ffmpeg permet de ne telecharger + convertir que l'extrait (MP3 leger) ; sinon repli sur l'audio complet + trim
@@ -550,7 +565,7 @@ H('yt:download', async (_e, { url, start, end, dir, full }) => {
       ytProgress(-1);
       await runYt([...baseArgs, '-f', 'bestaudio/best', url], ytProgress);
     }
-    const created = fs.readdirSync(impDir).filter((f) => !before.has(f) && !f.startsWith('.'));
+    const created = fs.readdirSync(impDir).filter((f) => f.startsWith('sf-' + tag + '-'));
     if (!created.length) throw new Error('Aucun fichier audio produit.');
     const newest = created.map((f) => path.join(impDir, f)).sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)[0];
     ytProgress(-1);
@@ -715,7 +730,8 @@ H('audio:autoSetup', async (_e, { enabled, cableLabel }) => {
 // Sinon, si une entree est coincee sur un peripherique virtuel (cable perdu,
 // guard mort), on la rebascule sur le defaut Windows non virtuel ou le 1er
 // peripherique non virtuel — filet de secours pour l'utilisateur.
-ipcMain.on('audio:restore', () => {
+ipcMain.on('audio:restore', (e) => {
+  if (!fromApp(e)) return;
   try {
     const tool = audioToolPath();
     if (!tool || !fs.existsSync(tool)) return;
@@ -746,6 +762,7 @@ ipcMain.on('audio:restore', () => {
 
 H('shell:openDir', (_e, d) => {
   const p = d && path.isAbsolute(String(d)) ? String(d) : app.getPath('userData');
+  try { if (!fs.statSync(p).isDirectory()) return 'not a directory'; } catch { return 'not found'; }
   return shell.openPath(p);
 });
 
