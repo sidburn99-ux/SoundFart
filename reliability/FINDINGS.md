@@ -8,9 +8,11 @@
 >
 > **Migration V2 (15/11/2026)** : les entrées historiques « CLOSED » sans
 > preuve de validation runtime *par anomalie* ont été reclassées
-> FIXED_PENDING_VALIDATION. Restent CLOSED (validation runtime documentée) :
-> SF-REL-0001 (smoke fenêtre/config/restore), SF-REL-0120 (adoption du
-> marqueur observée dans soundfart.log), SF-REL-0128 (sonde binaires + smoke).
+> FIXED_PENDING_VALIDATION. **Reclassification complementaire (reconciliation
+> V2)** : SF-REL-0001, 0120 et 0128 ont ete examinees contre les 9 conditions
+> de cloture — la revue independante du diff n'est documentee pour aucune
+> d'elles -> toutes trois sont FIXED_PENDING_VALIDATION. **Aucune anomalie
+> ne satisfait actuellement l'ensemble des conditions V2 de CLOSED.**
 > Niveau de validation par défaut des entrées migrées : STATIC + UNIT
 > (npm test / node --check / build) + smoke générique de démarrage —
 > pas de validation runtime du comportement corrigé, pas de revue
@@ -22,7 +24,7 @@ Cycle 1 — audits indépendants du 15/11/2026 (4 subagents : main.js, renderer,
 
 | ID | Sous-système | Gravité | Preuve | Statut | Résumé / correction |
 |---|---|---|---|---|---|
-| SF-REL-0001 | main.js displayMedia | P0 | Confirmé (code) + smoke | CLOSED | `originOk` hors du handler → ReferenceError → createWindow jamais appelé. Introduit en a4e403a, jamais smoke-testé. Corrigé 9685c04, vérifié réel (config+restore écrits). |
+| SF-REL-0001 | main.js displayMedia | P0 | Confirmé (code) + smoke | FIXED_PENDING_VALIDATION | `originOk` hors du handler → ReferenceError → createWindow jamais appelé. Introduit en a4e403a, jamais smoke-testé. Corrigé 9685c04, vérifié réel (config+restore écrits). V2 : revue indépendante du diff NON documentée -> FPV. |
 | SF-REL-0002 | AudioTap.cs wantReconnect | P1 | Confirmé | FIXED_PENDING_VALIDATION | Test placé AVANT bloc render → DEVICE_INVALIDATED render jamais consommé. Bloc déplacé après drain. Commit d894d7c. |
 | SF-REL-0003 | AudioTap.cs PCM 24 bits dst | P1 | Confirmé | FIXED_PENDING_VALIDATION | int32 écrit sur stride 3 → débordement/corruption. Encodage LE 24 bits ajouté. d894d7c. |
 | SF-REL-0004 | PROPVARIANT non zero-init | P2 | Confirmé | FIXED_PENDING_VALIDATION | AllocCoTaskMem garbage + GetValue échec → Clear sur variante fantôme. vt=VT_EMPTY avant appel, 2 fichiers. d894d7c. |
@@ -120,7 +122,7 @@ Cycle 1 — audits indépendants du 15/11/2026 (4 subagents : main.js, renderer,
 
 | ID | Gravité | Statut | Résumé |
 |---|---|---|---|
-| SF-REL-0120 | P1 | CLOSED | Marqueur audio-restore.json avec owner=pid mort + micro déjà sur câble → pas de guard pour la nouvelle session → kill suivant = micro coincé. Adoption du marqueur (owner→pid courant) + respawn guard. |
+| SF-REL-0120 | P1 | FIXED_PENDING_VALIDATION | Marqueur audio-restore.json avec owner=pid mort + micro déjà sur câble → pas de guard pour la nouvelle session → kill suivant = micro coincé. Adoption du marqueur (owner→pid courant) + respawn guard. V2 : revue indépendante NON documentée -> FPV. |
 | SF-REL-0121 | P1 | FIXED_PENDING_VALIDATION | Race will-quit vs bascule micro : set capture en vol après restoreMicNow → micro coincé sans marqueur. Flag `quitting` testé avant set et spawn guard. |
 | SF-REL-0122 | P2 | FIXED_PENDING_VALIDATION | tapStop pendant tapStart (compile/spawn) → AudioTap orphelin. Epoch tapEpoch vérifié à 2 points. |
 | SF-REL-0123 | P2 | FIXED_PENDING_VALIDATION | N guards AudioEndpoint accumulés (un par bascule). Guard sort si marqueur absent ou owner ≠ pid pendant l'attente. |
@@ -128,7 +130,7 @@ Cycle 1 — audits indépendants du 15/11/2026 (4 subagents : main.js, renderer,
 | SF-REL-0125 | P2 | FIXED_PENDING_VALIDATION | audio-restore.json écrit non atomiquement → JSON tronqué irrécupérable. writeRestoreMarker .tmp+rename. |
 | SF-REL-0126 | P3 | ACCEPTED | Restauration synchrone will-quit ~15 s/étape — choix assumé (restauration prioritaire), documenté. |
 | SF-REL-0127 | P2 | FIXED_PENDING_VALIDATION | yt:info via execFileP non tracké → execFileTracked (tué au will-quit). |
-| SF-REL-0128 | P3 | CLOSED | existsSync approuvait les binaires tronqués. toolSane() (seuils : C# 4 Ko, yt-dlp 1 Mo, ffmpeg 10 Mo) + discardCorruptTool → recompile/reinstall. Sonde --version non retenue : les .cs sont recompilés au hash, yt-dlp/ffmpeg re-téléchargés SHA-256 — la taille suffit à détecter le tronqué. |
+| SF-REL-0128 | P3 | FIXED_PENDING_VALIDATION | existsSync approuvait les binaires tronqués. toolSane() (seuils : C# 4 Ko, yt-dlp 1 Mo, ffmpeg 10 Mo) + discardCorruptTool → recompile/reinstall. V2 : revue indépendante NON documentée -> FPV. Sonde --version non retenue : les .cs sont recompilés au hash, yt-dlp/ffmpeg re-téléchargés SHA-256 — la taille suffit à détecter le tronqué. |
 | SF-REL-0129 | P3 | ACCEPTED | storageRoot accepte UNC/chemins absolus (choix utilisateur, NAS) — documenté. |
 | SF-REL-0130 | P2 | FIXED_PENDING_VALIDATION | rec:save : wx protège le nom mais pas le contenu → .part + hardlink atomique (repli wx sur FS sans liens). |
 | SF-REL-0131 | P3 | FIXED_PENDING_VALIDATION | media:cut : échec ffmpeg → placeholder 0 octet conservé → unlink en catch. |
@@ -235,13 +237,35 @@ Règle : avant de toucher un composant, chercher ici + dans le tableau ses anoma
 
 ## Tableau de bord V2 (recalculé 15/11/2026)
 
-| Statut | Nombre |
-|---|---|
-| CLOSED | 3 (0001, 0120, 0128 — runtime documenté) |
-| FIXED_PENDING_VALIDATION | 79 |
-| ACCEPTED | 20 |
-| INVESTIGATING | 1 (SF-REL-0611 crash AudioContext) |
-| OPEN / BLOCKED | 0 |
+| Statut | Nombre | Détail |
+|---|---|---|
+| CLOSED | 0 | Aucune entrée ne satisfait les 9 conditions V2 (revue indépendante du diff jamais documentée par anomalie) |
+| FIXED_PENDING_VALIDATION | 89 | cycle 1 : 45 · cycle 2 : 6 · cycle 3 : 31 · 0141 : 1 · cycle 5 : 6 |
+| ACCEPTED | 24 | cycle 1 : 12 · cycle 2 : 1 · cycle 3 : 7 · cycle 5 : 4 |
+| INVESTIGATING | 1 | SF-REL-0611 crash AudioContext |
+| OPEN / BLOCKED | 0 | — |
+| **Total IDs définis** | **114** | IDs uniques, aucun doublon de définition |
+
+### Doublons fonctionnels documentés (IDs distincts, même anomalie)
+
+| Groupe | IDs | Problème commun | Traitement |
+|---|---|---|---|
+| backpressure PCM | SF-REL-0042, SF-REL-0137 | File IPC main→renderer non bornée | 0137 explicitement marqué doublon de 0042 — conservé pour traçabilité |
+| storageRoot chemin arbitraire | SF-REL-0045, SF-REL-0129, SF-REL-0601 | storageRoot() accepte tout chemin absolu/UNC | Même mécanisme, même rationale d'acceptation — 3 IDs pour 1 anomalie |
+| config:save stringify avant borne | SF-REL-0043, SF-REL-0608 | JSON.stringify précède le test 5 Mo | Même observation foundée deux fois (cycles 1 et 5) |
+
+**Anomalies fonctionnellement distinctes : 114 IDs − 4 IDs doublons = 110.**
+(0050 « ui:log sans rate-limit » et 0607 « throttle log() » se recoupent
+partiellement mais traitent des mécanismes distincts : rate-limit IPC vs
+coût disk I/O — comptés séparés.)
+
+### Conditions V2 non satisfaites — état par entrée
+
+Pour les 89 FIXED_PENDING_VALIDATION, les conditions manquantes les plus
+fréquentes : revue indépendante du diff (aucune documentée par anomalie),
+validation runtime comportementale spécifique (la plupart n'ont que
+STATIC+UNIT+smoke générique), test de non-régression dédié (absent pour
+les anomalies main.js/C# antérieures à l'extraction lib/).
 
 **Lecture honnête** : le registre prouve ~50 corrections de défauts réels
 (STATIC+UNIT), mais ne prouve PAS leur comportement corrigé en runtime,

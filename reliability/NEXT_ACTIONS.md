@@ -48,3 +48,12 @@
       (atomicite, lifecycle, IPC) — formaliser en entry FINDINGS.
 - [ ] Validation materielle reelle (VALIDATION.md) : enregistreur,
       YouTube, Discord/VB-CABLE, restoration micro, sleep/wake.
+
+## État V2 après réconciliation (15/11/2026)
+
+- **0 anomalie CLOSED** — toutes les corrections attendent au minimum la
+  revue indépendante du diff + validation runtime ciblée.
+- 89 FIXED_PENDING_VALIDATION : priorité aux chemins critiques
+  (writeRecording/rec:save, lifecycle micro, yt:download, media:cut,
+  tapStart/tapStop) — smoke ciblé par anomalie ou VALIDATION.md.
+- SF-REL-0611 (crash AudioContext) : INVESTIGATING, attend .dmp Crashpad.

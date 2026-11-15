@@ -99,3 +99,18 @@ Regle de travail desormais : toute nouvelle anomalie suit le cycle 12
 etapes ; tout fix exige test de non-regression + revue independante du
 diff + validation runtime appropriatee avant CLOSED ; toute modification
 de main.js exige smoke test-env >= 60 s avec verification du log.
+
+## Réconciliation documentaire V2 (15/11/2026, sans audit ni code)
+
+- 114 IDs uniques définis dans FINDINGS.md (tables + prose 0141,
+  0601-0610, 0611) — aucun doublon de définition, aucun ID orphelin.
+- Doublons fonctionnels identifiés : 0042/0137, 0045/0129/0601,
+  0043/0608 -> 110 anomalies fonctionnellement distinctes.
+- Les 3 CLOSED (0001, 0120, 0128) reclassées FIXED_PENDING_VALIDATION :
+  condition « revue indépendante du diff » non documentée pour aucune.
+- Tableau de bord recalculé depuis les entrées : 0 CLOSED / 89 FPV /
+  24 ACCEPTED / 1 INVESTIGATING = 114.
+- TEST_MATRIX mis à jour (37 tests, couverture réelle listée).
+- Aucune preuve réinventée : ce qui n'est pas documenté reste
+  NOT VERIFIED ; le registre ne prétend pas à l'exhaustivité au-delà
+  des 114 entrées.
