@@ -343,7 +343,12 @@ play() dans la fenetre capturait un contexte mourant -> toast erreur.
 applyAudioInner peut etre en vol -> recréation possible avec les anciens
 devices ; convergence garantie par l'applyAudio suivant mais fenêtre
 transitoire (micro re-acquis/re-coupe, LED).
-**Statut** : OPEN — correctif propose : passer par audioApplyChain.
+**Fix** : suppression du teardownAudio() direct — applyAudio() passe par
+audioApplyChain et fait deja le teardown ; un applyAudioInner en vol
+termine proprement puis la nouvelle config est appliquee par la chaine.
+**Preuve** : node --check, npm test 38/38, dist rebuild, smoke + cdp-drive
+12/12 PASS. Revue independante requise.
+**Statut** : FIXED_PENDING_VALIDATION.
 
 ## Historique actif des régressions (Quality Gate V2 §9)
 

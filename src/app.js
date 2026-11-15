@@ -1206,7 +1206,10 @@ function importConfig(onDone) {
       const parsed = JSON.parse(await f.text());
       if (!parsed || !Array.isArray(parsed.sounds)) throw new Error('fichier invalide');
       if (!(await confirmBox('Importer la configuration ?', 'La configuration actuelle (sons, catégories, réglages, raccourcis) sera remplacée. Les fichiers audio ne sont pas modifiés.', 'Importer'))) return;
-      await teardownAudio();
+      // Pas de teardownAudio() direct ici : applyAudio() passe par
+      // audioApplyChain et fait deja le teardown — un appel direct
+      // pendant qu'un applyAudioInner est en vol pouvait etre suivi
+      // d'une recreation avec l'ANCIENNE config (SF-REL-0619).
       cfg = normalizeCfg(parsed);
       // Purge le cache decode : les AudioBuffer des anciens chemins ne
       // servent plus (jusqu'a 256 Mo d'orphelins sinon).
