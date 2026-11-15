@@ -94,6 +94,8 @@ node --check <f>  # syntaxe JS
 | Architecture et flux | `SPECIFICATION.md` |
 | Utiliser l'application | `GUIDE.md` |
 | État d'avancement et tests | `suivi.tsv` |
+| Validations fonctionnelles et régressions | `STABILITY_STATUS.md` |
+| Audit de fiabilisation et plan P0-P3 | `AUDIT_FIABILISATION.md` |
 | Tester sur VM Windows propre | `TESTS_VM.md` |
 | Valider l'audio sur matériel réel | `VALIDATION.md` |
 | Historique des versions | `JOURNAL.md`, `JOURNAL_DE_DEVELOPMENT.md` |
