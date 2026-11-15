@@ -349,3 +349,13 @@ Verifs : node --check, npm test 39/39, dist, smoke + cdp-drive PASS.
   chaque waiter retenait son ArrayBuffer brut (<=150 Mo). Fix :
   file bornee 64 waiters / 512 Mo cumules, rejet honnete.
 - 28 CLOSED, 84 FPV, 20 ACCEPTED, 1 INVESTIGATING (132 IDs).
+
+## V2 — audit zones non couvertes (15/11/2026)
+
+Subagent : preload.js, media-permission.js, tap-processor.js, app.js
+zones restantes. Sain : zero innerHTML (pas de XSS possible), preload
+minimal avec re-validation main, tap PCM aligne, permission media
+bornee, import config borne 8 Mo.
+Constats : 0640 REJETE (invariant modal single-slot deja protecteur),
+0641/0643/0644 corriges, 0642 ACCEPTED (surface file:read documentee).
+Verifs : node --check, npm test 39/39, dist, smoke + cdp-drive.

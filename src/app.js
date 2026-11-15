@@ -61,9 +61,15 @@ const defaults = () => ({
   ui: { cat: 'all' },
 });
 
+let saveErrNotified = false;
 function save() {
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => window.sf.saveConfig(cfg).catch((e) => logErr('saveConfig', e)), 250);
+  saveTimer = setTimeout(() => window.sf.saveConfig(cfg).catch((e) => {
+    logErr('saveConfig', e);
+    // Config jamais persistee en silence (ex. >5 Mo) : un toast une fois
+    // suffit — l'utilisateur doit savoir que ses reglages sont perdus.
+    if (!saveErrNotified) { saveErrNotified = true; toast('Sauvegarde impossible : ' + (e && e.message || e), 'warn'); }
+  }), 250);
 }
 window.addEventListener('beforeunload', () => {
   if (cfg) { try { const p = window.sf.saveConfig(cfg); if (p && p.catch) p.catch(() => {}); } catch {} }
@@ -99,6 +105,9 @@ function normalizeCfg(saved) {
     // '__stop__' est la cle reservee des raccourcis globaux (main.js) :
     // un son avec cet id aurait un raccourci qui agit comme STOP.
     if (!s || typeof s.id !== 'string' || s.id === '__stop__' || typeof s.path !== 'string' || typeof s.name !== 'string') return false;
+    // Bornes : shortcuts:apply ignore silencieusement les id >128 car. et
+    // des noms geants x5000 sons font echouer config:save (>5 Mo) en silence.
+    s.id = s.id.slice(0, 128); s.name = s.name.slice(0, 200);
     const p = s.path.toLowerCase();
     if (seenId.has(s.id) || seenPath.has(p)) return false;
     seenId.add(s.id); seenPath.add(p);
@@ -171,8 +180,12 @@ function normalizeCfg(saved) {
   const st = c.settings;
   if (!Number.isFinite(+st.master)) st.master = 80; else st.master = Math.min(100, Math.max(0, +st.master));
   if (typeof st.stopShortcut !== 'string' || st.stopShortcut.length > 64) st.stopShortcut = defaults().settings.stopShortcut;
-  if (st.storageDir != null && typeof st.storageDir !== 'string') st.storageDir = '';
-  if (st.lastDestDir != null && typeof st.lastDestDir !== 'string') delete st.lastDestDir;
+  // Chemins relatifs : storageRoot() retomberait silencieusement sur
+  // userData alors que l'UI affiche le dossier choisi — on exige un
+  // chemin absolu (lettre:\\, UNC \\\\, ou /) pour les deux champs.
+  const absPath = (p) => /^([a-zA-Z]:[\\/]|\\\\|\/)/.test(p);
+  if (st.storageDir != null && (typeof st.storageDir !== 'string' || (st.storageDir !== '' && !absPath(st.storageDir)))) st.storageDir = '';
+  if (st.lastDestDir != null && (typeof st.lastDestDir !== 'string' || (st.lastDestDir !== '' && !absPath(st.lastDestDir)))) delete st.lastDestDir;
   const hasCat = (id) => c.categories.some((x) => x.id === id);
   if (!['all', 'none', 'fav'].includes(c.ui.cat) && !hasCat(c.ui.cat)) c.ui.cat = 'all';
   return c;
@@ -1356,7 +1369,7 @@ function settingsModal() {
       if (!acc) { stopHint.textContent = 'Ajoute un modifieur (Ctrl, Alt, Maj) ou utilise une touche F.'; return; }
       // Meme source de verite que les raccourcis de sons : couvre les sons,
       // le STOP existant ET les accesseurs du menu (Ctrl+F/O, F12).
-      if (acc.toLowerCase() !== (stopSc || '').toLowerCase()) {
+      if (normAccel(acc) !== normAccel(stopSc || '')) {
         const owner = findShortcutOwner(acc);
         if (owner) { stopHint.textContent = 'Ce raccourci est déjà attribué à ' + owner + '.'; return; }
       }

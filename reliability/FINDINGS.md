@@ -557,6 +557,58 @@ getBuffer ; un utilisateur peut toujours cliquer 64 sons lourds
 (~9 Go de buffers bruts en file — improbable en usage reel).
 **Statut** : FIXED_PENDING_VALIDATION.
 
+
+## SF-REL-0640 — importConfig onDone detruirait une modale vivante ? (P3, REJETE)
+
+**Symptome presume** : onDone=closeSettings appele a la fin d'un import
+pourrait fermer une modale ouverte pendant applyAudio (edits perdus).
+**Verdict** : NON-ANOMALIE — invariant modal() a slot unique : ouvrir
+une modale appelle modalClose() qui pose closed=true sur la precedente.
+Un close perime est donc toujours inerte (return immediat) ; onDone ne
+peut detruire que la modale ENCORE COURANTE, ce qui est le comportement
+voulu. Verifie par lecture du code modal()/close() + audit.
+**Statut** : CLOSED (non-anomalie documentee — ne pas rouvrir).
+
+## SF-REL-0641 — normalizeCfg : id/nom non bornes + saveConfig silencieux (P3)
+
+**Symptome** : id>128 car. -> raccourci jamais enregistre (filtre main
+silencieux) ; noms geants x5000 -> config:save >5 Mo -> save()
+catch logErr seul -> config jamais persistee sans aucun signal.
+**Fix** : id borne a 128 / nom a 200 AVANT dedup (evite les doublons
+crees par truncature) ; toast une fois par session sur echec
+saveConfig.
+**Preuve** : node --check, npm test 39/39, dist, smoke + cdp-drive.
+**Statut** : FIXED_PENDING_VALIDATION.
+
+## SF-REL-0642 — file:read : chemins absolus medias arbitraires (P3, ACCEPTED)
+
+**Constat** : file:read accepte tout chemin absolu avec extension
+media (AUDIO_EXT inclut mp4/mkv/webm, <=512 Mo) — un renderer compromis
+lirait des medias arbitraires. Attenua par CSP stricte, zero innerHTML,
+fromApp sur chaque handler.
+**Decision** : ACCEPTED — restriction par allowlist de dossiers =
+changement de comportement (l'app joue legitimement les fichiers de
+l'utilisateur), a evaluer separement si la menace est jugee reelle.
+**Statut** : ACCEPTED.
+
+## SF-REL-0643 — stopShortcut : comparaison brute vs normAccel (P3)
+
+**Symptome** : exemption « meme raccourci » comparait en brut ->
+Ctrl+Alt+S vs CommandOrControl+Alt+S = rejet « deja attribue » bien que
+normAccel les considere identiques (message trompeur, impact nul).
+**Fix** : comparaison via normAccel des deux cotes.
+**Preuve** : node --check, npm test 39/39, dist, smoke + cdp-drive.
+**Statut** : FIXED_PENDING_VALIDATION.
+
+## SF-REL-0644 — storageDir/lastDestDir relatifs acceptes (P3)
+
+**Symptome** : config importee avec chemin relatif -> storageRoot()
+retombe sur userData en silence alors que l'UI affiche le dossier.
+**Fix** : normalizeCfg exige un chemin absolu (lettre:\, UNC, /) pour
+les deux champs, sinon reinitialisation.
+**Preuve** : node --check, npm test 39/39, dist, smoke + cdp-drive.
+**Statut** : FIXED_PENDING_VALIDATION.
+
 ## Historique actif des régressions (Quality Gate V2 §9)
 
 | Régression | Origine | Introduite par | Prévention |
@@ -572,12 +624,12 @@ Règle : avant de toucher un composant, chercher ici + dans le tableau ses anoma
 
 | Statut | Nombre | Détail |
 |---|---|---|
-| CLOSED | 28 | 0141 + 0612-0619 + 0620-0630 + 0631-0635 + 0636-0638 |
-| FIXED_PENDING_VALIDATION | 84 | cycles 1-5 historiques + 0639 |
-| ACCEPTED | 20 | cycles 1-5 |
+| CLOSED | 29 | 0141 + 0612-0619 + 0620-0630 + 0631-0638 + 0640 (non-anomalie) |
+| FIXED_PENDING_VALIDATION | 86 | cycles 1-5 historiques + 0639 + 0641/0643/0644 |
+| ACCEPTED | 21 | cycles 1-5 + 0642 |
 | INVESTIGATING | 1 | SF-REL-0611 crash AudioContext |
 | OPEN / BLOCKED | 0 | — |
-| **Total IDs définis** | **132** | IDs uniques ; trous de numerotation 0065-0099 et 0117-0119 (jamais attribues) |
+| **Total IDs définis** | **137** | IDs uniques ; trous de numerotation 0065-0099 et 0117-0119 (jamais attribues) |
 
 ### Doublons fonctionnels documentés (IDs distincts, même anomalie)
 
