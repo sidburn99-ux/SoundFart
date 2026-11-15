@@ -285,3 +285,16 @@ Attention : la refactorisation rej/res de downloadFile a initialement
 corrompu sha256File (res hors scope) et laisse des resolve/reject
 bruts contournant done() — detecte et corrige avant commit.
 npm test 39/39, dist rebuild, smoke + yt:info reel OK.
+
+## V2 — 0620-0630 CLOSED (15/11/2026)
+
+- Revue independante des 3 commits : majoritairement valide ; 3 residus
+  corriges : toast addPaths quand liste pleine (0623), preference tag2
+  sur tri mtime pour le repli yt (0626), protocole file: exige dans
+  displaymedia (0627).
+- Residuel documente : settings totalement absent -> watchdog desarme
+  alors que renderer suppose arme (config anterieure, rare) ;
+  expandPaths sync quasi-mort (seul async utilise en prod).
+- Runtime : yt:download sectionne re-valide apres correctifs.
+- 0620-0630 -> CLOSED avec limites par entree (0625 deadline non
+testable en auto, 0627 getDisplayMedia non teste UI).

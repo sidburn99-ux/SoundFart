@@ -819,7 +819,7 @@ async function addPaths(rawPaths) {
     n++;
   }
   if (n) { save(); renderAll(); }
-  toast(n ? `${n} son(s) ajouté(s).${truncated ? ' (limite de 5000 sons atteinte)' : ''}` : 'Ces sons sont déjà dans la liste.');
+  toast(n ? `${n} son(s) ajouté(s).${truncated ? ' (limite de 5000 sons atteinte)' : ''}` : (truncated ? 'Limite de 5000 sons atteinte — retirez des sons pour en ajouter.' : 'Ces sons sont déjà dans la liste.'));
 }
 
 async function removeSound(s) {

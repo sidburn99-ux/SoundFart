@@ -359,7 +359,7 @@ audio tronquait silencieusement l'import (seen.n++ par entree visitee).
 seen.v borne le parcours a 50000 visites. Sync+async.
 **Preuve** : test audio-utils — 5100 .txt + 2 audio -> 2 sons retournes
 (ancien code : 0). npm test 39/39.
-**Statut** : FIXED_PENDING_VALIDATION.
+**Statut** : CLOSED — revue independante + runtime (smoke, yt:info, yt:download, cdp-drive). plafonds n/v + test 5100 non-audio. Limites documentees par entree..
 
 ## SF-REL-0621 — relocateSound : aucune validation extension/doublon (P2)
 
@@ -368,14 +368,14 @@ relocation vers un non-audio = file:check « present » mais file:read
 refuse au play ; relocation vers le chemin d'un autre son = dedoublonnage
 silencieux au prochain demarrage (perte d'un son).
 **Fix** : validation extension AUDIO_EXT + refus si chemin deja pris.
-**Statut** : FIXED_PENDING_VALIDATION.
+**Statut** : CLOSED — revue independante + runtime (smoke, yt:info, yt:download, cdp-drive). validation ext + doublon. Limites documentees par entree..
 
 ## SF-REL-0622 — id son « __stop__ » : raccourci devenait STOP deguise (P2)
 
 **Symptome** : normalizeCfg acceptait id='__stop__' -> shortcuts:apply
 enregistrait l'accel et onShortcut routait vers stopAll.
 **Fix** : normalizeCfg rejette id '__stop__'.
-**Statut** : FIXED_PENDING_VALIDATION.
+**Statut** : CLOSED — revue independante + runtime (smoke, yt:info, yt:download, cdp-drive). id __stop__ rejete. Limites documentees par entree..
 
 ## SF-REL-0623 — addPaths sans plafond : file:check/config:save casses (P2)
 
@@ -383,7 +383,7 @@ enregistrait l'accel et onShortcut routait vers stopAll.
 invalides' (checkMissing meurt en silence) et config:save >5 Mo ->
 sauvegardes KO sans feedback.
 **Fix** : addPaths borne a 5000 - len(cfg.sounds) + toast de troncature.
-**Statut** : FIXED_PENDING_VALIDATION.
+**Statut** : CLOSED — revue independante + runtime (smoke, yt:info, yt:download, cdp-drive). plafond addPaths + toast honnete. Limites documentees par entree..
 
 
 ## SF-REL-0624 — P3 audit config : 3 durcissements (groupe)
@@ -398,7 +398,7 @@ sauvegardes KO sans feedback.
    meme semantique (absent=actif, present doit etre === true) + rejet
    settings non-objet.
 **Preuve** : node --check, npm test 39/39, dist rebuild, smoke OK.
-**Statut** : FIXED_PENDING_VALIDATION.
+**Statut** : CLOSED — revue independante + runtime (smoke, yt:info, yt:download, cdp-drive). seed/migration/watchdog aligns. Limites documentees par entree..
 
 
 ## SF-REL-0625 — downloadFile sans deadline totale : single-flight pendu a jamais (P1)
@@ -410,7 +410,7 @@ ytDownloadBusy jusqu'au restart -> tous les imports YouTube morts.
 (curReq) ; resolve/reject routent par done() qui clear le timer.
 **Preuve** : node --check, npm test 39/39, dist rebuild, smoke +
 yt:info reel OK. Deadline non testable en auto (serveur lent requis).
-**Statut** : FIXED_PENDING_VALIDATION.
+**Statut** : CLOSED — revue independante + runtime (smoke, yt:info, yt:download, cdp-drive). deadline 15 min + destroy requete. Limites documentees par entree..
 
 ## SF-REL-0626 — runYt timeout : repli reutilisait le meme template (P2)
 
@@ -419,7 +419,7 @@ complet reutilisait outTpl -> un ffmpeg orphelin pouvait ecrire un
 MP3 partiel retenu comme import valide (filtre plus recent/mремя).
 **Fix** : template DISTINCT (tag2) pour le repli ; filtre accepte les
 deux tags.
-**Statut** : FIXED_PENDING_VALIDATION.
+**Statut** : CLOSED — revue independante + runtime (smoke, yt:info, yt:download, cdp-drive). tag2 preferé au tri mtime. Limites documentees par entree..
 
 ## SF-REL-0627 — displaymedia : securityOrigin file:// sans path (P2)
 
@@ -427,7 +427,7 @@ deux tags.
 (truthy, sans pathname index.html) -> originOk toujours faux ->
 getDisplayMedia refuse a coup sur ; repli Chromium mort.
 **Fix** : tester frame.url en plus de securityOrigin.
-**Statut** : FIXED_PENDING_VALIDATION (getDisplayMedia non teste
+**Statut** : CLOSED — revue independante + runtime (smoke, yt:info, yt:download, cdp-drive). frame.url + protocole file: exige. Limites documentees par entree. (getDisplayMedia non teste
 reellement — requiert interaction UI).
 
 ## SF-REL-0628 — ensureFfmpeg : exe partiel <10 Mo reutilise (P2)
@@ -437,7 +437,7 @@ imbrique/partiel ; findFile la retournait sans controle -> media:cut
 executait un binaire corrompu indefiniment.
 **Fix** : taille >=10 Mo exigee sur l'exe trouve, sinon purge du
  dossier ffmpegDir et re-telechargement.
-**Statut** : FIXED_PENDING_VALIDATION.
+**Statut** : CLOSED — revue independante + runtime (smoke, yt:info, yt:download, cdp-drive). exe partiel purge. Limites documentees par entree..
 
 ## SF-REL-0629 — audioTapKilling bloque a jamais si 'error' sans 'exit' (P2)
 
@@ -446,7 +446,7 @@ sans 'exit' ne remettait pas le flag -> chaque tapStart attendait 3 s
 puis echouait « arret en cours » -> enregistreur audio PC mort.
 **Fix** : audioTapKilling=false en tete du handler 'error' (le proc
 tue est le seul possible dans la fenetre).
-**Statut** : FIXED_PENDING_VALIDATION.
+**Statut** : CLOSED — revue independante + runtime (smoke, yt:info, yt:download, cdp-drive). audioTapKilling reset. Limites documentees par entree..
 
 ## SF-REL-0630 — killTree fire-and-forget : survie des enfants au quit (P3)
 
@@ -454,7 +454,7 @@ tue est le seul possible dans la fenetre).
 se declencher (taskkill async) -> enfants yt-dlp/ffmpeg pouvaient
 survivre a la sortie.
 **Fix** : p.kill() systematique en filet apres killTree.
-**Statut** : FIXED_PENDING_VALIDATION.
+**Statut** : CLOSED — revue independante + runtime (smoke, yt:info, yt:download, cdp-drive). p.kill filet quit. Limites documentees par entree..
 
 ## Historique actif des régressions (Quality Gate V2 §9)
 

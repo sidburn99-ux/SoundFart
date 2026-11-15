@@ -845,7 +845,13 @@ H('yt:download', async (_e, o) => {
     }).map((f) => path.join(impDir, f))
       .filter((f) => { try { return fs.statSync(f).size > 0; } catch { return false; } });
     if (!created.length) throw new Error('Aucun fichier audio produit.');
-    const newest = created.sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)[0];
+    // Le repli full (dernier tag) prime sur l'extrait sectionne : un
+    // ffmpeg orphelin du 1er essai peut continuer d'ecrire APRES le full
+    // et volerait le tri par mtime.
+    const lastTag = tags[tags.length - 1];
+    const preferred = created.filter((f) => path.basename(f).startsWith('sf-' + lastTag + '-'));
+    const pool = preferred.length ? preferred : created;
+    const newest = pool.sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)[0];
     ytProgress(-1);
     return { path: newest, sectioned };
   };
