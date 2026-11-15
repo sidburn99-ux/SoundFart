@@ -46,18 +46,25 @@ let win = null;
 const SESSION_ID = crypto.randomBytes(3).toString('hex');
 const LOG_LEVELS = { info: 0, warn: 1, error: 2 };
 let logLevel = LOG_LEVELS.info;
+let lastSizeCheck = 0;
 function log(msg, lvl = 'info') {
   try {
     if ((LOG_LEVELS[lvl] || 0) < logLevel) return;
     if (typeof msg !== 'string') msg = String(msg);
     if (msg.length > 4000) msg = msg.slice(0, 4000) + '…';
     const f = path.join(app.getPath('userData'), 'soundfart.log');
-    // Borne la taille : au-dela de 2 Mo on ne garde que les 500 derniers Ko
-    try {
-      if (fs.statSync(f).size > 2 * 1024 * 1024) {
-        fs.writeFileSync(f, fs.readFileSync(f).slice(-500 * 1024));
-      }
-    } catch {}
+    // Borne la taille : au-dela de 2 Mo on ne garde que les 500 derniers Ko.
+    // Le stat n'est refait qu'une fois par minute : log() est synchrone et
+    // ui:log peut etre spamme par le renderer (SF-REL-0607).
+    const now = Date.now();
+    if (now - lastSizeCheck > 60000) {
+      lastSizeCheck = now;
+      try {
+        if (fs.statSync(f).size > 2 * 1024 * 1024) {
+          fs.writeFileSync(f, fs.readFileSync(f).slice(-500 * 1024));
+        }
+      } catch {}
+    }
     fs.appendFileSync(f, new Date().toISOString() + ' [' + lvl + '] [s' + SESSION_ID + '] ' + msg + '\n');
   } catch {}
 }
@@ -340,7 +347,7 @@ H('shortcuts:apply', (_e, entries) => {
   for (const it of list) {
     if (!it || typeof it !== 'object') continue; // entree null/primitive : ne doit pas jeter avant unregisterAll
     const { key, accel } = it;
-    if (typeof key !== 'string' || typeof accel !== 'string' || accel.length > 64 || !key) continue;
+    if (typeof key !== 'string' || key.length > 128 || typeof accel !== 'string' || accel.length > 64 || !key) continue;
     if (seen.has(accel)) { failed.push(accel); continue; } // doublon : un seul peut etre enregistre
     seen.add(accel);
     valid.push({ key, accel });
@@ -367,7 +374,7 @@ H('rec:save', async (_e, opts) => {
   const { data, name, ext, dir } = opts;
   if (data == null) throw new Error('données audio manquantes');
   const rdir = path.join(storageRoot(dir), 'recordings');
-  fs.mkdirSync(rdir, { recursive: true });
+  await fs.promises.mkdir(rdir, { recursive: true }); // async : UNC ne gele pas le main (SF-REL-0602)
   const len = data instanceof ArrayBuffer ? data.byteLength : (data.byteLength != null ? data.byteLength : (data.length || 0));
   if (len > 512 * 1024 * 1024) throw new Error('enregistrement trop volumineux (> 512 Mo)');
   const buf = data instanceof ArrayBuffer ? Buffer.from(new Uint8Array(data)) : Buffer.from(data);
@@ -452,7 +459,7 @@ H('media:cut', async (_e, o) => {
   try { const st = await fs.promises.stat(input); if (!st.isFile()) throw new Error('pas un fichier'); } catch (e) { throw new Error('fichier source introuvable'); }
   const fdir = await ensureFfmpeg();
   const outDir = path.join(storageRoot(dir), 'cuts');
-  fs.mkdirSync(outDir, { recursive: true });
+  await fs.promises.mkdir(outDir, { recursive: true });
   const base = safeName(path.basename(String(input), path.extname(String(input)))) + '_extrait';
   // Reservation atomique du nom (placeholder 'wx') : deux media:cut
   // concurrents sur la meme source ne s'ecrasent plus mutuellement.
@@ -746,7 +753,7 @@ H('yt:info', async (_e, url) => {
   ytProgress(-1);
   // execFileTracked (et non execFileP) : le process est suivi dans
   // childProcs et tue au will-quit — un yt:info en vol ne survit pas.
-  const { stdout } = await execFileTracked(ytdlpPath(), ['--dump-single-json', '--no-playlist', '--no-warnings', url], { maxBuffer: 64 * 1024 * 1024, timeout: 120000, windowsHide: true });
+  const { stdout } = await execFileTracked(ytdlpPath(), ['--dump-single-json', '--no-playlist', '--no-warnings', url], { timeout: 120000, windowsHide: true }); // stdout plafonne a 4 Mo par execFileTracked (maxBuffer n'existe pas sur spawn)
   let j;
   try { j = JSON.parse(stdout); }
   catch (e) { throw new Error('yt-dlp a renvoyé des métadonnées illisibles : ' + e.message); }
@@ -765,7 +772,7 @@ H('yt:download', async (_e, o) => {
   await ensureYtDlp();
   const tryDownload = async () => {
     const impDir = path.join(storageRoot(dir), 'imports');
-    fs.mkdirSync(impDir, { recursive: true });
+    await fs.promises.mkdir(impDir, { recursive: true });
     // Template unique par requete : le « plus recent » ne peut pas etre un
     // fichier etranger cree pendant le telechargement (ni un autre import).
     const tag = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
@@ -991,7 +998,10 @@ let quitting = false; // will-quit : interdit tout NOUVEAU set capture/guard apr
 let tapEpoch = 0; // incremente par tapStop : un tapStart en vol ne doit pas spawner apres un stop
 let autoSetupChain = Promise.resolve(); // serialise les bascules micro : 2 appels concurrents spawnaient des guards AudioEndpoint dupliques
 H('audio:autoSetup', (e, opts) => {
-  const run = autoSetupChain.then(() => autoSetupImpl(opts));
+  const run = autoSetupChain.then(() => autoSetupImpl({
+    enabled: !!(opts && opts.enabled),
+    cableLabel: opts && typeof opts.cableLabel === 'string' ? opts.cableLabel : '',
+  }));
   autoSetupChain = run.catch(() => {});
   return run;
 });
@@ -1090,9 +1100,11 @@ async function audioRestoreImpl() {
   } catch (err) { log('[mic-restore] ' + (err && err.message), 'warn'); }
 }
 
-H('shell:openDir', (_e, d) => {
+H('shell:openDir', async (_e, d) => {
   const p = d && path.isAbsolute(String(d)) ? String(d) : app.getPath('userData');
-  try { if (!fs.statSync(p).isDirectory()) return 'not a directory'; } catch { return 'not found'; }
+  // stat async : un chemin UNC peut bloquer le thread principal (SF-REL-0604).
+  const st = await fs.promises.stat(p).catch(() => null);
+  if (!st || !st.isDirectory()) return 'not found';
   return shell.openPath(p);
 });
 

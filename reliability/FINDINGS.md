@@ -149,6 +149,37 @@ identifiant d'ecriture.
 **Preuve** : test `writeRecording : N ecritures concurrentes` (20 appels
 paralleles -> 20 fichiers distincts, 0 `.part` residuel). 37/37 tests verts.
 
+
+## Cycle 5 — audit surface IPC (SF-REL-0601 a 0610)
+
+Inventaire : 23 handlers `ipcMain.handle` (tous via wrapper `H` + garde
+`fromApp` sur senderFrame), 3 `ipcMain.on` gardes, 0 canal mort, tous les
+`webContents.send` gardes par isDestroyed. execFile/spawn en tableaux
+(sans shell), URLs validees, SHA-256 sur telechargements.
+
+- SF-REL-0601 (P1) dir d'ecriture arbitraire via `dir` renderer -> **ACCEPTED** :
+  storageDir est une feature utilisateur legitime (choisie via pickDir) ; le
+  renderer est notre propre page sandboxee sans contenu distant. Noms de
+  fichiers sanitizes (safeName), pas de traversal.
+- SF-REL-0602 (P1) `fs.mkdirSync` sync sur chemin UNC -> **CORRIGE** :
+  `await fs.promises.mkdir` dans rec:save, media:cut, yt:download.
+- SF-REL-0603 (P2) `file:read` lit tout media absolu -> **ACCEPTED** : meme
+  modele de menace que 0601 ; borne 512 Mo conservee.
+- SF-REL-0604 (P2) `shell:openDir` statSync -> **CORRIGE** : stat async.
+- SF-REL-0605 (P3) `maxBuffer` ignore par spawn (yt:info) -> **CORRIGE** :
+  option morte retiree, plafond reel 4 Mo documente en commentaire.
+- SF-REL-0606 (P3) `audio:autoSetup` opts non valide -> **CORRIGE** : coercion
+  enabled/cableLabel en tete de handler.
+- SF-REL-0607 (P3) ui:log spam -> statSync+readFileSync(2Mo) a chaque ligne
+  quand log >2 Mo -> **CORRIGE** : controle de taille throttle a 1/min.
+- SF-REL-0608 (P3) config:save stringify avant borne -> **ACCEPTED** : la
+  serialisation est de toute facon requise pour ecrire ; borne post-hoc.
+- SF-REL-0609 (P3) `key` shortcut sans borne -> **CORRIGE** : cap 128 car.
+- SF-REL-0610 (P3) catch{} expandPaths -> **ACCEPTED** : sonde best-effort,
+  l'echec est indiscernable d'un fichier absent par nature ; documente.
+
+Smoke long (2 min, test-profile) : stable, heap=10 Mo constant, pas de crash.
+
 ## Synthèse cycle 1
 - 57 anomalies qualifiées : 44 CLOSED, 8 ACCEPTED (documentées), 0 INVESTIGATING ouvert — toutes les anomalies qualifiées sont tranchées.
 - P0 : 1 (SF-REL-0001) — introduit par la campagne précédente, attrapé par l'audit cycle 2. Preuve que la boucle fonctionne.
