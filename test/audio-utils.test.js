@@ -41,7 +41,7 @@ test('findCableCapture : noms localises / variantes', () => {
   ];
   assert.equal(U.findCableCapture(eps, 'Entree du cable').id, 'fr'); // via /cable/
   assert.equal(U.findCableCapture(EP, 'Inconnu XYZ').id, 'c2'); // fallback output+cable
-  assert.equal(U.findCableCapture([{ flow: 'capture', id: 'm', name: 'Micro' }], ''), null === undefined ? null : U.findCableCapture([{ flow: 'capture', id: 'm', name: 'Micro' }], ''));
+  assert.equal(U.findCableCapture([{ flow: 'capture', id: 'm', name: 'Micro' }], 'CABLE'), null);
 });
 
 test('findCableCapture : pas de capture -> null', () => {
