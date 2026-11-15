@@ -878,7 +878,7 @@ async function normalizeAll() {
   const prog = el('div', { class: 'hint', text: `0 / ${targets.length}` });
   const closeP = modal('Normalisation de la bibliothèque', [
     prog,
-    el('div', { class: 'hint', text: 'Le volume de chaque son est ajusté pour un niveau cible. Ça peut prendre un moment sur une grosse bibliothèque.' }),
+    el('div', { class: 'hint', text: `Le pic de chaque son est ramené à ${Math.round((Number.isFinite(+cfg.settings.normTarget) ? +cfg.settings.normTarget : 0.89) * 100)} % de l'amplitude max. Ça peut prendre un moment sur une grosse bibliothèque.` }),
   ], [{ label: 'Fermer', onclick: (c) => c() }], { onClose: () => { cancelled = true; } });
   let done = 0, failed = 0, cancelled = false;
   for (const s of targets) {
@@ -1261,7 +1261,7 @@ function editSound(s) {
     field('Volume de ce son', el('div', { class: 'row' }, vol, volLbl),
       '100 % = volume d\'origine. Au-delà, le son est amplifié (un limiteur évite la saturation).'),
     field('Normalisation', el('div', { class: 'row' }, normBtn, normVal),
-      'Ajuste le volume du son vers un niveau cible sans toucher au fichier. ×1 = inchangé.'),
+      `Ajuste le volume du son vers la cible des réglages (${Math.round((Number.isFinite(+cfg.settings.normTarget) ? +cfg.settings.normTarget : 0.89) * 100)} %) sans toucher au fichier. ×1 = inchangé.`),
     field('Raccourci clavier global', el('div', { class: 'row' }, scBtn, scClear), scHint),
     field('Découper (début / fin) et fondus', el('div', { class: 'trim' }, canvas, pvTime, info, times),
       'Glisse les repères roses sur l\'onde ou tape les temps. Clique sur l\'onde pendant l\'écoute pour déplacer la tête de lecture. Le fichier original n\'est jamais modifié.'),
@@ -1467,7 +1467,13 @@ function settingsModal() {
 
   const normTargetIn = el('input', { type: 'number', min: 10, max: 100, step: 1, value: Math.round((Number.isFinite(+s.normTarget) ? +s.normTarget : 0.89) * 100), title: 'Niveau de crête cible en % de l\'amplitude maximale. 89 % ≈ -1 dBFS (défaut). Plus haut = sons plus forts (le limiteur en aval absorbe les dépassements), plus bas = plus doux.' });
   const normTestBtn = el('button', { class: 'ghost', text: 'Tester', title: 'Joue 1,2 s de bruit dont le pic est exactement au niveau saisi — sur ton écoute locale uniquement (pas sur Discord).', onclick: () => testNormTarget(normTargetIn.value) });
-  const normAllBtn = el('button', { text: 'Normaliser toute la bibliothèque', title: 'Ramène le pic de chaque son au niveau cible ci-contre. Les fichiers audio ne sont jamais modifiés — seul le gain en lecture change.', onclick: () => { closeSettings(); normalizeAll(); } });
+  const normAllBtn = el('button', { text: 'Normaliser toute la bibliothèque', title: 'Ramène le pic de chaque son au niveau cible ci-contre (la valeur saisie est appliquée d\'abord). Les fichiers audio ne sont jamais modifiés — seul le gain en lecture change.', onclick: () => {
+    // Le clic fermait la fenetre SANS passer par « Appliquer » : la cible
+    // tapee etait perdue et la normalisation utilisait l'ancienne valeur.
+    const nt = +normTargetIn.value / 100;
+    if (Number.isFinite(nt) && nt > 0) { s.normTarget = Math.min(1, Math.max(0.1, nt)); save(); }
+    closeSettings(); normalizeAll();
+  } });
   const exportBtn = el('button', { text: 'Exporter la configuration', onclick: exportConfig });
   const importBtn = el('button', { text: 'Importer une configuration', onclick: () => importConfig(closeSettings) });
 
