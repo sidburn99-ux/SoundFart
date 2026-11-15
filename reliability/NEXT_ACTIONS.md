@@ -62,3 +62,18 @@
       ~80 Mo, validerait le 2e usage de downloadVerified).
 - [ ] yt:download réel (import YouTube complet) — nécessite réseau
       et disque ; valider progression/annulation/erreur.
+
+## Point de reprise (15/11/2026, fin session V2)
+
+Fait ce cycle : SF-REL-0612 (P0 onProgress crash main) + SF-REL-0613
+(P0 ffmpeg tar) corrigés et validés runtime via CDP ; yt:info réel OK ;
+media:cut complet OK ; SF-REL-0141 CLOSED ; 4 diffs revus (validés).
+
+Prochaine action exacte :
+1. yt:download réel via CDP (gros fichier, valider progression/erreur)
+   — test/cdp-yt.js pattern, URL Big Buck Bunny déjà prouvée lisible.
+2. Revue indépendante du diff SF-REL-0612+0613 (2 lignes + bloc tar)
+   pour évaluer leur passage CLOSED.
+3. .dmp Crashpad SF-REL-0611 si le smoke tourne encore.
+4. MediaRecorder micro/loopback + Discord routing : validation matérielle
+   (VALIDATION.md) — nécessite intervention ou scénario réel.
