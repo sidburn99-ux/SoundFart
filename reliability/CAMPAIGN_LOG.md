@@ -409,3 +409,15 @@ par la preuve de 0100. Total : 82 anomalies cycle 1/2 -> CLOSED.
 Registre : 145 IDs, 114 CLOSED, 8 FPV (0639, 0650-0655, 0657 — residus
 de 52b5b66 en attente re-revue), 22 ACCEPTED, 1 INVESTIGATING (0611).
 Reste : re-revue 52b5b66, .dmp 0611, validation materielle VALIDATION.md.
+
+## V2 — registre FPV epuise (15/11/2026)
+
+Re-revue independante du diff de residus 52b5b66 : les 6 correctifs
+CORRECTS (0639 noFileErr, 0650 ENOENT+bytesRead, 0651 budgets separes+
+cadence warn, 0652 delai post-resume, 0653 ordre gardes, 0654 gardes
+quitting completes). 8 derniers FPV -> CLOSED.
+REGISTRE FINAL : 145 IDs — 122 CLOSED, 22 ACCEPTED, 1 INVESTIGATING
+(0611). Plus aucun FIXED_PENDING_VALIDATION.
+Reste : .dmp Crashpad 0611, validation materielle VALIDATION.md,
+endurance. Prochaine etape : maintenance + surveillance, ou ACCEPTED
+a reevaluer si terrain.

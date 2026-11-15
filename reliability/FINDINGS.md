@@ -555,7 +555,7 @@ remonte a l'utilisateur via le catch de play().
 39/39, dist, smoke + cdp-drive PASS. Limite : la borne est par
 getBuffer ; un utilisateur peut toujours cliquer 64 sons lourds
 (~9 Go de buffers bruts en file — improbable en usage reel).
-**Statut** : FIXED_PENDING_VALIDATION.
+**Statut** : CLOSED — revue independante des correctifs + residus (52b5b66) : tout CORRECT + npm test 39/39 + dist + smoke + cdp-drive PASS. Limites documentees par entree.
 **Revue** : Revue a trouve : rejet sans noFileErr -> faux badge introuvable + message masque. Corrige (noFileErr=true). Limite : borne mesure l'octet encode, pas le heap reel.
 
 
@@ -619,7 +619,7 @@ re-echouait toutes les 60 s -> log sans borne jusqu'au disque plein.
 **Fix** : lecture des 500 derniers Ko via descripteur positionne
 (readSync avec offset) + warn logge si le trim echoue.
 **Preuve** : node --check, npm test 39/39, dist, smoke + cdp-drive.
-**Statut** : FIXED_PENDING_VALIDATION.
+**Statut** : CLOSED — revue independante des correctifs + residus (52b5b66) : tout CORRECT + npm test 39/39 + dist + smoke + cdp-drive PASS. Limites documentees par entree.
 **Revue** : Revue a trouve : warn ENOENT parasite au 1er log + bytesRead ignore (zeros si fichier retreci). Corriges : ENOENT silencieux, reecriture seulement si n===keep.
 
 ## SF-REL-0651 — ui:log/console-message sans limite de debit (P2)
@@ -629,7 +629,7 @@ quota -> renderer buggé = Go/min + blocage main (appendFileSync).
 **Fix** : uiLogAllowed() — 30 msg/s par fenetre glissante, surplus comptes
 et resume « N messages ignores » toutes les 100. Applique aux 2 canaux.
 **Preuve** : node --check, npm test 39/39, dist, smoke + cdp-drive.
-**Statut** : FIXED_PENDING_VALIDATION.
+**Statut** : CLOSED — revue independante des correctifs + residus (52b5b66) : tout CORRECT + npm test 39/39 + dist + smoke + cdp-drive PASS. Limites documentees par entree.
 **Revue** : Revue a trouve : warn resume ~50/s sous spam + compteur partage affamant console.error + console-message non sanitize (forge 
 ). Corriges : budgets separes par canal, warn cadence 1/s, sanitization.
 
@@ -643,7 +643,7 @@ pouvait contenir un trou silencieux pendant la veille.
 le trou dans un enregistrement en cours n'est pas detectable sans
 horloge audio (non corrige — a evaluer si terrain le remonte).
 **Preuve** : node --check, npm test 39/39, dist, smoke + cdp-drive.
-**Statut** : FIXED_PENDING_VALIDATION.
+**Statut** : CLOSED — revue independante des correctifs + residus (52b5b66) : tout CORRECT + npm test 39/39 + dist + smoke + cdp-drive PASS. Limites documentees par entree.
 **Revue** : Revue a trouve : enumeration partielle post-resume effacait cableId. Corrige : delai 2,5 s avant refreshDevices. Limite : trou enregistrement veille reste.
 
 ## SF-REL-0653 — watchdog micro : exe absent -> surveillance muette (P2)
@@ -654,7 +654,7 @@ coince possible a la fermeture sans recours.
 **Fix** : ensureAudioTool() (single-flight, recompile via csc) dans le
 tick watchdog au lieu du test existsSync.
 **Preuve** : node --check, npm test 39/39, dist, smoke + cdp-drive.
-**Statut** : FIXED_PENDING_VALIDATION.
+**Statut** : CLOSED — revue independante des correctifs + residus (52b5b66) : tout CORRECT + npm test 39/39 + dist + smoke + cdp-drive PASS. Limites documentees par entree.
 **Revue** : Revue a trouve : ensureAudioTool avant gardes config -> compilation C# meme watchdog desarme. Corrige : config validee d'abord.
 
 ## SF-REL-0654 — audioRestoreImpl sans garde quitting (P3)
@@ -665,7 +665,7 @@ synchrone du will-quit -> peripherique re-bascule sans marqueur.
 **Fix** : tests quitting en tete + apres ensureAudioTool + avant
 restoreMicNowP.
 **Preuve** : node --check, npm test 39/39, dist, smoke + cdp-drive.
-**Statut** : FIXED_PENDING_VALIDATION.
+**Statut** : CLOSED — revue independante des correctifs + residus (52b5b66) : tout CORRECT + npm test 39/39 + dist + smoke + cdp-drive PASS. Limites documentees par entree.
 **Revue** : Revue a trouve : gardes incompletes (autoSetupImpl sans entree, fallback post-restoreMicNowP). Corrigees : entrees + post-restore + avant set fallback.
 
 ## SF-REL-0655 — Crashpad : minidumps jamais purges (P3)
@@ -675,7 +675,7 @@ restoreMicNowP.
 **Fix** : purge au demarrage des .dmp >30 jours — les dumps recents
 (Preuves SF-REL-0611) sont preserves.
 **Preuve** : node --check, npm test 39/39, dist, smoke + cdp-drive.
-**Statut** : FIXED_PENDING_VALIDATION.
+**Statut** : CLOSED — revue independante des correctifs + residus (52b5b66) : tout CORRECT + npm test 39/39 + dist + smoke + cdp-drive PASS. Limites documentees par entree.
 
 ## SF-REL-0656 — storageRoot : chemin arbitraire sans validation FS (P3, ACCEPTED)
 
@@ -693,7 +693,7 @@ documentee, a reevaluer si terrain.
 **Symptome** : ~200k entrees -> map() sur thread main au config:load.
 **Fix** : slice(0, 5000) coherent avec normalizeCfg.
 **Preuve** : node --check, npm test 39/39, dist, smoke + cdp-drive.
-**Statut** : FIXED_PENDING_VALIDATION.
+**Statut** : CLOSED — revue independante des correctifs + residus (52b5b66) : tout CORRECT + npm test 39/39 + dist + smoke + cdp-drive PASS. Limites documentees par entree.
 
 ## Historique actif des régressions (Quality Gate V2 §9)
 
@@ -721,8 +721,8 @@ VALIDATION.md.
 
 | Statut | Nombre | Détail |
 |---|---|---|
-| CLOSED | 114 | 0141 + 0612-0638 + 0640-0644 + 81 FPV cycle 1/2 revus par lots |
-| FIXED_PENDING_VALIDATION | 8 | 0639 + 0650-0655 + 0657 (residus 52b5b66 en revue) |
+| CLOSED | 122 | 0141 + 0612-0638 + 0640-0644 + 0639 + 0650-0655/0657 + 81 FPV cycle 1/2 |
+| FIXED_PENDING_VALIDATION | 0 | — |
 | ACCEPTED | 22 | cycles 1-5 + 0642 + 0656 |
 | INVESTIGATING | 1 | SF-REL-0611 crash AudioContext |
 | OPEN / BLOCKED | 0 | — |
