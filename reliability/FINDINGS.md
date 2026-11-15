@@ -510,7 +510,7 @@ sautee si une AUTRE modale est ouverte (modalClose compare au close
 de la modale YouTube — ytModalAlive existait mais n'etait jamais lu).
 **Preuve** : node --check, npm test 39/39, dist rebuild, smoke +
 cdp-drive 12/12. Modales non testees interactivement (UI).
-**Statut** : FIXED_PENDING_VALIDATION — revue independante a trouve un residue corrige dans 44d00b9 (inert ordre / semaphore decode dead code) ; le diff de ce residu attend sa propre revue.
+**Statut** : CLOSED — revue independante du diff de residu (44d00b9) : correction COMPLETE ET CORRECTE + npm test 39/39 + dist + smoke + cdp-drive PASS. Limites documentees par entree.
 
 
 ## SF-REL-0637 — decode PCM non borne + decodes/voix illimitees (P2)
@@ -523,7 +523,7 @@ N clics = N decodeAudioData paralleles ; polyphonie sans plafond.
 **Preuve** : node --check, npm test 39/39, dist rebuild, smoke +
 cdp-drive 12/12. Limite : le PCM peak pendant decodeAudioData reste
 non borne (impossible a connaitre avant decode).
-**Statut** : FIXED_PENDING_VALIDATION — revue independante a trouve un residue corrige dans 44d00b9 (inert ordre / semaphore decode dead code) ; le diff de ce residu attend sa propre revue.
+**Statut** : CLOSED — revue independante du diff de residu (44d00b9) : correction COMPLETE ET CORRECTE + npm test 39/39 + dist + smoke + cdp-drive PASS. Limites documentees par entree.
 
 
 ## SF-REL-0638 — checkMissing : scans concurrents desordonnes + pas de debounce (P2)
@@ -541,6 +541,22 @@ timeout par chemin (partage mort = batch lent, async donc pas de
 blocage main).
 **Statut** : CLOSED — revue independante (VALIDÉ sans reserve) + npm test 39/39 + dist + smoke + cdp-drive PASS. Limite : UI non testee interactivement.
 
+
+## SF-REL-0639 — decodeQueue non bornee : ArrayBuffers bruts retenus en file (P2)
+
+**Symptome** : le semaphore decode (0637) bornait decodeAudioData a 2
+simultanes mais la file d'attente etait illimitee — chaque waiter
+retenait son ArrayBuffer brut (jusqu'a 150 Mo) -> clics en rafale sur
+sons lourds = pression memoire hors du chemin decode.
+**Fix** : acquireDecode(bytes) borne la file a 64 waiters ET 512 Mo
+cumules ; au-dela, rejet honnete (« Trop de lectures simultanees »)
+remonte a l'utilisateur via le catch de play().
+**Preuve** : revue independante (constat) + node --check, npm test
+39/39, dist, smoke + cdp-drive PASS. Limite : la borne est par
+getBuffer ; un utilisateur peut toujours cliquer 64 sons lourds
+(~9 Go de buffers bruts en file — improbable en usage reel).
+**Statut** : FIXED_PENDING_VALIDATION.
+
 ## Historique actif des régressions (Quality Gate V2 §9)
 
 | Régression | Origine | Introduite par | Prévention |
@@ -556,12 +572,12 @@ Règle : avant de toucher un composant, chercher ici + dans le tableau ses anoma
 
 | Statut | Nombre | Détail |
 |---|---|---|
-| CLOSED | 26 | 0141 + 0612-0619 + 0620-0630 + 0631-0635 + 0638 |
-| FIXED_PENDING_VALIDATION | 84 | cycles 1-5 historiques + 0636-0637 (residus en revue) |
+| CLOSED | 28 | 0141 + 0612-0619 + 0620-0630 + 0631-0635 + 0636-0638 |
+| FIXED_PENDING_VALIDATION | 84 | cycles 1-5 historiques + 0639 |
 | ACCEPTED | 20 | cycles 1-5 |
 | INVESTIGATING | 1 | SF-REL-0611 crash AudioContext |
 | OPEN / BLOCKED | 0 | — |
-| **Total IDs définis** | **131** | IDs uniques ; trous de numerotation 0065-0099 et 0117-0119 (jamais attribues) |
+| **Total IDs définis** | **132** | IDs uniques ; trous de numerotation 0065-0099 et 0117-0119 (jamais attribues) |
 
 ### Doublons fonctionnels documentés (IDs distincts, même anomalie)
 

@@ -340,3 +340,12 @@ Revue adverse independante : 0631-0635, 0638 valides ; 2 anomalies :
   ferme la modale pendant yt:download, pic OOM pendant decode
   (inevitable), scans checkMissing abandones continuent en vol.
 Verifs : node --check, npm test 39/39, dist, smoke + cdp-drive PASS.
+
+## V2 — cloture 0636/0637 + SF-REL-0639 (15/11/2026)
+
+- Revue independante du diff 44d00b9 : les 2 residus (inert ordre,
+  semaphore decode) CORRECTS ET COMPLETS -> 0636/0637 CLOSED.
+- Revue a trouve une nouvelle anomalie : decodeQueue non bornee,
+  chaque waiter retenait son ArrayBuffer brut (<=150 Mo). Fix :
+  file bornee 64 waiters / 512 Mo cumules, rejet honnete.
+- 28 CLOSED, 84 FPV, 20 ACCEPTED, 1 INVESTIGATING (132 IDs).

@@ -273,14 +273,23 @@ let bufCacheBytes = 0;
 
 const bufInflight = new Map(); // path -> Promise<buf> : evite le double decodage concurrent
 let decodeActive = 0; // semaphore : 2 decodeAudioData simultanes max
-const decodeQueue = []; // promesses en attente de slot decode
-function acquireDecode() {
+const decodeQueue = []; // {res, bytes} en attente de slot decode
+let decodeQueuedBytes = 0; // chaque waiter retient son ArrayBuffer brut
+const DECODE_QUEUE_MAX = 64;
+const DECODE_QUEUE_MAX_BYTES = 512 * 1024 * 1024;
+function acquireDecode(bytes) {
   if (decodeActive < 2) { decodeActive++; return Promise.resolve(); }
-  return new Promise((res) => decodeQueue.push(res));
+  // File bornee : sans ca, des centaines de clics sur sons lourds
+  // retenaient chacun leur ArrayBuffer brut (jusqu'a 150 Mo) en attente.
+  if (decodeQueue.length >= DECODE_QUEUE_MAX || decodeQueuedBytes + bytes > DECODE_QUEUE_MAX_BYTES) {
+    return Promise.reject(new Error('Trop de lectures simultanées — réessayez dans un instant.'));
+  }
+  decodeQueuedBytes += bytes;
+  return new Promise((res) => decodeQueue.push({ res, bytes }));
 }
 function releaseDecode() {
   const next = decodeQueue.shift();
-  if (next) next(); // le slot est transfere au waiter : decodeActive inchange
+  if (next) { decodeQueuedBytes -= next.bytes; next.res(); } // slot transfere au waiter
   else decodeActive--;
 }
 async function getBuffer(path) {
@@ -310,7 +319,7 @@ async function getBuffer(path) {
     const ab = data instanceof ArrayBuffer ? data
       : data && data.buffer ? data.buffer.slice(data.byteOffset || 0, (data.byteOffset || 0) + data.byteLength)
       : new Uint8Array(data).buffer; // robustness : ArrayBuffer pur ou Uint8Array
-  await acquireDecode();
+  await acquireDecode(data.byteLength);
   let buf;
   try { buf = await decoder.decodeAudioData(ab); }
   catch (de) { de.noFileErr = true; throw de; } // codec/format : fichier present mais indecodable
