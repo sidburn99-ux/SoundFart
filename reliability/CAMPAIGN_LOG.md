@@ -187,3 +187,13 @@ de main.js exige smoke test-env >= 60 s avec verification du log.
   callbacks ytprogress x3 et tapDead.
 - node --check OK, npm test 37/37, npm run dist OK, smoke runtime OK.
 - Statut : FIXED_PENDING_VALIDATION (revue independante requise).
+
+## V2 — yt:download COMPLET valide + 0615 bouclee (15/11/2026)
+
+- Revue independante diff 041715e : VALIDE ; residu sf:shortcut/sf:menu
+  (meme race webContents) corrige par parite -> commit 553ac13.
+- yt:download full:true (Me at the zoo 19s) -> .webm 252 Ko,
+  sectioned:false. Les DEUX chemins yt:download (sectionne + complet)
+  valides runtime de bout en bout.
+- Reste : revue 553ac13 pour CLOSED 0615, MediaRecorder micro/loopback,
+  Discord routing, endurance, .dmp 0611 (toujours aucun dump).
