@@ -562,3 +562,9 @@ il ne reste que 0611 (.dmp), VALIDATION.md materiel, endurance.
   .part conserve (limitation documentee SF-REL-0136), supprime
   manuellement apres test.
 - Items coches dans VALIDATION.md.
+
+## 15/11/2026 (suite 11) — VALIDATION.md F import 200 sons execute
+
+- 200 fichiers webm dans un dossier -> expandPaths+addPaths <1 s,
+  cfg.sounds 29->229, heap 10 Mo, pas de freeze. Config test nettoyee
+  (retour a 29 sons), dossier many-sounds supprime.

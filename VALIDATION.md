@@ -61,7 +61,7 @@
 ## F. Robustesse / résilience
 
 - [x] Fermer pendant un téléchargement yt-dlp → plus de processus `yt-dlp.exe`/`ffmpeg.exe` orphelins (vérifier Gestionnaire des tâches). **Validé agent 15/11** : téléchargement 3 h (~130 Mo partiels) + `taskkill /F` (simulation crash, plus fort qu'un quit) → 0 processus yt-dlp/ffmpeg résiduel. Le `.part` reste sur disque (nettoyage manuel — limitation documentée SF-REL-0136).
-- [ ] Importer 200 sons d'un coup → UI fluide, pas de freeze.
+- [x] Importer 200 sons d'un coup → UI fluide, pas de freeze. **Validé agent 15/11** : 200 fichiers dans un dossier → `expandPaths`+`addPaths` complétés en <1 s (29→229 sons), heap 10 Mo stable, aucune erreur. Config test nettoyée après.
 - [ ] Session 2-4 h : sons en boucle + enregistrements → heap stable dans soundfart.log, pas de croissance continue.
 - [x] Corrompre `config.json` (texte invalide) → redémarrage → `.broken-*` créé, `.bak` chargé, bibliothèque préservée. **Validé agent 15/11** : config corrompue → `config.json.broken-<ts>` créé, 31 sons rechargés depuis `.bak`, config.json réécrit saine au démarrage.
 - [x] Copier un `config.json` > 16 Mo → refus propre, pas de freeze. **Validé agent 15/11** : config 17 Mo → rejet taille, `.broken-*` créé, `.bak` chargé (31 sons), pas de freeze.
