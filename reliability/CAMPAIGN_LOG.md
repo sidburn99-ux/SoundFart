@@ -148,3 +148,13 @@ de main.js exige smoke test-env >= 60 s avec verification du log.
 - SF-REL-0141 promue CLOSED : 9 conditions V2 remplies (premiere entree
   fully conforme). Dashboard : 1 CLOSED / 89 FPV / 24 ACCEPTED / 1 INV.
 - Nouveau driver : test/cdp-drive.js (12 checks) + test/cdp-yt.js.
+
+## V2 — yt:info reel valide (15/11/2026)
+
+- test/cdp-ytinfo.js : ytInfo("Big Buck Bunny") -> ok, titre+durée
+  (635 s) retournés. Valide : yt-dlp.exe installé et exécutable,
+  runYt spawn/timeout, parsing JSON, contrat de retour.
+- Reste non couvert : yt:download réel (gros fichier), ffmpeg ensure
+  (~80 Mo, même downloadVerified désormais prouvé), media:cut bout en
+  bout, MediaRecorder micro/loopback, Discord routing — voir
+  VALIDATION.md / NEXT_ACTIONS.

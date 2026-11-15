@@ -57,3 +57,8 @@
   (writeRecording/rec:save, lifecycle micro, yt:download, media:cut,
   tapStart/tapStop) — smoke ciblé par anomalie ou VALIDATION.md.
 - SF-REL-0611 (crash AudioContext) : INVESTIGATING, attend .dmp Crashpad.
+
+- [ ] ffmpeg ensure + media:cut bout en bout via CDP (telechargement
+      ~80 Mo, validerait le 2e usage de downloadVerified).
+- [ ] yt:download réel (import YouTube complet) — nécessite réseau
+      et disque ; valider progression/annulation/erreur.
