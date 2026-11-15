@@ -641,6 +641,7 @@ function setPlaying(id, delta) {
 
 function endVoice(v) {
   if (v.killTimer) { clearTimeout(v.killTimer); v.killTimer = null; }
+  if (v.stopFallback) { clearTimeout(v.stopFallback); v.stopFallback = null; }
   if (voices.delete(v)) setPlaying(v.soundId, -1);
 }
 
@@ -749,7 +750,11 @@ function stopVoice(v, instant) {
       src.stop(t + (instant ? 0 : 0.08));
     } catch {}
   }
-  if (instant) endVoice(v);
+  if (instant) { endVoice(v); return; }
+  // Repli : si onended ne se declenche jamais (contexte suspendu, noeud
+  // fige), la voix resterait zombie jusqu'au killTimer (duree+15 s).
+  if (v.stopFallback) clearTimeout(v.stopFallback);
+  v.stopFallback = setTimeout(() => { v.stopFallback = null; if (voices.has(v)) endVoice(v); }, 1500);
 }
 
 function stopAll(instant) {

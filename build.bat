@@ -13,6 +13,12 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
+call npm test
+if errorlevel 1 (
+  echo ERREUR : les tests unitaires ont echoue.
+  pause
+  exit /b 1
+)
 call npm run dist
 if errorlevel 1 (
   echo ERREUR : le build a echoue (voir les messages ci-dessus).

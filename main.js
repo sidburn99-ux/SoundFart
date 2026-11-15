@@ -906,6 +906,11 @@ H('yt:download', async (_e, o) => {
     const preferred = created.filter((f) => path.basename(f).startsWith('sf-' + lastTag + '-'));
     const pool = preferred.length ? preferred : created;
     const newest = pool.sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)[0];
+    // Plafond coherent avec file:read (512 Mo) : un audio plus lourd serait
+    // de toute facon illisible par l'app — autant echouer ici, proprement.
+    if (fs.statSync(newest).size > 512 * 1024 * 1024) {
+      throw new Error('Le fichier téléchargé dépasse 512 Mo — trop lourd pour SoundFart.');
+    }
     ytProgress(-1);
     return { path: newest, sectioned };
   };
@@ -1453,8 +1458,10 @@ function createWindow() {
       setTimeout(() => { if (win && !win.isDestroyed()) win.webContents.reload(); }, 500);
     } else if (win && !win.isDestroyed()) {
       // Second crash : la fenetre est morte sans diagnostic — on le dit
-      // au lieu de laisser l'utilisateur devant une app figee.
+      // puis on QUITTE : une app sans renderer est un zombie, et le
+      // will-quit restaure le micro proprement (SF-REL-0054).
       dialog.showErrorBox('SoundFart', 'Le moteur audio a planté une seconde fois.\n\nRedémarre l\'application — si le problème revient, envoie soundfart.log au support.');
+      app.quit();
     }
   });
   win.webContents.on('did-fail-load', (_e, code, desc, url) => {

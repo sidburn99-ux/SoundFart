@@ -127,6 +127,15 @@ test('restauration : crash (prev ids perimes) -> fallback non virtuel', () => {
   assert.equal(r.commId, 'usb');
 });
 
+test('restauration : id de flux render dans prev -> ignore', () => {
+  const eps = [
+    { flow: 'render', id: 'spk', name: 'Haut-parleurs' },
+    { flow: 'capture', id: 'g930', name: 'Microphone (G930)' },
+  ];
+  const r = U.chooseRestoreIds(eps, { console: 'spk', comm: 'spk' }, { console: '', comm: '', multi: 'g930' });
+  assert.equal(r.consoleId, 'g930'); // jamais l'id render
+});
+
 // ---------- safeName / parseTs / fmtTime ----------
 test('safeName : caracteres interdits, espaces, vide', () => {
   assert.equal(U.safeName('a/b\\c:d*e?f"g<h>i|j'), 'a_b_c_d_e_f_g_h_i_j');
@@ -134,6 +143,12 @@ test('safeName : caracteres interdits, espaces, vide', () => {
   assert.equal(U.safeName(''), 'son');
   assert.equal(U.safeName(null), 'son');
   assert.ok(U.safeName('x'.repeat(200)).length <= 80);
+  // Noms reserves avec espace/point avant extension : Windows normalise
+  // « con .take » en « con.take » -> ERROR_INVALID_NAME sans le prefixe.
+  assert.equal(U.safeName('con .take'), '_con .take');
+  assert.equal(U.safeName('nul .mp3'), '_nul .mp3');
+  // Caracteres de controle 0x00-0x1F filtres (sinon ERR_INVALID_ARG_VALUE).
+  assert.equal(U.safeName('a\x00b\x1fc'), 'a_b_c');
 });
 
 test('parseTs : mm:ss, secondes, invalide', () => {
@@ -143,12 +158,20 @@ test('parseTs : mm:ss, secondes, invalide', () => {
   assert.equal(U.parseTs('1:30.5'), 90.5);
   assert.ok(Number.isNaN(U.parseTs('abc')));
   assert.ok(Number.isNaN(U.parseTs('1:2:3:4')));
+  // Parties non leaders >= 60 : minutes/secondes invalides.
+  assert.ok(Number.isNaN(U.parseTs('1:99')));
+  assert.ok(Number.isNaN(U.parseTs('0:0:90')));
+  assert.equal(U.parseTs('99:59'), 5999); // m:ss legitime : les minutes peuvent depasser 59
+  assert.equal(U.parseTs('1:30:45'), 5445); // h:mm:ss
 });
 
 test('fmtTime : affichage m:ss.d', () => {
   assert.equal(U.fmtTime(0), '0:00.0');
   assert.equal(U.fmtTime(65.25), '1:05.3');
   assert.equal(U.fmtTime(600), '10:00.0');
+  // Arrondi avant split : jamais « 1:60.0 ».
+  assert.equal(U.fmtTime(119.96), '2:00.0');
+  assert.equal(U.fmtTime(3599.99), '60:00.0');
 });
 
 // ---------- expandPaths ----------

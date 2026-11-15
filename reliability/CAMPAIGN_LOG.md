@@ -443,3 +443,22 @@ cdp-tap re-valide (73 chunks RMS 0,285) + cdp-drive 12/12.
 Registre : 159 IDs, 138 CLOSED, 0 FPV, 28 ACCEPTED, 1 INVESTIGATING.
 Toutes les zones de code auditees — campagne de detection epuisee ;
 il ne reste que 0611 (.dmp), VALIDATION.md materiel, endurance.
+
+## 15/11/2026 (suite) — audit lib/audio-utils.js integral + reevaluation ACCEPTED
+
+- Audit integral lib/audio-utils.js (16 exports, subagent adverse) :
+  7 anomalies — 3 P2 (0674 noms reserves Windows « con .x », 0675 ctrl
+  chars safeName, 0676 repli wx sans unlink -> .webm tronque final) et
+  4 P3 (0677 chooseRestoreIds filtre flow, 0678 fmtTime « 1:60.0 »,
+  0679 parseTs « 1:99 », 0680 expandPaths non iterable). Toutes corrigees
+  + tests unitaires ajoutes (npm test 40/40).
+- Reevaluation des ACCEPTED (subagent adverse, verification code
+  actuel) : 17 justifications reconduites, 1 OBSOLETE (0048 -> CLOSED
+  via 0127 execFileTracked), 4 RECONSIDEREES traitees :
+  0054 app.quit() apres 2e crash renderer, 0055 npm test dans build.bat,
+  0116 stopFallback 1,5 s (voix zombie onended), 0059 rejet yt:download
+  >512 Mo (coherence file:read). Toutes FPV en attente de revue.
+- Vérifications : node --check x3, npm test 40/40, npm run dist,
+  smoke test-profile relance sur le nouveau build.
+- Registre : 166 anomalies — 131 CLOSED, 11 FPV, 23 ACCEPTED,
+  1 INVESTIGATING (0611). Toutes les zones de code auditees.
