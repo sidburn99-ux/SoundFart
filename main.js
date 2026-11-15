@@ -1168,16 +1168,18 @@ app.whenReady().then(() => {
   // Enregistreur : autorise getDisplayMedia pour capturer l'audio systeme (boucle locale Windows)
   // Origine : seule la page SoundFart peut demander une capture — comme
   // permOriginOk pour les permissions (un frame etranger ne passe pas).
-  let originOk = false;
-  try {
-    const u = request.securityOrigin || (request.frame && request.frame.url) || '';
-    originOk = /[\\/]index\.html$/.test(new URL(u).pathname);
-  } catch {}
-  if (!originOk) {
-    log('[displaymedia] refuse: origine ' + String(request.securityOrigin || '?').slice(0, 120), 'warn');
-    return callback({});
-  }
   session.defaultSession.setDisplayMediaRequestHandler((request, callback) => {
+    // Origine : seule la page SoundFart peut demander une capture — comme
+    // permOriginOk pour les permissions (un frame etranger ne passe pas).
+    let originOk = false;
+    try {
+      const u = request.securityOrigin || (request.frame && request.frame.url) || '';
+      originOk = /[\\/]index\.html$/.test(new URL(u).pathname);
+    } catch {}
+    if (!originOk) {
+      log('[displaymedia] refuse: origine ' + String((request && request.securityOrigin) || '?').slice(0, 120), 'warn');
+      return callback({});
+    }
     log(`[displaymedia] requete audio=${request.audioRequested} video=${request.videoRequested}`);
     desktopCapturer.getSources({ types: ['screen'] }).then((sources) => {
       log(`[displaymedia] ${sources.length} source(s) ecran`);
