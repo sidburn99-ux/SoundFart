@@ -1,6 +1,12 @@
 # AUDIT_FIABILISATION.md — Revue complète et plan de fiabilisation
 
 > Audit réalisé le 15 novembre 2026 sur `hardening/v2` (dernier commit `8f756f7`).
+> **Mise à jour post-campagne** : les constats N1-N11, R1-R14, M2-M6, M9-M11,
+> S1-S3, S5 ont été corrigés (commits `b35ae44`, `f334db6`, `a4e403a`,
+> `2266528`). Restent assumés : M1 (`storageRoot`/`file:read` — choix
+> fonctionnel documenté), M7, M8 (log synchrone — fiabilité > jank),
+> M10 partiellement (dialog au 2ᵉ crash), N6 partiellement (moyenne
+> boîte, pas de vrai filtre), R9 (fallback 'default' = choix utilisateur).
 > Méthode : 3 revues de code parallèles (main/preload, renderer, C#/tests/scripts)
 > + recherche documentaire (MS Learn WASAPI, Electron, pratiques soundboards).
 > Chaque constat est classé : **bug avéré** / **risque** / **hypothèse** /
