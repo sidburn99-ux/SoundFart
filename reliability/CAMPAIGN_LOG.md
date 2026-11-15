@@ -546,3 +546,9 @@ il ne reste que 0611 (.dmp), VALIDATION.md materiel, endurance.
 - WAV 172,8 Mo (15 min stereo 48 kHz) genere via ffmpeg des tools,
   play() via CDP -> refuse propre (voice:false), heap 10 Mo stable,
   0 voix, pas de crash. Item A.6 coche. Fichier test supprime.
+
+## 15/11/2026 (suite 9) — VALIDATION.md A.4 execute
+
+- Supression pendant lecture via CDP : play() -> voix active ->
+  removeSound + confirm -> son retire (cfg.sounds 30->29), voix
+  arretee proprement, pas d'erreur. Item A.4 coche.
