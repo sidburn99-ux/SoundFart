@@ -235,3 +235,15 @@ de main.js exige smoke test-env >= 60 s avec verification du log.
 - Runtime : smoke OK, yt:info reel re-valide (runYt modifie).
 - 0612-0615 -> CLOSED (limite documentee : test sur le helper, call-sites
   main.js non couverts par npm test).
+
+## V2 — audit audio critique : 4 anomalies corrigees (15/11/2026)
+
+Audit adverse complet (watchdog, AudioTap, restauration, renderer) :
+8 anomalies trouvees. Corrigees : SF-REL-0616 (exe non verifie +
+statuts mensongers restauration), 0617 (watchdog fausse suspension
+pendant bascule), 0618 (play sur contexte mourant). Restent ouvertes
+(documentees) : 0619 (importConfig hors chaine), A6/A7/A8 de l'audit
+(exit-path execFileSync ~45 s, micro bypass master = voulu, garde
+micro non relance si tue — ACCEPTED probabiliste).
+Verifications : node --check x2, npm test 38/38, dist rebuild, smoke
+OK, cdp-drive 12/12 PASS (cycle teardownAudio/applyAudio valide).

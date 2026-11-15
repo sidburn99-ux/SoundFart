@@ -372,7 +372,9 @@ async function teardownAudio() {
   playGen++;
   for (const v of [...voices]) endVoice(v); // purge les voix zombies restees bloquees
   for (const k of ['cable', 'mon']) {
-    if (audio[k]) { try { await audio[k].ctx.close(); } catch {} audio[k] = null; }
+    // Null AVANT close() : un play() dans la fenetre de fermeture ne doit
+    // pas attraper un contexte mourant (InvalidStateError parasite).
+    if (audio[k]) { const a = audio[k]; audio[k] = null; try { await a.ctx.close(); } catch {} }
   }
   if (audio.micStream) { audio.micStream.getTracks().forEach((t) => t.stop()); audio.micStream = null; }
 }

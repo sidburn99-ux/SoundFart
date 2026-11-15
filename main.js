@@ -1020,7 +1020,13 @@ async function autoSetupImpl({ enabled, cableLabel }) {
   try {
     const tool = await ensureAudioTool();
     if (!tool) return { ok: false, err: 'composant audio natif indisponible : ' + (lastToolErr || 'compilation impossible') };
-    if (!enabled) { await restoreMicNowP(tool); return { ok: true, changed: false }; }
+    if (!enabled) {
+      // Rien a restaurer si aucun marqueur : ok. Marqueur present mais
+      // restauration echouee -> on le dit au lieu de pretendre le succes.
+      if (!fs.existsSync(restoreFile())) return { ok: true, changed: false };
+      const restored = await restoreMicNowP(tool);
+      return restored ? { ok: true, changed: true } : { ok: false, err: 'restauration du micro impossible (cible introuvable ou peripherique indisponible)' };
+    }
     let eps = parseEndpoints(await audioExecP(tool, ['list']));
     let target = findCableCapture(eps, cableLabel);
     if (!target) {
@@ -1052,17 +1058,20 @@ async function autoSetupImpl({ enabled, cableLabel }) {
       return { ok: true, changed: false, device: target.name };
     }
     // Pas encore sur le cable : recuperer un eventuel etat incoherent puis memoriser le vrai peripherique
-    if (fs.existsSync(restoreFile())) {
-      await restoreMicNowP(tool);
-      cur = parseGet(await audioExecP(tool, ['get', 'capture']));
-    }
-    if (!fs.existsSync(restoreFile())) {
-      writeRestoreMarker({ console: cur.console, comm: cur.comm, multi: cur.multi, owner: process.pid });
-    }
-    if (quitting) return { ok: false, err: 'quitte' };
-    await audioExecP(tool, ['set', 'capture', target.id, target.id, target.id]);
-    if (!quitting) spawnMicGuard(tool);
-    return { ok: true, changed: true, device: target.name };
+    micSwitching = true;
+    try {
+      if (fs.existsSync(restoreFile())) {
+        await restoreMicNowP(tool);
+        cur = parseGet(await audioExecP(tool, ['get', 'capture']));
+      }
+      if (!fs.existsSync(restoreFile())) {
+        writeRestoreMarker({ console: cur.console, comm: cur.comm, multi: cur.multi, owner: process.pid });
+      }
+      if (quitting) return { ok: false, err: 'quitte' };
+      await audioExecP(tool, ['set', 'capture', target.id, target.id, target.id]);
+      if (!quitting) spawnMicGuard(tool);
+      return { ok: true, changed: true, device: target.name };
+    } finally { micSwitching = false; }
   } catch (e) {
     return { ok: false, err: e.message };
   }
@@ -1082,8 +1091,8 @@ ipcMain.on('audio:restore', (e) => {
 });
 async function audioRestoreImpl() {
   try {
-    const tool = audioToolPath();
-    if (!tool || !fs.existsSync(tool)) return;
+    const tool = await ensureAudioTool();
+    if (!tool) { log('[mic-restore] outil audio indisponible : ' + (lastToolErr || 'inconnu'), 'warn'); return; }
     // Securite : sans audio-restore.json, SoundFart n'a jamais bascule le micro
     // (ou l'a deja restaure) -> on ne touche a RIEN, meme si une entree pointe
     // sur un peripherique virtuel (choix volontaire possible : Voicemeeter,
@@ -1244,9 +1253,10 @@ H('audio:tapStop', () => {
 const audioExecP = (tool, args) => execFileTracked(tool, args, { encoding: 'utf8', timeout: 15000 }).then((r) => r.stdout);
 let watchdogBusy = false;
 let micWatchSuspended = false;
+let micSwitching = false; // autoSetup/restore en cours : le watchdog ne doit pas voir la transition comme un choix externe
 
 async function watchdogMic() {
-  if (watchdogBusy || micWatchSuspended) return;
+  if (watchdogBusy || micWatchSuspended || micSwitching) return;
   watchdogBusy = true;
   try {
     const tool = audioToolPath();
@@ -1428,6 +1438,9 @@ app.on('will-quit', () => {
   audioTapProc = null;
   try {
     const tool = audioToolPath();
-    if (fs.existsSync(tool) && fs.existsSync(restoreFile())) restoreMicNow(tool);
-  } catch {}
+    if (fs.existsSync(restoreFile())) {
+      if (!fs.existsSync(tool)) log('[mic] restauration impossible : AudioEndpoint.exe absent', 'warn');
+      else if (!restoreMicNow(tool)) log('[mic] restauration a la fermeture echouee — micro peut rester sur le peripherique virtuel', 'warn');
+    }
+  } catch (e) { log('[mic] restauration will-quit: ' + (e && e.message), 'warn'); }
 });

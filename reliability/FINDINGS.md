@@ -307,6 +307,44 @@ Même classe : sf:tapDead (1201) non wrappé.
 **Fix** : idem 0614 — try/catch autour des sends restants.
 **Statut** : CLOSED — meme dossier 0612 : correctif + test + revue independante + validation runtime. Voir SF-REL-0612 pour les limites.
 
+
+## SF-REL-0616 — restauration micro : exe non verifie + statuts mensongers (P2)
+
+**Symptome** : audioRestoreImpl utilisait audioToolPath()+existsSync sans
+verification -> exe corrompu = echec silencieux ; bouton « Restaurer »
+affichait un toast de succes quoi qu'il arrive ; autoSetup enabled=false
+retournait ok:true meme si restoreMicNowP echouait.
+**Cause** : chemins de restauration sans ensureAudioTool ni statut honnete.
+**Fix** : ensureAudioTool dans audioRestoreImpl ; enabled=false distingue
+« rien a restaurer » (ok) de « restauration echouee » (ok:false+err) ;
+will-quit loggue warn si exe absent ou restoreMicNow false.
+**Statut** : FIXED_PENDING_VALIDATION.
+
+## SF-REL-0617 — watchdog micro : fausse suspension pendant bascule autoSetup (P2)
+
+**Symptome** : pendant la fenetre restore->set capture d'autoSetupImpl
+(~100-500 ms), le watchdog (30 s) pouvait voir cur != target + marqueur
+present -> micWatchSuspended=true + toast « entree modifiee hors
+SoundFart » — surveillance desarmee a tort.
+**Fix** : flag micSwitching encadrant la section mutante ; watchdogMic
+retourne tot si actif.
+**Statut** : FIXED_PENDING_VALIDATION.
+
+## SF-REL-0618 — play() pendant teardownAudio : InvalidStateError parasite (P3)
+
+**Symptome** : teardownAudio fermait ctx avant de nuller audio[k] -> un
+play() dans la fenetre capturait un contexte mourant -> toast erreur.
+**Fix** : audio[k]=null AVANT await ctx.close().
+**Statut** : FIXED_PENDING_VALIDATION.
+
+## SF-REL-0619 — importConfig : teardownAudio hors chaine applyAudio (P3, OPEN)
+
+**Symptome** : importConfig appelle teardownAudio() direct pendant qu'un
+applyAudioInner peut etre en vol -> recréation possible avec les anciens
+devices ; convergence garantie par l'applyAudio suivant mais fenêtre
+transitoire (micro re-acquis/re-coupe, LED).
+**Statut** : OPEN — correctif propose : passer par audioApplyChain.
+
 ## Historique actif des régressions (Quality Gate V2 §9)
 
 | Régression | Origine | Introduite par | Prévention |
@@ -327,7 +365,7 @@ Règle : avant de toucher un composant, chercher ici + dans le tableau ses anoma
 | ACCEPTED | 24 | cycle 1 : 12 · cycle 2 : 1 · cycle 3 : 7 · cycle 5 : 4 |
 | INVESTIGATING | 1 | SF-REL-0611 crash AudioContext |
 | OPEN / BLOCKED | 0 | — |
-| **Total IDs définis** | **118** | IDs uniques, aucun doublon de définition |
+| **Total IDs définis** | **122** | IDs uniques, aucun doublon de définition |
 
 ### Doublons fonctionnels documentés (IDs distincts, même anomalie)
 
