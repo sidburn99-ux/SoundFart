@@ -281,6 +281,28 @@ vérifié x3 sessions, extraction bsdtar OK, coupe réelle
 `cuts/dry-fart_extrait.mp3` (1996 o > seuil 1 Ko). npm test 37/37.
 **Statut** : FIXED_PENDING_VALIDATION (revue indépendante requise).
 
+
+## SF-REL-0614 — callbacks progression non normalisés (null/truthy) (P3)
+
+**Symptôme** : `onProgress = () => {}` (main.js:536,711) ne couvre que
+`undefined`. `downloadFile(u,d,null)` ou `runYt(args,null)` recréent le
+TypeError 0612 ; un callback truthy non-fonction passe tel quel et
+crash dans le handler 'data' (main.js:559). Aucun appelant actuel ne
+fait ça — protection fragile pour futurs appelants.
+**Revue** : indépendante (agent adverse), sévérité faible.
+**Fix proposé** : `typeof cb === 'function' ? cb : () => {}` aux 3 sites.
+**Statut** : OPEN.
+
+## SF-REL-0615 — webContents.send dans callback progression : race destruction (P2)
+
+**Symptôme** : ytProgress (main.js:744-748) et callbacks inline
+(422,651) vérifient `win && !win.isDestroyed()` puis `send` — si le
+webContents meurt entre check et send, exception dans handler 'data'
+-> uncaughtException -> mort du main. Fenêtre de course étroite.
+Même classe : sf:tapDead (1201) non wrappé.
+**Revue** : indépendante, sévérité faible-moyenne.
+**Statut** : OPEN.
+
 ## Historique actif des régressions (Quality Gate V2 §9)
 
 | Régression | Origine | Introduite par | Prévention |
@@ -301,7 +323,7 @@ Règle : avant de toucher un composant, chercher ici + dans le tableau ses anoma
 | ACCEPTED | 24 | cycle 1 : 12 · cycle 2 : 1 · cycle 3 : 7 · cycle 5 : 4 |
 | INVESTIGATING | 1 | SF-REL-0611 crash AudioContext |
 | OPEN / BLOCKED | 0 | — |
-| **Total IDs définis** | **116** | IDs uniques, aucun doublon de définition |
+| **Total IDs définis** | **118** | IDs uniques, aucun doublon de définition |
 
 ### Doublons fonctionnels documentés (IDs distincts, même anomalie)
 
