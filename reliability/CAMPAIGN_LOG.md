@@ -380,3 +380,12 @@ powerMonitor suspend/resume + refresh devices, 0653 watchdog
 ensureAudioTool, 0654 gardes quitting restore, 0655 purge dumps >30j,
 0657 borne migrate. 0656 ACCEPTED (sonde sync = pire que pending async).
 Verifs : node --check x3, npm test 39/39, dist, smoke + cdp-drive.
+
+## V2 — reconciliation docs (15/11/2026)
+
+NEXT_ACTIONS reecrit : ancien fichier empilait 4 points de reprise
+obsoletes (cycles 1-4 + V2). Desormais UN point de reprise unique et
+chronologique. TEST_MATRIX mis a jour : 39 tests (etait 37), couverture
+CDP complete documentee (10 drivers, niveau non nul mesure), zones
+« NON couvert » recadrees sur le seul vrai restant = materiel/VALIDATION.
+Registre verifie : 145 IDs, 32 CLOSED, 90 FPV, 22 ACCEPTED, 1 INVESTIGATING.

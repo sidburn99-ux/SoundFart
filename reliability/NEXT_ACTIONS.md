@@ -1,93 +1,54 @@
-# NEXT_ACTIONS
+# NEXT_ACTIONS — point de reprise unique
 
-1. Passe d'exploration indépendante : 3-4 subagents sur angles disjoints
-   (main.js processus/fichiers ; src/app.js renderer ; C# interop ; scripts/tests).
-2. Qualifier chaque découverte -> FINDINGS.md (SF-REL-XXXX).
-3. Corriger par gravité, tests à chaque fois, commits séparés.
-4. Compléter ARCHITECTURE.md et TEST_MATRIX.md au fil des passes.
+> Dernière réconciliation : 15/11/2026 (fin session audit lifecycle OS).
+> Pour reprendre : lire ce fichier, puis `git log --oneline -3` pour
+> confirmer HEAD, `npm test` (39 attendus), `node --check` sur tout JS
+> modifié depuis. Ne pas relancer les validations déjà listées comme
+> faites dans TEST_MATRIX.md sans raison nouvelle.
 
-## Apres cycle 1
-1. Traiter SF-REL-0049 (ren.GetBuffer transitoire) et SF-REL-0052 (ffmpeg copy partiel).
-2. Evaluer SF-REL-0042 (backpressure PCM) — pause stdout si seuil depasse.
-3. npm run dist + smoke reel complet (fenetre, periphériques, lecture, enregistrement).
-4. Passe adverse : relire mes propres diffs (auto-contradictoire).
-5. Mettre à jour TEST_MATRIX.md (couverture réelle après ajouts).
+## État réel (vérifié 15/11/2026)
 
-## Reprise (fin session cycle 3)
-1. `git log --oneline -5` verifier HEAD, `npm test` (32 attendus), `node --check main.js`.
-2. Poursuivre passes : zones restantes = endurance longue, interactions
-   multi-scenarios, revue des ACCEPTED (SF-REL-0046/0047/0053).
-3. Validation manuelle VALIDATION.md requise avant toute conclusion
-   fiabilite (enregistrement, routage, debranchement peripherique).
-4. Bug connu : crash AudioContext exitCode -1/143 sporadique —
-   surveiller, reproduire si possible, NE PAS masquer.
+- **Registre** : 145 IDs — 32 CLOSED · 90 FIXED_PENDING_VALIDATION ·
+  22 ACCEPTED · 1 INVESTIGATING (SF-REL-0611).
+- **Branche** : `hardening/v2`, HEAD = `b007d19`, poussé sur GitHub SSH.
+- **Build** : `dist\SoundFart.exe` à jour (npm run dist après chaque
+  changement fonctionnel). Smoke endurance actif en `--test-profile`,
+  aucun `.dmp` Crashpad à ce jour.
+- **Couverture runtime** : voir TEST_MATRIX.md — YouTube complet,
+  micro/MediaRecorder, boucle VB-CABLE, AudioTap, rec:save, media:cut
+  tous validés avec niveaux non nuls mesurés.
 
-## Reprise (fin cycle 4)
-1. `git log --oneline -3`, `npm test` (32 attendus), HEAD=4375793.
-2. Aucune anomalie INVESTIGATING ouverte ; reste ACCEPTED documentes
-   (SF-REL-0111, 0116, 0126, 0129, 0136, 0137, 0139 + anciens).investigation possible : SF-REL-0111 (invalidation cache par mtime via
-   IPC stat) — benefit faible, couteux.
-3. PRIORITE : validation manuelle VALIDATION.md — l'enregistreur et le
-   flux YouTube ont ete heavily modifies (modales, pickDir, pcConnected,
-   toast erreurs) et demandent un test UI reel.
-4. Bug connu : crash AudioContext -1/143 sporadique — 2 occurrences
-   smoke (11:18, 11:35, 11:38). Enquete forensique si possible.
-- [ ] Analyser le prochain .dmp Crashpad (userData/Crashpad/reports) du
-      crash -1/143 : identifier le module/processus fautif (renderer audio
-      vs driver VB-CABLE). Smoke long en cours en test-profile.
+## Prochaine action exacte (ordre chronologique)
 
-## Priorites Quality Gate V2
+1. **Revue indépendante groupée** des diffs non encore revus :
+   - `e99d0b1` — SF-REL-0639 (borne file decodeQueue)
+   - `b007d19` — SF-REL-0650 à 0655 + 0657 (log trim, rate-limit,
+     powerMonitor, watchdog ensureAudioTool, gardes quitting, purge
+     dumps, borne migrate)
+   → CLOSED potentiel pour les anomalies validées sans réserve.
+2. **Revue par lots des FPV historiques** (cycles 1-5, ~80 IDs) :
+   grouper par sous-système (audio-utils, IPC main, renderer), un
+   subagent adverse par lot, promouvoir les diffs validés.
+3. **SF-REL-0611** (crash renderer -1/143) : INVESTIGATING —
+   vérifier `find $TEMP/SoundFart-test -name '*.dmp'` ; si un dump
+   apparaît, l'analyser (module/processus fautif) ; sinon maintenir
+   l'exposition (smoke tourne) et ne jamais le masquer.
+4. **Validation matérielle** (VALIDATION.md, nécessite l'utilisateur) :
+   Discord routing réel, sleep/wake réel, restauration micro réelle,
+   endurance longue durée, débranchement périphérique à chaud.
+5. Zones déjà auditées et couvertes — NE PAS relancer d'audit général
+   sans nouveau signal : main.js (IPC, audio, process, config, callbacks,
+   lifecycle OS), app.js (playback, import, raccourcis, enregistreur,
+   modales, decode), preload.js, media-permission.js, tap-processor.js,
+   scripts build. Restant jamais audité en profondeur : AudioEndpoint.cs
+   et AudioTap.cs côté C# (hors cycles 1 partiels), lib/audio-utils.js
+   dans son ensemble.
 
-- [ ] Capturer et analyser le .dmp Crashpad du crash SF-REL-0611
-      (userData/Crashpad/reverses) — conditionne la suite de l'enquete.
-- [ ] Validation runtime par anomalie : prioriser les FIXED_PENDING_
-      VALIDATION touchant des chemins critiques (rec:save/writeRecording,
-      lifecycle micro, yt:download, media:cut) via smoke cible ou
-      VALIDATION.md.
-- [ ] Revue independante des diffs des corrections les plus risquees
-      (atomicite, lifecycle, IPC) — formaliser en entry FINDINGS.
-- [ ] Validation materielle reelle (VALIDATION.md) : enregistreur,
-      YouTube, Discord/VB-CABLE, restoration micro, sleep/wake.
+## Règles de reprise
 
-## État V2 après réconciliation (15/11/2026)
-
-- **0 anomalie CLOSED** — toutes les corrections attendent au minimum la
-  revue indépendante du diff + validation runtime ciblée.
-- 89 FIXED_PENDING_VALIDATION : priorité aux chemins critiques
-  (writeRecording/rec:save, lifecycle micro, yt:download, media:cut,
-  tapStart/tapStop) — smoke ciblé par anomalie ou VALIDATION.md.
-- SF-REL-0611 (crash AudioContext) : INVESTIGATING, attend .dmp Crashpad.
-
-- [ ] ffmpeg ensure + media:cut bout en bout via CDP (telechargement
-      ~80 Mo, validerait le 2e usage de downloadVerified).
-- [ ] yt:download réel (import YouTube complet) — nécessite réseau
-      et disque ; valider progression/annulation/erreur.
-
-## Point de reprise (15/11/2026, fin session V2)
-
-Fait ce cycle : SF-REL-0612 (P0 onProgress crash main) + SF-REL-0613
-(P0 ffmpeg tar) corrigés et validés runtime via CDP ; yt:info réel OK ;
-media:cut complet OK ; SF-REL-0141 CLOSED ; 4 diffs revus (validés).
-
-Prochaine action exacte :
-1. yt:download réel via CDP (gros fichier, valider progression/erreur)
-   — test/cdp-yt.js pattern, URL Big Buck Bunny déjà prouvée lisible.
-2. Revue indépendante du diff SF-REL-0612+0613 (2 lignes + bloc tar)
-   pour évaluer leur passage CLOSED.
-3. .dmp Crashpad SF-REL-0611 si le smoke tourne encore.
-4. MediaRecorder micro/loopback + Discord routing : validation matérielle
-   (VALIDATION.md) — nécessite intervention ou scénario réel.
-
-## Point de reprise (15/11/2026, cycle 3 V2)
-
-Termine depuis la derniere note : yt:download sectionne+complet, media:cut,
-MediaRecorder micro, boucle VB-CABLE (RMS 0.28), rec:save audio reel,
-AudioTap loopback (RMS 0.285), revue complete callbacks -> 0612-0615 CLOSED.
-
-Prochaine action exacte :
-1. Revue independante des zones audio critiques restantes (watchdogMic,
-   audioTap lifecycle, chooseRestoreIds) — lancer audit adverse.
-2. Endurance : smoke en cours depuis ~13:13, surveiller heap + Crashpad.
-3. .dmp Crashpad SF-REL-0611 si apparition.
-4. VALIDATION.md : Discord routing, sleep/wake, restoration micro reelle —
-   necessite intervention utilisateur.
+- `AGENTS.md` fait foi : node --check / npm test / npm run dist /
+  git push après chaque commit, statuts honnêtes.
+- Ne jamais marquer CLOSED sans revue indépendante + test + runtime.
+- `suivi.tsv` + `regen-suivi.ps1` à jour pour les changements
+  significatifs.
+- VB-CABLE jamais embarqué/installé ; isolation Electron intacte.
