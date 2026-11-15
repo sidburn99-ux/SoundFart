@@ -51,7 +51,7 @@ internal static class AudioEndpoint
     {
         int GetCount(out int cProps);
         int GetAt(int iProp, out PropertyKey pkey);
-        int GetValue(ref PropertyKey key, out PropVariant pv);
+        int GetValue(ref PropertyKey key, IntPtr pv);
     }
 
     [StructLayout(LayoutKind.Sequential, Pack = 4)]
@@ -61,18 +61,11 @@ internal static class AudioEndpoint
         public int pid;
     }
 
-    [StructLayout(LayoutKind.Sequential)]
-    private struct PropVariant
-    {
-        public ushort vt;
-        public ushort wReserved1;
-        public ushort wReserved2;
-        public ushort wReserved3;
-        public IntPtr pointer;
-    }
-
+    // PROPVARIANT natif = 24 octets x64 : le marshaling par valeur d'une
+    // struct sous-dimensionnee corrompt la pile. IntPtr alloue a la place ;
+    // GetValue est un out-param (pas besoin de PropVariantInit, absent d'ole32).
     [DllImport("ole32.dll")]
-    private static extern int PropVariantClear(ref PropVariant pvar);
+    private static extern int PropVariantClear(IntPtr pvar);
 
     [Guid("f8679f50-850a-41cf-9c72-430f290290c8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     private interface IPolicyConfig
@@ -104,14 +97,21 @@ internal static class AudioEndpoint
             IPropertyStore store;
             if (dev.OpenPropertyStore(STGM_READ, out store) != 0) return "";
             PropertyKey key = FriendlyNameKey;
-            PropVariant pv;
+            IntPtr pv = Marshal.AllocCoTaskMem(24); // PROPVARIANT : 24 o couvre x64/x86
             string name = "";
-            if (store.GetValue(ref key, out pv) == 0)
+            try
             {
-                if (pv.vt == 31 && pv.pointer != IntPtr.Zero) // VT_LPWSTR
-                    name = Marshal.PtrToStringUni(pv.pointer) ?? "";
-                PropVariantClear(ref pv); // sans ca : fuite d'un BSTR par peripherique
+                int ghr = store.GetValue(ref key, pv);
+                if (ghr == 0)
+                {
+                    if (Marshal.ReadInt16(pv, 0) == 31) // VT_LPWSTR
+                    {
+                        IntPtr bstr = Marshal.ReadIntPtr(pv, 8); // union a l'offset 8
+                        if (bstr != IntPtr.Zero) name = Marshal.PtrToStringUni(bstr) ?? "";
+                    }
+                }
             }
+            finally { PropVariantClear(pv); Marshal.FreeCoTaskMem(pv); } // libere le BSTR du store
             return name;
         }
         catch { return ""; }
@@ -166,8 +166,15 @@ internal static class AudioEndpoint
         // Journaliser chaque role : un echec partiel (console ok, comm ko)
         // rendait la restauration incomplete sans aucun diagnostic.
         Console.Error.WriteLine("set console=0x" + hr1.ToString("X8") + " comm=0x" + hr2.ToString("X8") + " multi=0x" + hr3.ToString("X8"));
-        if (hr1 != 0 && hr2 != 0 && hr3 != 0)
-            throw new Exception("SetDefaultEndpoint a echoue (0x" + hr1.ToString("X8") + ")");
+        // Strict par role : un echec partiel (console ok, comm ko) doit
+        // refuser le succes — sinon l'appelant supprime le marqueur de
+        // restauration et l'etat Windows reste incoherent definitivement.
+        var fails = new List<string>();
+        if (hr1 != 0) fails.Add("console=0x" + hr1.ToString("X8"));
+        if (hr2 != 0) fails.Add("comm=0x" + hr2.ToString("X8"));
+        if (hr3 != 0) fails.Add("multi=0x" + hr3.ToString("X8"));
+        if (fails.Count > 0)
+            throw new Exception("SetDefaultEndpoint partiel: " + string.Join(" ", fails.ToArray()));
     }
 
     // Mode « guard <pid> <fichier-restore.json> » : processus detache lance au moment de la
@@ -217,7 +224,7 @@ internal static class AudioEndpoint
             }
             var g = new string[3];
             GetDefault(en, DataFlow.Capture, g);
-            string prevC = RegexVal(json, "console"), prevM = RegexVal(json, "comm");
+            string prevC = RegexVal(json, "console"), prevM = RegexVal(json, "comm"), prevX = RegexVal(json, "multi");
             string defId = NonVirtual(g[1], caps) ? g[1] : ""; // role multimedia = defaut Windows fiable
             string fb = "";
             foreach (var kv in caps) if (!VIRTUAL_RE.IsMatch(kv.Value ?? "")) { fb = kv.Key; break; }
@@ -225,8 +232,21 @@ internal static class AudioEndpoint
             if (cId == "") cId = fb;
             string mId = defId != "" ? defId : (NonVirtual(prevM, caps) ? prevM : "");
             if (mId == "") mId = fb;
+            // role Multimedia : priorite au multi d'origine enregistre, puis
+            // repli sur la cible console/comm — jamais perdu silencieusement.
+            string xId = defId != "" ? defId : (NonVirtual(prevX, caps) ? prevX : "");
+            if (xId == "") xId = cId != "" ? cId : mId;
             if (cId == "" && mId == "") return 1; // aucun micro : on garde le fichier pour retry ulterieur
-            SetDefault(DataFlow.Capture, cId != "" ? cId : mId, mId != "" ? mId : cId, defId != "" ? defId : (cId != "" ? cId : mId));
+            try
+            {
+                SetDefault(DataFlow.Capture, cId != "" ? cId : mId, mId != "" ? mId : cId, xId);
+            }
+            catch
+            {
+                // Echec partiel ou total : on NE supprime PAS le marqueur —
+                // une restauration incomplete pourra etre retentee.
+                return 1;
+            }
             try { System.IO.File.Delete(restorePath); } catch {}
             return 0;
         }
@@ -295,6 +315,9 @@ internal static class AudioEndpoint
     {
         try
         {
+            // Les noms d'appareils non-ASCII (accents) doivent survivre au
+            // pipe vers Node (decode utf8) : sans ca la console OEM corrompt.
+            try { Console.OutputEncoding = System.Text.Encoding.UTF8; } catch {}
             if (args.Length == 0) return Usage();
             var en = Com<IMMDeviceEnumerator>("BCDE0395-E52F-467C-8E3D-C4579291692E");
             if (args[0] == "list") { List(en); return 0; }

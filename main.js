@@ -853,7 +853,7 @@ H('audio:autoSetup', async (_e, { enabled, cableLabel }) => {
       cur = parseGet(await audioExecP(tool, ['get', 'capture']));
     }
     if (!fs.existsSync(restoreFile())) {
-      fs.writeFileSync(restoreFile(), JSON.stringify({ console: cur.console, comm: cur.comm, owner: process.pid }));
+      fs.writeFileSync(restoreFile(), JSON.stringify({ console: cur.console, comm: cur.comm, multi: cur.multi, owner: process.pid }));
     }
     await audioExecP(tool, ['set', 'capture', target.id, target.id, target.id]);
     // Garde externe : si ce process meurt sans will-quit (kill, crash, BSOD), le guard
