@@ -928,8 +928,21 @@ async function normalizeAll(host) {
   } else {
     closeP = modal('Normalisation de la bibliothèque', [prog, hint], [{ label: 'Fermer', onclick: (c) => c() }], { onClose: () => { cancelled = true; } });
   }
+  // ffmpeg ebur128 = mesure de reference : on le prepare AVANT de
+  // compter. Sinon le 1er son bloque ~80 Mo de telechargement+extraction
+  // sans aucun retour visuel (constate : progression figee a 0/N).
+  prog.textContent = 'Préparation de ffmpeg…';
+  let offDl = null;
+  try {
+    offDl = window.sf.onYtProgress((f) => {
+      prog.textContent = f >= 0 ? `Téléchargement de ffmpeg… ${f} %` : 'Préparation de ffmpeg…';
+    });
+    await window.sf.ensureFfmpeg();
+  } catch (e) { logErr('ensureFfmpeg', e); /* repli JS par son si ffmpeg indisponible */ }
+  if (offDl) offDl();
   for (const s of targets) {
     if (cancelled) break;
+    prog.textContent = `${done + 1} / ${targets.length} — ${s.name || 'son'}`;
     try { s.norm = await computeNorm(s.path); } catch (e) { failed++; logErr('computeNorm', e); /* garder s.norm : un echec ne doit pas effacer un reglage perso */ }
     prog.textContent = `${++done} / ${targets.length}`;
     await new Promise((r) => setTimeout(r, 0));

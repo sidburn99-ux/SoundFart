@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld('sf', {
   saveRecording: (opts) => ipcRenderer.invoke('rec:save', opts),
   mediaCut: (opts) => ipcRenderer.invoke('media:cut', opts),
   fileLoudness: (p) => ipcRenderer.invoke('file:loudness', p),
+  ensureFfmpeg: () => ipcRenderer.invoke('ffmpeg:ensure'),
   audioAutoSetup: (opts) => ipcRenderer.invoke('audio:autoSetup', opts),
   restoreMic: () => ipcRenderer.send('audio:restore'),
   ytEnsure: () => ipcRenderer.invoke('yt:ensure'),

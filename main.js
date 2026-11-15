@@ -598,6 +598,12 @@ H('file:loudness', async (_e, p) => {
   return m;
 });
 
+// Prepare ffmpeg (telechargement ~80 Mo + extraction) SANS mesurer :
+// la normalisation l'appelle une fois pour afficher la progression au
+// lieu de bloquer le premier son sans retour visuel (sf:ytprogress
+// est deja emis par downloadVerified).
+H('ffmpeg:ensure', async () => { await ensureFfmpeg(); return true; });
+
 // ---------- import YouTube (yt-dlp, telecharge au premier usage) ----------
 const toolsDir = () => path.join(app.getPath('userData'), 'tools');
 const ytdlpPath = () => path.join(toolsDir(), 'yt-dlp.exe');
