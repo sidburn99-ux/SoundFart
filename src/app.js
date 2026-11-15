@@ -96,7 +96,9 @@ function normalizeCfg(saved) {
   // purge les entrees invalides et deduplique par id puis par chemin (garde le premier)
   const seenId = new Set(), seenPath = new Set();
   c.sounds = c.sounds.filter((s) => {
-    if (!s || typeof s.id !== 'string' || typeof s.path !== 'string' || typeof s.name !== 'string') return false;
+    // '__stop__' est la cle reservee des raccourcis globaux (main.js) :
+    // un son avec cet id aurait un raccourci qui agit comme STOP.
+    if (!s || typeof s.id !== 'string' || s.id === '__stop__' || typeof s.path !== 'string' || typeof s.name !== 'string') return false;
     const p = s.path.toLowerCase();
     if (seenId.has(s.id) || seenPath.has(p)) return false;
     seenId.add(s.id); seenPath.add(p);
@@ -801,7 +803,12 @@ async function addPaths(rawPaths) {
   const catId = catById(cfg.ui.cat) ? cfg.ui.cat : null;
   const now = Date.now();
   let n = 0;
+  // Plafond aligne sur normalizeCfg (5000) : au-dela file:check refuse le
+  // batch et config:save depasse 5 Mo -> sauvegardes silencieusement KO.
+  const room = Math.max(0, 5000 - cfg.sounds.length);
+  let truncated = false;
   for (const p of paths) {
+    if (n >= room) { truncated = true; break; }
     if (known.has(p.toLowerCase())) continue;
     known.add(p.toLowerCase());
     const base = p.split(/[\\/]/).pop().replace(/\.[^.]+$/, '');
@@ -812,7 +819,7 @@ async function addPaths(rawPaths) {
     n++;
   }
   if (n) { save(); renderAll(); }
-  toast(n ? `${n} son(s) ajouté(s).` : 'Ces sons sont déjà dans la liste.');
+  toast(n ? `${n} son(s) ajouté(s).${truncated ? ' (limite de 5000 sons atteinte)' : ''}` : 'Ces sons sont déjà dans la liste.');
 }
 
 async function removeSound(s) {
@@ -1552,6 +1559,16 @@ async function relocateSound(s) {
   try { paths = await window.sf.pickFiles(); } catch (e) { logErr('pickFiles', e); return; }
   const p = paths[0];
   if (!p) return;
+  // Le filtre du dialogue est indicatif : valider l'extension ici sinon
+  // file:check dirait « present » mais file:read refuserait au play.
+  if (!window.SFUtils.AUDIO_EXT.includes(p.slice(p.lastIndexOf('.')).toLowerCase())) {
+    toast("Ce fichier n'est pas un format audio supporté.", 'warn'); return;
+  }
+  // Un chemin deja pris par un autre son serait deduplique au prochain
+  // chargement -> perte silencieuse d'un des deux sons.
+  if (cfg.sounds.some((x) => x !== s && x.path.toLowerCase() === p.toLowerCase())) {
+    toast('Ce chemin est déjà utilisé par un autre son.', 'warn'); return;
+  }
   const oldPath = s.path;
   s.path = p;
   cacheDelete(oldPath); // l'ancien buffer devient orphelin sinon

@@ -279,3 +279,22 @@ test('cbOrNoop : normalise les callbacks (SF-REL-0612/0614)', () => {
   real(0.5);
   assert.equal(called, 1);
 });
+
+// SF-REL-0620 : le plafond 5000 comptait les entrees VISITEES — un dossier
+// de >5000 non-audio affamait les sons audio situes apres. n = retenus,
+// v = visites (borne 50000).
+test('expandPaths : les non-audio ne consomment pas le plafond de sons', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-exp-'));
+  try {
+    // 5100 fichiers non-audio AVANT les sons : l'ancien code (n++ par
+    // entree visitee) s'arretait a 5000 -> 0 son retourne.
+    for (let i = 0; i < 5100; i++) fs.writeFileSync(path.join(dir, 'f' + i + '.txt'), 'x');
+    fs.writeFileSync(path.join(dir, 'son1.mp3'), 'x');
+    fs.writeFileSync(path.join(dir, 'son2.wav'), 'x');
+    const out = await U.expandPathsAsync([dir]);
+    assert.equal(out.length, 2, 'les 2 sons audio doivent etre trouves malgre 5100 non-audio');
+    assert.ok(out.every((p) => /\.(mp3|wav)$/.test(p)));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

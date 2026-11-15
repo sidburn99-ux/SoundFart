@@ -350,6 +350,41 @@ termine proprement puis la nouvelle config est appliquee par la chaine.
 12/12 PASS. Revue independante requise.
 **Statut** : CLOSED — revue independante + runtime (cdp-drive 12/12, smoke). teardown direct supprime, applyAudio passe par audioApplyChain. Limite : call-sites main.js non couverts par npm test.
 
+
+## SF-REL-0620 — expandPaths : plafond 5000 comptait les visites, pas les sons (P2)
+
+**Symptome** : un dossier avec >5000 entrees non-audio avant les sons
+audio tronquait silencieusement l'import (seen.n++ par entree visitee).
+**Fix** : seen.n ne compte que les sons retenus (plafond 5000) ;
+seen.v borne le parcours a 50000 visites. Sync+async.
+**Preuve** : test audio-utils — 5100 .txt + 2 audio -> 2 sons retournes
+(ancien code : 0). npm test 39/39.
+**Statut** : FIXED_PENDING_VALIDATION.
+
+## SF-REL-0621 — relocateSound : aucune validation extension/doublon (P2)
+
+**Symptome** : le dialogue fichier accepte « tous les fichiers » ->
+relocation vers un non-audio = file:check « present » mais file:read
+refuse au play ; relocation vers le chemin d'un autre son = dedoublonnage
+silencieux au prochain demarrage (perte d'un son).
+**Fix** : validation extension AUDIO_EXT + refus si chemin deja pris.
+**Statut** : FIXED_PENDING_VALIDATION.
+
+## SF-REL-0622 — id son « __stop__ » : raccourci devenait STOP deguise (P2)
+
+**Symptome** : normalizeCfg acceptait id='__stop__' -> shortcuts:apply
+enregistrait l'accel et onShortcut routait vers stopAll.
+**Fix** : normalizeCfg rejette id '__stop__'.
+**Statut** : FIXED_PENDING_VALIDATION.
+
+## SF-REL-0623 — addPaths sans plafond : file:check/config:save casses (P2)
+
+**Symptome** : >5000 sons via addPaths -> file:check jette 'chemins
+invalides' (checkMissing meurt en silence) et config:save >5 Mo ->
+sauvegardes KO sans feedback.
+**Fix** : addPaths borne a 5000 - len(cfg.sounds) + toast de troncature.
+**Statut** : FIXED_PENDING_VALIDATION.
+
 ## Historique actif des régressions (Quality Gate V2 §9)
 
 | Régression | Origine | Introduite par | Prévention |
@@ -370,7 +405,7 @@ Règle : avant de toucher un composant, chercher ici + dans le tableau ses anoma
 | ACCEPTED | 24 | cycle 1 : 12 · cycle 2 : 1 · cycle 3 : 7 · cycle 5 : 4 |
 | INVESTIGATING | 1 | SF-REL-0611 crash AudioContext |
 | OPEN / BLOCKED | 0 | — |
-| **Total IDs définis** | **122** | IDs uniques, aucun doublon de définition |
+| **Total IDs définis** | **126** | IDs uniques, aucun doublon de définition |
 
 ### Doublons fonctionnels documentés (IDs distincts, même anomalie)
 

@@ -259,3 +259,15 @@ OK, cdp-drive 12/12 PASS (cycle teardownAudio/applyAudio valide).
 - npm test 38/38, dist rebuild, smoke + cdp-drive 12/12 PASS.
 - 0616-0619 -> CLOSED (limite documentee : call-sites main.js hors
   npm test).
+
+## V2 — audit config/fichiers : 4 P2 corriges (15/11/2026)
+
+Audit adverse zone config/missing/shortcuts/shell : 4 anomalies P2
+corrigees (SF-REL-0620 expandPaths comptait les visites ; 0621
+relocateSound sans validation ext/doublon ; 0622 id __stop__ ;
+0623 addPaths sans plafond). P3 documentes non corriges :
+migrateOldConfig non borne, sounds:seed confiance, watchdogMic JSON
+brut, normalizeCfg champs non types, shell:openDir repli, shortcuts
+sans blocklist systeme.
+Test regression ajoute : 5100 non-audio + 2 sons -> 2 trouves.
+npm test 39/39, dist rebuild, smoke OK.
