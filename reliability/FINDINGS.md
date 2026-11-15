@@ -132,6 +132,8 @@ Observations smoke (test-profile, vraie machine) :
 - Pattern : ~10 s après création des 2 AudioContext de sortie (cable + mon), les DEUX passent 'suspended' avec « The AudioContext encountered an error from the audio device or the WebAudio renderer » — quasi simultanément. Le crash suit parfois, parfois non.
 - deviceIds journalisés : cable=dc79ff…, mon=default. Les contextes sont créés à l'init (applyAudio), pas à la lecture.
 - Hypothèse : hoquet du service audio Windows / endpoint suspendu (économie d'énergie, driver Realtek/G930) qui fait tomber le renderer Chromium — niveau en dessous de JS, non corrigeable dans app.js.
+- Données supplémentaires (12:11-12:15) : un crash est survenu ~3 MIN après la création des contextes (pas à la création) — la corrélation « crash à la création » était partielle. cableId=dc79ff… = "CABLE Input (VB-Audio Virtual Cable)" : le device crash-correlé est le périphérique virtuel VB-CABLE. Chromium + driver VB-CABLE = suspect n°1.
+- BUG D'INSTRUMENTATION trouvé : crashReporter.start() s'exécutait AVANT app.setPath('userData') → Crashpad figeait %APPDATA% par défaut, les dumps du profil test/portable partaient au mauvais endroit. Corrigé : start() déplacé après les setPath, conditionné à isPrimary.
 - Mitigations en place : statechange → toast + retry applyAudio borné (3×) ; render-process-gone → 1 reload puis dialog ; crashReporter.start ajouté (minidumps locaux dans userData/Crashpad, sans télémétrie) ; uiLog du deviceId dans makeOutput.
 - Reste : corréler un .dmp Crashpad avec la prochaine occurrence ; si récurrent, tester désactivation de l'économie d'énergie des endpoints USB/audio ou flag Chromium.
 

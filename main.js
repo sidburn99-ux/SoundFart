@@ -76,16 +76,6 @@ const isPrimary = app.requestSingleInstanceLock();
 if (!isPrimary) {
   app.exit(0);
 } else {
-  // Forensique crash renderer (-1/143, bug connu non resolu) : les minidumps
-  // Crashpad dans userData/Crashpad permettent une analyse post-mortem.
-  try {
-    crashReporter.start({
-      productName: 'SoundFart',
-      submitURL: '', // pas de telemetrie : collecte locale uniquement
-      uploadToServer: false,
-      compress: true,
-    });
-  } catch (e) { log('[crash] crashReporter: ' + e.message, 'warn'); }
   app.on('second-instance', () => {
     if (win) {
       if (win.isMinimized()) win.restore();
@@ -110,6 +100,20 @@ if (process.env.PORTABLE_EXECUTABLE_DIR && !process.argv.includes('--test-profil
 if (process.argv.includes('--test-profile')) {
   app.setPath('userData', path.join(os.tmpdir(), 'SoundFart-test'));
 }
+
+// Forensique crash renderer (-1/143, bug connu non resolu) : les minidumps
+// Crashpad dans userData/Crashpad permettent une analyse post-mortem.
+// DOIT etre apres les setPath('userData') : Crashpad fige le dossier de
+// destination au start() — sinon les dumps partent dans %APPDATA% par defaut
+// au lieu du profil test/portable.
+try {
+  if (isPrimary) crashReporter.start({
+    productName: 'SoundFart',
+    submitURL: '', // pas de telemetrie : collecte locale uniquement
+    uploadToServer: false,
+    compress: true,
+  });
+} catch (e) { log('[crash] crashReporter: ' + e.message, 'warn'); }
 
 const configFile = () => path.join(app.getPath('userData'), 'config.json');
 
