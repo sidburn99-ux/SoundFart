@@ -400,6 +400,62 @@ sauvegardes KO sans feedback.
 **Preuve** : node --check, npm test 39/39, dist rebuild, smoke OK.
 **Statut** : FIXED_PENDING_VALIDATION.
 
+
+## SF-REL-0625 — downloadFile sans deadline totale : single-flight pendu a jamais (P1)
+
+**Symptome** : setTimeout(30 s) = inactivite seule ; un serveur qui
+degoutte 1 octet/29 s bloquait installYtDlpPromise/ffmpegPromise/
+ytDownloadBusy jusqu'au restart -> tous les imports YouTube morts.
+**Fix** : deadline totale 15 min qui detruit la requete en vol
+(curReq) ; resolve/reject routent par done() qui clear le timer.
+**Preuve** : node --check, npm test 39/39, dist rebuild, smoke +
+yt:info reel OK. Deadline non testable en auto (serveur lent requis).
+**Statut** : FIXED_PENDING_VALIDATION.
+
+## SF-REL-0626 — runYt timeout : repli reutilisait le meme template (P2)
+
+**Symptome** : timeout -> killTree fire-and-forget ; le repli audio
+complet reutilisait outTpl -> un ffmpeg orphelin pouvait ecrire un
+MP3 partiel retenu comme import valide (filtre plus recent/mремя).
+**Fix** : template DISTINCT (tag2) pour le repli ; filtre accepte les
+deux tags.
+**Statut** : FIXED_PENDING_VALIDATION.
+
+## SF-REL-0627 — displaymedia : securityOrigin file:// sans path (P2)
+
+**Symptome** : pour une page file://, request.securityOrigin='file://'
+(truthy, sans pathname index.html) -> originOk toujours faux ->
+getDisplayMedia refuse a coup sur ; repli Chromium mort.
+**Fix** : tester frame.url en plus de securityOrigin.
+**Statut** : FIXED_PENDING_VALIDATION (getDisplayMedia non teste
+reellement — requiert interaction UI).
+
+## SF-REL-0628 — ensureFfmpeg : exe partiel <10 Mo reutilise (P2)
+
+**Symptome** : extraction tuee par timeout laissait ffmpeg.exe
+imbrique/partiel ; findFile la retournait sans controle -> media:cut
+executait un binaire corrompu indefiniment.
+**Fix** : taille >=10 Mo exigee sur l'exe trouve, sinon purge du
+ dossier ffmpegDir et re-telechargement.
+**Statut** : FIXED_PENDING_VALIDATION.
+
+## SF-REL-0629 — audioTapKilling bloque a jamais si 'error' sans 'exit' (P2)
+
+**Symptome** : tapStop tuait le proc puis null audioTapProc ; un 'error'
+sans 'exit' ne remettait pas le flag -> chaque tapStart attendait 3 s
+puis echouait « arret en cours » -> enregistreur audio PC mort.
+**Fix** : audioTapKilling=false en tete du handler 'error' (le proc
+tue est le seul possible dans la fenetre).
+**Statut** : FIXED_PENDING_VALIDATION.
+
+## SF-REL-0630 — killTree fire-and-forget : survie des enfants au quit (P3)
+
+**Symptome** : will-quit catch autour de killTree ne pouvait jamais
+se declencher (taskkill async) -> enfants yt-dlp/ffmpeg pouvaient
+survivre a la sortie.
+**Fix** : p.kill() systematique en filet apres killTree.
+**Statut** : FIXED_PENDING_VALIDATION.
+
 ## Historique actif des régressions (Quality Gate V2 §9)
 
 | Régression | Origine | Introduite par | Prévention |
@@ -420,7 +476,7 @@ Règle : avant de toucher un composant, chercher ici + dans le tableau ses anoma
 | ACCEPTED | 24 | cycle 1 : 12 · cycle 2 : 1 · cycle 3 : 7 · cycle 5 : 4 |
 | INVESTIGATING | 1 | SF-REL-0611 crash AudioContext |
 | OPEN / BLOCKED | 0 | — |
-| **Total IDs définis** | **127** | IDs uniques, aucun doublon de définition |
+| **Total IDs définis** | **133** | IDs uniques, aucun doublon de définition |
 
 ### Doublons fonctionnels documentés (IDs distincts, même anomalie)
 

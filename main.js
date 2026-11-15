@@ -418,7 +418,14 @@ async function ensureFfmpeg() {
       // ffmpeg.exe deja extrait quelque part dans ffmpegDir() : on l'utilise tel quel
       if (fs.existsSync(ffmpegDir())) {
         const existing = findFile(ffmpegDir(), 'ffmpeg.exe');
-        if (existing) return path.dirname(existing);
+        // Un exe <10 Mo est un reste d'extraction tuee par timeout :
+        // on purge le dossier et on retente un telechargement propre.
+        if (existing) {
+          try {
+            if (fs.statSync(existing).size >= 10 * 1024 * 1024) return path.dirname(existing);
+          } catch {}
+          try { fs.rmSync(ffmpegDir(), { recursive: true, force: true }); } catch {}
+        }
       }
       fs.mkdirSync(toolsDir(), { recursive: true });
       const zip = path.join(toolsDir(), 'ffmpeg.zip');
@@ -542,22 +549,30 @@ const validHttpUrl = (u) => {
 function downloadFile(url, dest, onProgress) {
   onProgress = cbOrNoop(onProgress);
   return new Promise((resolve, reject) => {
+    // Deadline TOTALE : le setTimeout(30 s) par requete ne couvre que
+    // l'inactivite — un serveur qui degoutte 1 octet/29 s pendait a
+    // jamais et bloquait installYtDlpPromise/ffmpegPromise/
+    // ytDownloadBusy jusqu'au restart (SF-REL-0625).
+    let curReq = null;
+    const killer = setTimeout(() => { try { if (curReq) curReq.destroy(); } catch {} rej(new Error('téléchargement interrompu : délai total dépassé (15 min)')); }, 15 * 60 * 1000);
+    const done = (fn, v) => { clearTimeout(killer); fn(v); };
+    const rej = (e) => done(reject, e), res = (v) => done(resolve, v);
     const get = (u, n) => {
       // Les redirections ne doivent jamais sortir du HTTPS (anti-downgrade MITM).
-      if (!/^https:\/\//i.test(u)) return reject(new Error('redirection non-HTTPS refusée : ' + u.slice(0, 120)));
-      const req = https.get(u, (res) => {
+      if (!/^https:\/\//i.test(u)) return rej(new Error('redirection non-HTTPS refusée : ' + u.slice(0, 120)));
+      const req = curReq = https.get(u, (res) => {
         if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
           res.resume();
-          if (n > 5) return reject(new Error('trop de redirections'));
+          if (n > 5) return rej(new Error('trop de redirections'));
           try {
             const loc = new URL(res.headers.location, u).href;
             return get(loc, n + 1);
-          } catch { return reject(new Error('redirection invalide')); }
+          } catch { return rej(new Error('redirection invalide')); }
         }
-        if (res.statusCode !== 200) { res.resume(); return reject(new Error('HTTP ' + res.statusCode)); }
+        if (res.statusCode !== 200) { res.resume(); return rej(new Error('HTTP ' + res.statusCode)); }
         const total = parseInt(res.headers['content-length'] || '0', 10);
         // Borne dure : yt-dlp ~100 Mo, ffmpeg.zip ~80 Mo — au-dela c'est anormal.
-        if (total > 300 * 1024 * 1024) { res.resume(); return reject(new Error('fichier trop volumineux (' + total + ' octets)')); }
+        if (total > 300 * 1024 * 1024) { res.resume(); return rej(new Error('fichier trop volumineux (' + total + ' octets)')); }
         let got = 0;
         const out = fs.createWriteStream(dest);
         res.on('data', (c) => {
@@ -565,18 +580,18 @@ function downloadFile(url, dest, onProgress) {
           if (got > 300 * 1024 * 1024) { req.destroy(new Error('téléchargement trop volumineux')); return; }
           if (total) { try { onProgress(got / total); } catch {} }
         });
-        res.on('error', (e) => { out.destroy(); reject(e); });
+        res.on('error', (e) => { out.destroy(); rej(e); });
         res.pipe(out);
         out.on('finish', () => {
           // Content-Length incoherent ou reponse tronquee : ne jamais valider
           // un fichier partiel (le SHA-256 ne protege que les binaires, pas .sums).
-          if (total && got !== total) { out.destroy(); return reject(new Error('téléchargement tronqué (' + got + '/' + total + ' octets)')); }
-          out.close(resolve);
+          if (total && got !== total) { out.destroy(); return rej(new Error('téléchargement tronqué (' + got + '/' + total + ' octets)')); }
+          out.close(() => res());
         });
-        out.on('error', reject);
+        out.on('error', rej);
       });
       req.setTimeout(30000, () => req.destroy(new Error('timeout')));
-      req.on('error', reject);
+      req.on('error', rej);
     };
     get(url, 0);
   });
@@ -793,6 +808,7 @@ H('yt:download', async (_e, o) => {
     // Template unique par requete : le « plus recent » ne peut pas etre un
     // fichier etranger cree pendant le telechargement (ni un autre import).
     const tag = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    const tags = [tag];
     const outTpl = path.join(impDir, 'sf-' + tag + '-%(id)s.%(ext)s');
     const baseArgs = ['--no-playlist', '--no-warnings', '-o', outTpl];
     let sectioned = false;
@@ -810,14 +826,20 @@ H('yt:download', async (_e, o) => {
     }
     if (!sectioned) {
       ytProgress(-1);
-      await runYt([...baseArgs, '-f', 'bestaudio/best', url], ytProgress);
+      // Template DISTINCT pour le repli : un yt-dlp/ffmpeg tue par timeout
+      // peut encore ecrire dans l'ancien template — le filtre 'created'
+      // pourrait sinon retenir un MP3 partiel comme import valide.
+      const tag2 = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+      const outTpl2 = path.join(impDir, 'sf-' + tag2 + '-%(id)s.%(ext)s');
+      tags.push(tag2);
+      await runYt(['--no-playlist', '--no-warnings', '-o', outTpl2, '-f', 'bestaudio/best', url], ytProgress);
     }
     // Ne retenir qu'un fichier audio FINAL : yt-dlp peut laisser des
     // .part/.ytdl ou un artefact non audio avec le meme prefixe ; prendre
     // « le plus recent » sans filtre pouvait retourner un fichier inutilisable.
     const AUDIO_OUT = ['.mp3', '.m4a', '.webm', '.opus', '.ogg', '.wav', '.flac', '.aac'];
     const created = fs.readdirSync(impDir).filter((f) => {
-      if (!f.startsWith('sf-' + tag + '-')) return false;
+      if (!tags.some((t) => f.startsWith('sf-' + t + '-'))) return false;
       if (/\.(part|ytdl|temp)$/i.test(f)) return false;
       return AUDIO_OUT.includes(path.extname(f).toLowerCase());
     }).map((f) => path.join(impDir, f))
@@ -1231,8 +1253,12 @@ H('audio:tapStart', async () => {
       if (!wasKilled && win && !win.isDestroyed()) { try { win.webContents.send('sf:tapDead', true); } catch (e) { log('[tap] send tapDead: ' + (e && e.message), 'warn'); } }
     });
     proc.on('error', () => {
+      // Le proc tué peut emettre 'error' sans 'exit' : sans ce reset,
+      // audioTapKilling restait vrai a jamais -> tapStart echouait
+      // « arret en cours » jusqu'au restart.
+      audioTapKilling = false;
       if (audioTapProc !== proc) return;
-      audioTapFailed = true; audioTapKilling = false; tapPcmRem = Buffer.alloc(0);
+      audioTapFailed = true; tapPcmRem = Buffer.alloc(0);
       // 'exit' n'est pas garanti apres 'error' : sans ca audioTapProc resterait
       // non-null et les tapStart suivants mentiraient ok:true a jamais.
       audioTapProc = null;
@@ -1455,7 +1481,7 @@ app.on('will-quit', () => {
   globalShortcut.unregisterAll();
   // Tue les enfants encore vivants (yt-dlp/ffmpeg) : taskkill /T emporte
   // l'arbre entier — p.kill() seul laisserait le ffmpeg petit-enfant tourner.
-  for (const p of [...childProcs]) { try { killTree(p.pid); } catch { try { p.kill(); } catch {} } }
+  for (const p of [...childProcs]) { try { killTree(p.pid); } catch {} try { p.kill(); } catch {} }
   childProcs.clear();
   try { if (audioTapProc) audioTapProc.kill(); } catch {}
   audioTapProc = null;

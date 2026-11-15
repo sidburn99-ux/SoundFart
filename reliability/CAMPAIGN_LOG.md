@@ -271,3 +271,17 @@ brut, normalizeCfg champs non types, shell:openDir repli, shortcuts
 sans blocklist systeme.
 Test regression ajoute : 5100 non-audio + 2 sons -> 2 trouves.
 npm test 39/39, dist rebuild, smoke OK.
+
+## V2 — audit process/enfants IPC : 6 anomalies corrigees (15/11/2026)
+
+Audit adverse execFileTracked/killTree/runYt/downloadFile/displaymedia/
+flags single-flight : 6 anomalies corrigees (SF-REL-0625 deadline
+totale download 15 min ; 0626 template distinct repli yt ; 0627
+displaymedia frame.url ; 0628 ffmpeg.exe partiel purge ; 0629
+audioTapKilling reset sur error ; 0630 p.kill filet will-quit).
+Verifie sain : timeouts execFileTracked, childProcs purge, fromApp
+partout, single-flight flags avec finally.
+Attention : la refactorisation rej/res de downloadFile a initialement
+corrompu sha256File (res hors scope) et laisse des resolve/reject
+bruts contournant done() — detecte et corrige avant commit.
+npm test 39/39, dist rebuild, smoke + yt:info reel OK.
