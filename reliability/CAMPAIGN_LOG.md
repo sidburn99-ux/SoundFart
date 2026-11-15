@@ -434,3 +434,12 @@ Acceptes documentes : 0662 guards accumules, 0663/0666 fenetres PID,
 Preuves : csc compile OK x2, AudioEndpoint list/get reels, cdp-tap
 runtime 73 chunks RMS 0,285 (AudioTap modifie recompile + execute).
 npm test 39/39, dist rebuild, smoke + cdp-drive.
+
+## V2 — revue diff C# + symetrie hr (15/11/2026)
+
+Revue independante b9ea0a7 : 8/8 CORRECTS -> CLOSED. Remarque mineure
+(src.GetBufferSize hr ignore) corrigee par parite. Rebuild dist +
+cdp-tap re-valide (73 chunks RMS 0,285) + cdp-drive 12/12.
+Registre : 159 IDs, 138 CLOSED, 0 FPV, 28 ACCEPTED, 1 INVESTIGATING.
+Toutes les zones de code auditees — campagne de detection epuisee ;
+il ne reste que 0611 (.dmp), VALIDATION.md materiel, endurance.

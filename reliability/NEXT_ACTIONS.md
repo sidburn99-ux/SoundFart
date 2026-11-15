@@ -8,8 +8,9 @@
 
 ## État réel (vérifié 15/11/2026)
 
-- **Registre** : 145 IDs — **122 CLOSED** · **0 FPV** · 22 ACCEPTED ·
-  1 INVESTIGATING (SF-REL-0611). Tous les FIXED_PENDING_VALIDATION
+- **Registre** : 159 IDs — **138 CLOSED** · **0 FPV** · 28 ACCEPTED ·
+  1 INVESTIGATING (SF-REL-0611). Toutes les zones auditées, y compris
+  les deux .cs en entier. Tous les FIXED_PENDING_VALIDATION
   sont résolus ; il ne reste que des ACCEPTED documentés et le crash
   renderer en enquête.
 - **Branche** : `hardening/v2`, HEAD ≈ `52b5b66`+docs, poussé sur GitHub SSH.
@@ -24,6 +25,8 @@
 
 1. ~~Revue du diff de résidus `52b5b66`~~ — **FAIT** : 6/6 CORRECTS,
    8 derniers FPV → CLOSED. Registre épuisé côté FPV.
+1b. ~~Audit C# complet + revue diff `b9ea0a7`~~ — **FAIT** : 8/8
+   correctifs CORRECTS → CLOSED (commit b1e2a49). 6 ACCEPTED documentés.
 2. ~~Revue par lots des FPV historiques~~ — **FAIT** (82 IDs → CLOSED,
    revues adverses lots A/B, commit bfd1b70).
 3. **SF-REL-0611** (crash renderer -1/143) : INVESTIGATING —
