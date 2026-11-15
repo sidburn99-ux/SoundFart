@@ -110,7 +110,7 @@ Cycle 1 — audits indépendants du 15/11/2026 (4 subagents : main.js, renderer,
 | SF-REL-0125 | P2 | CLOSED | audio-restore.json écrit non atomiquement → JSON tronqué irrécupérable. writeRestoreMarker .tmp+rename. |
 | SF-REL-0126 | P3 | ACCEPTED | Restauration synchrone will-quit ~15 s/étape — choix assumé (restauration prioritaire), documenté. |
 | SF-REL-0127 | P2 | CLOSED | yt:info via execFileP non tracké → execFileTracked (tué au will-quit). |
-| SF-REL-0128 | P3 | INVESTIGATING | Binaires/outils existants approuvés par existsSync sans sonde — corrompu = échecs en chaîne. Reste à faire : sonde --version bornée + self-heal. |
+| SF-REL-0128 | P3 | CLOSED | existsSync approuvait les binaires tronqués. toolSane() (seuils : C# 4 Ko, yt-dlp 1 Mo, ffmpeg 10 Mo) + discardCorruptTool → recompile/reinstall. Sonde --version non retenue : les .cs sont recompilés au hash, yt-dlp/ffmpeg re-téléchargés SHA-256 — la taille suffit à détecter le tronqué. |
 | SF-REL-0129 | P3 | ACCEPTED | storageRoot accepte UNC/chemins absolus (choix utilisateur, NAS) — documenté. |
 | SF-REL-0130 | P2 | CLOSED | rec:save : wx protège le nom mais pas le contenu → .part + hardlink atomique (repli wx sur FS sans liens). |
 | SF-REL-0131 | P3 | CLOSED | media:cut : échec ffmpeg → placeholder 0 octet conservé → unlink en catch. |

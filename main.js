@@ -382,7 +382,9 @@ function findFile(dir, name, depth = 0) {
 let ffmpegPromise = null; // single-flight : un seul telechargement/extraction a la fois
 
 async function ensureFfmpeg() {
-  if (fs.existsSync(ffmpegPath())) return ffmpegDir();
+  // ffmpeg.exe ~80 Mo : en dessous de 10 Mo c'est un reste tronque/corrompu.
+  if (toolSane(ffmpegPath(), 10 * 1024 * 1024)) return ffmpegDir();
+  if (fs.existsSync(ffmpegPath())) discardCorruptTool(ffmpegPath(), 'ffmpeg');
   if (ffmpegPromise) return ffmpegPromise;
   ffmpegPromise = (async () => {
     try {
@@ -665,7 +667,10 @@ async function ensureYtDlp() {
   if (ytdlpPromise) return ytdlpPromise;
   ytdlpPromise = (async () => {
     try {
-      if (!fs.existsSync(ytdlpPath())) {
+      // Sonde taille : un yt-dlp.exe tronque restait « present » et cassait
+      // tous les imports sans jamais declencher de reinstallation.
+      if (!toolSane(ytdlpPath(), 1024 * 1024)) {
+        if (fs.existsSync(ytdlpPath())) discardCorruptTool(ytdlpPath(), 'yt-dlp');
         await installYtDlp(YTDLP_VERSION);
       } else {
         await maybeUpdateYtDlp();
@@ -836,6 +841,19 @@ const toolHash = (csPath) => {
 
 let csQueue = Promise.resolve(); // une seule compilation C# a la fois, toutes sources confondues
 
+// Sonde d'integrite minimale : un binaire tronque/corrompu (download
+// interrompu, AV, disque plein) restait « present » via existsSync et
+// faisait echouer tous les usages en chaine. Seuil bas : detecte les
+// fichiers vides/tronques, jamais les binaires legitimes (le nom C#
+// contient deja le hash source ; yt-dlp/ffmpeg sont verifies SHA-256).
+function toolSane(p, minBytes) {
+  try { return fs.statSync(p).size >= minBytes; } catch { return false; }
+}
+function discardCorruptTool(p, label) {
+  try { fs.unlinkSync(p); } catch {}
+  log('[tools] ' + label + ' absent ou tronque — reinstallation/compilation prevue', 'warn');
+}
+
 function compileCs(csName, exeBase) {
   const run = csQueue.then(() => doCompileCs(csName, exeBase));
   csQueue = run.catch(() => {});
@@ -871,7 +889,8 @@ async function doCompileCs(csName, exeBase) {
 
 async function ensureAudioTool() {
   const p = audioToolPath();
-  if (fs.existsSync(p)) return p;
+  if (toolSane(p, 4096)) return p;
+  if (fs.existsSync(p)) discardCorruptTool(p, 'AudioEndpoint');
   try { return await compileCs('AudioEndpoint', 'AudioEndpoint'); }
   catch (e) { lastToolErr = e.message; log('[audio] compilation AudioEndpoint: ' + e.message, 'error'); return null; }
 }
@@ -1084,7 +1103,8 @@ let tapPcmRem = Buffer.alloc(0); // reste PCM non aligne (stdout livre des chunk
 
 async function ensureAudioTap() {
   const p = audioTapPath();
-  if (fs.existsSync(p)) return p;
+  if (toolSane(p, 4096)) return p;
+  if (fs.existsSync(p)) discardCorruptTool(p, 'AudioTap');
   try { return await compileCs('AudioTap', 'AudioTap'); }
   catch (e) { lastToolErr = e.message; log('[audiotap] compilation: ' + e.message, 'error'); return null; }
 }
