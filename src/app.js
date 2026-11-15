@@ -872,23 +872,33 @@ async function computeNorm(path) {
   return Math.min(4, Math.round((target / peak) * 100) / 100);
 }
 
-async function normalizeAll() {
+// host fourni (panneau reglages) : la progression s'affiche EN LIGNE et le
+// panneau reste ouvert — l'utilisateur peut cliquer « Appliquer » ou changer
+// d'autres reglages pendant la normalisation. Sans host : modale dediee.
+async function normalizeAll(host) {
   const targets = cfg.sounds.filter((s) => !missing.has(s.id));
   if (!targets.length) { toast('Aucun son à normaliser.', 'warn'); return; }
+  const pct = Math.round((Number.isFinite(+cfg.settings.normTarget) ? +cfg.settings.normTarget : 0.89) * 100);
   const prog = el('div', { class: 'hint', text: `0 / ${targets.length}` });
-  const closeP = modal('Normalisation de la bibliothèque', [
-    prog,
-    el('div', { class: 'hint', text: `Le pic de chaque son est ramené à ${Math.round((Number.isFinite(+cfg.settings.normTarget) ? +cfg.settings.normTarget : 0.89) * 100)} % de l'amplitude max. Ça peut prendre un moment sur une grosse bibliothèque.` }),
-  ], [{ label: 'Fermer', onclick: (c) => c() }], { onClose: () => { cancelled = true; } });
-  let done = 0, failed = 0, cancelled = false;
+  const hint = el('div', { class: 'hint', text: `Le pic de chaque son est ramené à ${pct} % de l'amplitude max. Ça peut prendre un moment sur une grosse bibliothèque.` });
+  let done = 0, failed = 0, cancelled = false, closeP = () => {};
+  if (host) {
+    const cancelBtn = el('button', { class: 'ghost', text: 'Annuler', onclick: () => { cancelled = true; cancelBtn.disabled = true; cancelBtn.textContent = 'Annulation…'; } });
+    host.replaceChildren(prog, hint, el('div', { class: 'row' }, cancelBtn));
+  } else {
+    closeP = modal('Normalisation de la bibliothèque', [prog, hint], [{ label: 'Fermer', onclick: (c) => c() }], { onClose: () => { cancelled = true; } });
+  }
   for (const s of targets) {
     if (cancelled) break;
     try { s.norm = await computeNorm(s.path); } catch { failed++; /* garder s.norm : un echec ne doit pas effacer un reglage perso */ }
     prog.textContent = `${++done} / ${targets.length}`;
     await new Promise((r) => setTimeout(r, 0));
   }
-  save(); closeP(); renderAll();
-  toast(`Normalisation terminée : ${done - failed} son(s) ajusté(s)` + (failed ? `, ${failed} ignoré(s)` : '') + '.');
+  const msg = `Normalisation terminée : ${done - failed} son(s) ajusté(s)` + (failed ? `, ${failed} ignoré(s)` : '') + (cancelled ? ' (annulée)' : '') + '.';
+  save(); closeP();
+  if (host) host.replaceChildren(el('div', { class: 'hint', text: msg }));
+  renderAll();
+  toast(msg);
 }
 
 // Test audibility de la cible : 1,2 s de bruit rose (proche d'un programme
@@ -1467,12 +1477,15 @@ function settingsModal() {
 
   const normTargetIn = el('input', { type: 'number', min: 10, max: 100, step: 1, value: Math.round((Number.isFinite(+s.normTarget) ? +s.normTarget : 0.89) * 100), title: 'Niveau de crête cible en % de l\'amplitude maximale. 89 % ≈ -1 dBFS (défaut). Plus haut = sons plus forts (le limiteur en aval absorbe les dépassements), plus bas = plus doux.' });
   const normTestBtn = el('button', { class: 'ghost', text: 'Tester', title: 'Joue 1,2 s de bruit dont le pic est exactement au niveau saisi — sur ton écoute locale uniquement (pas sur Discord).', onclick: () => testNormTarget(normTargetIn.value) });
-  const normAllBtn = el('button', { text: 'Normaliser toute la bibliothèque', title: 'Ramène le pic de chaque son au niveau cible ci-contre (la valeur saisie est appliquée d\'abord). Les fichiers audio ne sont jamais modifiés — seul le gain en lecture change.', onclick: () => {
-    // Le clic fermait la fenetre SANS passer par « Appliquer » : la cible
-    // tapee etait perdue et la normalisation utilisait l'ancienne valeur.
+  const normProg = el('div', {});
+  const normAllBtn = el('button', { text: 'Normaliser toute la bibliothèque', title: 'Ramène le pic de chaque son au niveau cible ci-contre (la valeur saisie est appliquée d\'abord). Les fichiers audio ne sont jamais modifiés — seul le gain en lecture change. La progression s\'affiche ici, le panneau reste ouvert.', onclick: async () => {
+    // La valeur tapee est appliquee d'abord (le panneau ne se ferme plus) ;
+    // la progression s'affiche en ligne dans normProg, « Appliquer » reste
+    // utilisable pendant la normalisation.
     const nt = +normTargetIn.value / 100;
     if (Number.isFinite(nt) && nt > 0) { s.normTarget = Math.min(1, Math.max(0.1, nt)); save(); }
-    closeSettings(); normalizeAll();
+    normAllBtn.disabled = true;
+    try { await normalizeAll(normProg); } finally { normAllBtn.disabled = false; }
   } });
   const exportBtn = el('button', { text: 'Exporter la configuration', onclick: exportConfig });
   const importBtn = el('button', { text: 'Importer une configuration', onclick: () => importConfig(closeSettings) });
@@ -1513,8 +1526,10 @@ function settingsModal() {
     field('Dossier de stockage', el('div', { class: 'row' }, dirLbl, pickDirBtn, openDirBtn, resetDirBtn),
       'Dossier par défaut des fichiers créés par SoundFart (imports YouTube, enregistrements, extraits MP3) — un choix de dossier est aussi proposé avant chaque ajout.'),
     field('Raccourci global STOP', el('div', { class: 'row' }, stopBtn), stopHint),
-    field('Niveaux audio', el('div', { class: 'row' },
-      el('span', { class: 'hint', text: 'Cible de pic :' }), normTargetIn, el('span', { class: 'hint', text: '%' }), normTestBtn, normAllBtn),
+    field('Niveaux audio', el('div', {},
+      el('div', { class: 'row' },
+        el('span', { class: 'hint', text: 'Cible de pic :' }), normTargetIn, el('span', { class: 'hint', text: '%' }), normTestBtn, normAllBtn),
+      normProg),
       'Ramène le pic de chaque son au niveau cible (les fichiers ne sont pas modifiés). Plus haut = plus fort, plus bas = plus doux — 89 % ≈ -1 dBFS.'),
     field('Sauvegarde', el('div', { class: 'row' }, exportBtn, importBtn),
       'La configuration contient les références aux fichiers, catégories, découpes, raccourcis et favoris — pas les fichiers audio eux-mêmes.'),
