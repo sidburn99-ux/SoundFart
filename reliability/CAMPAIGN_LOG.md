@@ -76,3 +76,26 @@
   d'instrumentation corrige). Smoke long en cours pour capturer un .dmp.
 - A/B cableId vide impossible : pick() re-assigne auto CABLE Input par
   design (le sonboard cible Discord via cable).
+
+## Transition Quality Gate V2 (15/11/2026)
+
+Nouveau cadre gouvernant adopte (cycle 12 etapes, verrou de cloture,
+revue independante, analyse d'impact, niveaux de preuve CONFIRMED→
+UNDETERMINED, niveaux de validation STATIC→LONG_DURATION, criteres de
+convergence, interdictions methodologiques).
+
+Migration du registre :
+- ~80 entrees « CLOSED » reclassées FIXED_PENDING_VALIDATION : la preuve
+  disponible etait STATIC+UNIT (+ smoke generique de demarrage), sans
+  validation runtime par anomalie ni revue independante systematique.
+- Restent CLOSED : SF-REL-0001, 0120, 0128 (runtime documente).
+- Nouveau : SF-REL-0611 = crash AudioContext -1/143 (INVESTIGATING,
+  UNDETERMINED — attend le .dmp Crashpad).
+- Section « Historique actif des regressions » ajoutee (0001, 0058,
+  0100, 0141 avec origines et preventions).
+- Tableau de bord V2 ajoute : 3 CLOSED / 79 FPV / 20 ACCEPTED / 1 INV.
+
+Regle de travail desormais : toute nouvelle anomalie suit le cycle 12
+etapes ; tout fix exige test de non-regression + revue independante du
+diff + validation runtime appropriatee avant CLOSED ; toute modification
+de main.js exige smoke test-env >= 60 s avec verification du log.

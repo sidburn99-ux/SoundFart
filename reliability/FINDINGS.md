@@ -1,50 +1,68 @@
-# FINDINGS — registre des anomalies (SF-REL-XXXX)
+# FINDINGS — registre canonique des anomalies (SF-REL-XXXX)
+
+> **Quality Gate V2 adopté le 15/11/2026.** Statuts canoniques :
+> OPEN → INVESTIGATING → FIXED_PENDING_VALIDATION → CLOSED ; ACCEPTED =
+> risque connu assumé (jamais « corrigé ») ; BLOCKED = validation impossible.
+> CLOSED exige : cause comprise + test ciblé + non-régression + revue
+> indépendante du diff + validation runtime + limites documentées.
+>
+> **Migration V2 (15/11/2026)** : les entrées historiques « CLOSED » sans
+> preuve de validation runtime *par anomalie* ont été reclassées
+> FIXED_PENDING_VALIDATION. Restent CLOSED (validation runtime documentée) :
+> SF-REL-0001 (smoke fenêtre/config/restore), SF-REL-0120 (adoption du
+> marqueur observée dans soundfart.log), SF-REL-0128 (sonde binaires + smoke).
+> Niveau de validation par défaut des entrées migrées : STATIC + UNIT
+> (npm test / node --check / build) + smoke générique de démarrage —
+> pas de validation runtime du comportement corrigé, pas de revue
+> indépendante systématique du diff. La validation matérielle reste
+> entièrement en attente (voir VALIDATION.md).
+
 
 Cycle 1 — audits indépendants du 15/11/2026 (4 subagents : main.js, renderer, C#, scripts/tests) + corrections.
 
 | ID | Sous-système | Gravité | Preuve | Statut | Résumé / correction |
 |---|---|---|---|---|---|
 | SF-REL-0001 | main.js displayMedia | P0 | Confirmé (code) + smoke | CLOSED | `originOk` hors du handler → ReferenceError → createWindow jamais appelé. Introduit en a4e403a, jamais smoke-testé. Corrigé 9685c04, vérifié réel (config+restore écrits). |
-| SF-REL-0002 | AudioTap.cs wantReconnect | P1 | Confirmé | CLOSED | Test placé AVANT bloc render → DEVICE_INVALIDATED render jamais consommé. Bloc déplacé après drain. Commit d894d7c. |
-| SF-REL-0003 | AudioTap.cs PCM 24 bits dst | P1 | Confirmé | CLOSED | int32 écrit sur stride 3 → débordement/corruption. Encodage LE 24 bits ajouté. d894d7c. |
-| SF-REL-0004 | PROPVARIANT non zero-init | P2 | Confirmé | CLOSED | AllocCoTaskMem garbage + GetValue échec → Clear sur variante fantôme. vt=VT_EMPTY avant appel, 2 fichiers. d894d7c. |
-| SF-REL-0005 | regen-suivi.ps1 encodage | P1 | Confirmé (mojibake réel) | CLOSED | Get-Content ANSI sur UTF-8 sans BOM → suivi.html corrompu. UTF-8 explicite + .Replace littéraux + template restauré. df353f0. |
-| SF-REL-0006 | uiLog nu undefined | P1 | Confirmé | CLOSED | 4 appels nus → ReferenceError : lecture >64 Mo PCM, états interrupted/closed cassés. Helper uiLog() ajouté. df353f0. |
-| SF-REL-0007 | runYt kill incomplet | P2 | Fort probable | CLOSED | p.kill() laissait ffmpeg petit-enfant orphelin → killTree /T. df353f0. |
-| SF-REL-0008 | tapStart race | P2 | Fort probable | CLOSED | 2 tapStart concurrents → 2 AudioTap (double injection + orphelin). Mutex tapStartBusy. df353f0. |
-| SF-REL-0009 | config .bak sur ENOENT | P2 | Confirmé | CLOSED | config.json renommé .broken puis absent au 2e lancement → .bak ignoré → bibliothèque vide. Tenter .bak sur ENOENT. df353f0. |
-| SF-REL-0010 | rec:save/media:cut race noms | P2 | Confirmé | CLOSED | existsSync→write non atomique → 2 écritures même chemin. Réservation 'wx'. df353f0. |
-| SF-REL-0011 | ensureFfmpeg inconditionnel | P3 | Confirmé | CLOSED | Import « audio complet » téléchargeait ~80 Mo ffmpeg inutile. Conditionné à l'extrait. df353f0. |
-| SF-REL-0012 | editSound export MP3 | P2 | Confirmé | CLOSED | sync() n'écrivait pas dans s → edits non enregistrés perdus à la réouverture. collectEdits() + exportBusy. df353f0. |
-| SF-REL-0013 | removeSound voix | P2 | Confirmé | CLOSED | Son retiré continuait de jouer. stopVoice par soundId. df353f0. |
-| SF-REL-0014 | onYtProgress fuite | P2 | Confirmé | CLOSED | Resouscription après askDestDir sur modale morte → listener IPC fuitif. ytModalAlive + finally. df353f0. |
-| SF-REL-0015 | cache orphelin getBuffer | P3 | Confirmé | CLOSED | Buffer caché pour path supprimé pendant decode → résidu jusqu'à 256 Mo. Cache seulement si référencé. df353f0. |
-| SF-REL-0016 | fileErr sur decode | P3 | Confirmé | CLOSED | Fichier corrompu/codec → badge « introuvable » trompeur. noFileErr sur decode/taille. df353f0. |
-| SF-REL-0017 | recorder ended repli | P2 | Confirmé | CLOSED | Repli systemStream sans listener ended → mort silencieuse possible. watchEnded factorisé. df353f0. |
-| SF-REL-0018 | tapLost faux échec | P3 | Confirmé | CLOSED | tapLost bloquait même si repli stream réussi. Condition sur tapNode. df353f0. |
-| SF-REL-0019 | pcmSeen absent | P3 | Confirmé | CLOSED | ok:true sans flux PCM → enregistrement silencieux indétectable. Attente bornée ~2 s + throw. df353f0. |
-| SF-REL-0020 | raccourcis réservés import | P3 | Confirmé | CLOSED | normalizeCfg accepte Ctrl+F/O/F12 importés → conflit globalShortcut/menu. Filtre ajouté. df353f0. |
-| SF-REL-0021 | cat.color invalide | P4 | Confirmé | CLOSED | null/longueurs 5-7 → --c invalide. Regex CSS + repli palette. df353f0. |
-| SF-REL-0022 | applyAudio/checkMissing/init sans catch | P3 | Confirmé | CLOSED | Rejets → boutons disabled à jamais / unhandled. Catchs ajoutés. df353f0. |
-| SF-REL-0023 | bytesPerSec non validé | P3 | Confirmé | CLOSED | bytesPerSec=0 → file vidée → silence sans erreur. Validation FromPtr. d894d7c. |
-| SF-REL-0024 | Guard catch conflation | P3 | Confirmé | CLOSED | Accès refusé StartTime = break prématuré → restauration pendant parent vivant. ArgumentException seul = mort. d894d7c. |
-| SF-REL-0025 | PID reuse fenêtre 500 ms | P3 | Confirmé | CLOSED | parentStart capturé au 1er check → imposteur possible. Capturé avant boucle. d894d7c. |
-| SF-REL-0026 | GetId hr ignorés | P4 | Confirmé | CLOSED | Endpoint sans id → fantôme dans list/restore. hr vérifié + skip/log. d894d7c. |
-| SF-REL-0027 | ren.ReleaseBuffer hr | P4 | Confirmé | CLOSED | Non vérifié (asymétrie cap). Vérifié + loggé. d894d7c. |
-| SF-REL-0028 | pcmOut non flush sur return 2 | P4 | Confirmé | CLOSED | Queue stdout perdait le tail PCM sur erreurs. Flush avant return. d894d7c. |
-| SF-REL-0029 | NaN/Infinity arg secondes | P4 | Confirmé | CLOSED | TryParse accepte NaN/Infinity → deadline infinie/exception. Rejeté. d894d7c. |
-| SF-REL-0030 | stderr OEM corrompu | P4 | Confirmé | CLOSED | Noms accents corrompus selon page code. UTF8 forcé. d894d7c. |
-| SF-REL-0031 | test tautologique | P2 | Confirmé | CLOSED | media-permission.test.js testait JS pur, pas l'app. → realDevices() réel dans audio-utils + tests. df353f0. |
-| SF-REL-0032 | parseEndpoints malformé | P3 | Confirmé | CLOSED | Ligne sans '|' → name undefined → crash findCableCapture. Chaînes vides garanties. df353f0. |
-| SF-REL-0033 | SPEC divergences | P3 | Confirmé | CLOSED | watchdog 10s≠30s, sf:tappcm, noms non hashés, file 500ms, phrase dupliquée. Corrigé. df353f0. |
-| SF-REL-0034 | .gitignore données | P3 | Confirmé | CLOSED | SoundFart-data/tools committables si exe copié à la racine. Exclus. df353f0. |
-| SF-REL-0035 | seeds copie partielle | P3 | Confirmé | CLOSED | copyFileSync interrompu → existsSync protège le partiel. .part+taille+rename. df353f0. |
-| SF-REL-0036 | autoSetup sans marqueur | P3 | Confirmé | CLOSED | Déjà sur câble + restoreFile absent → pas de restauration, silencieux. Warn loggé (pas de faux marqueur). df353f0. |
-| SF-REL-0037 | trackChild 'error' | P3 | Fort probable | CLOSED | PID mort reste dans childProcs → taskkill sur PID réutilisé. Retiré sur error. df353f0. |
-| SF-REL-0038 | media:cut extrait vide | P3 | Confirmé | CLOSED | -ss au-delà de la fin → mp3 header-only retourné comme valide. Taille <1Ko rejetée. df353f0. |
-| SF-REL-0039 | previewBtn mort | P4 | Confirmé | CLOSED | Bouton « ▶ Écouter » dans modale détruite par askDestDir → jamais cliquable. Supprimé. df353f0. |
-| SF-REL-0040 | GetProcessById guard dispose | P4 | Confirmé | CLOSED | Process non disposé dans boucle 500ms → pression GC. using ajouté. d894d7c. |
-| SF-REL-0041 | File.Delete catch silencieux | P4 | Confirmé | CLOSED | Échec suppression marqueur invisible. Loggé stderr. d894d7c. |
+| SF-REL-0002 | AudioTap.cs wantReconnect | P1 | Confirmé | FIXED_PENDING_VALIDATION | Test placé AVANT bloc render → DEVICE_INVALIDATED render jamais consommé. Bloc déplacé après drain. Commit d894d7c. |
+| SF-REL-0003 | AudioTap.cs PCM 24 bits dst | P1 | Confirmé | FIXED_PENDING_VALIDATION | int32 écrit sur stride 3 → débordement/corruption. Encodage LE 24 bits ajouté. d894d7c. |
+| SF-REL-0004 | PROPVARIANT non zero-init | P2 | Confirmé | FIXED_PENDING_VALIDATION | AllocCoTaskMem garbage + GetValue échec → Clear sur variante fantôme. vt=VT_EMPTY avant appel, 2 fichiers. d894d7c. |
+| SF-REL-0005 | regen-suivi.ps1 encodage | P1 | Confirmé (mojibake réel) | FIXED_PENDING_VALIDATION | Get-Content ANSI sur UTF-8 sans BOM → suivi.html corrompu. UTF-8 explicite + .Replace littéraux + template restauré. df353f0. |
+| SF-REL-0006 | uiLog nu undefined | P1 | Confirmé | FIXED_PENDING_VALIDATION | 4 appels nus → ReferenceError : lecture >64 Mo PCM, états interrupted/closed cassés. Helper uiLog() ajouté. df353f0. |
+| SF-REL-0007 | runYt kill incomplet | P2 | Fort probable | FIXED_PENDING_VALIDATION | p.kill() laissait ffmpeg petit-enfant orphelin → killTree /T. df353f0. |
+| SF-REL-0008 | tapStart race | P2 | Fort probable | FIXED_PENDING_VALIDATION | 2 tapStart concurrents → 2 AudioTap (double injection + orphelin). Mutex tapStartBusy. df353f0. |
+| SF-REL-0009 | config .bak sur ENOENT | P2 | Confirmé | FIXED_PENDING_VALIDATION | config.json renommé .broken puis absent au 2e lancement → .bak ignoré → bibliothèque vide. Tenter .bak sur ENOENT. df353f0. |
+| SF-REL-0010 | rec:save/media:cut race noms | P2 | Confirmé | FIXED_PENDING_VALIDATION | existsSync→write non atomique → 2 écritures même chemin. Réservation 'wx'. df353f0. |
+| SF-REL-0011 | ensureFfmpeg inconditionnel | P3 | Confirmé | FIXED_PENDING_VALIDATION | Import « audio complet » téléchargeait ~80 Mo ffmpeg inutile. Conditionné à l'extrait. df353f0. |
+| SF-REL-0012 | editSound export MP3 | P2 | Confirmé | FIXED_PENDING_VALIDATION | sync() n'écrivait pas dans s → edits non enregistrés perdus à la réouverture. collectEdits() + exportBusy. df353f0. |
+| SF-REL-0013 | removeSound voix | P2 | Confirmé | FIXED_PENDING_VALIDATION | Son retiré continuait de jouer. stopVoice par soundId. df353f0. |
+| SF-REL-0014 | onYtProgress fuite | P2 | Confirmé | FIXED_PENDING_VALIDATION | Resouscription après askDestDir sur modale morte → listener IPC fuitif. ytModalAlive + finally. df353f0. |
+| SF-REL-0015 | cache orphelin getBuffer | P3 | Confirmé | FIXED_PENDING_VALIDATION | Buffer caché pour path supprimé pendant decode → résidu jusqu'à 256 Mo. Cache seulement si référencé. df353f0. |
+| SF-REL-0016 | fileErr sur decode | P3 | Confirmé | FIXED_PENDING_VALIDATION | Fichier corrompu/codec → badge « introuvable » trompeur. noFileErr sur decode/taille. df353f0. |
+| SF-REL-0017 | recorder ended repli | P2 | Confirmé | FIXED_PENDING_VALIDATION | Repli systemStream sans listener ended → mort silencieuse possible. watchEnded factorisé. df353f0. |
+| SF-REL-0018 | tapLost faux échec | P3 | Confirmé | FIXED_PENDING_VALIDATION | tapLost bloquait même si repli stream réussi. Condition sur tapNode. df353f0. |
+| SF-REL-0019 | pcmSeen absent | P3 | Confirmé | FIXED_PENDING_VALIDATION | ok:true sans flux PCM → enregistrement silencieux indétectable. Attente bornée ~2 s + throw. df353f0. |
+| SF-REL-0020 | raccourcis réservés import | P3 | Confirmé | FIXED_PENDING_VALIDATION | normalizeCfg accepte Ctrl+F/O/F12 importés → conflit globalShortcut/menu. Filtre ajouté. df353f0. |
+| SF-REL-0021 | cat.color invalide | P4 | Confirmé | FIXED_PENDING_VALIDATION | null/longueurs 5-7 → --c invalide. Regex CSS + repli palette. df353f0. |
+| SF-REL-0022 | applyAudio/checkMissing/init sans catch | P3 | Confirmé | FIXED_PENDING_VALIDATION | Rejets → boutons disabled à jamais / unhandled. Catchs ajoutés. df353f0. |
+| SF-REL-0023 | bytesPerSec non validé | P3 | Confirmé | FIXED_PENDING_VALIDATION | bytesPerSec=0 → file vidée → silence sans erreur. Validation FromPtr. d894d7c. |
+| SF-REL-0024 | Guard catch conflation | P3 | Confirmé | FIXED_PENDING_VALIDATION | Accès refusé StartTime = break prématuré → restauration pendant parent vivant. ArgumentException seul = mort. d894d7c. |
+| SF-REL-0025 | PID reuse fenêtre 500 ms | P3 | Confirmé | FIXED_PENDING_VALIDATION | parentStart capturé au 1er check → imposteur possible. Capturé avant boucle. d894d7c. |
+| SF-REL-0026 | GetId hr ignorés | P4 | Confirmé | FIXED_PENDING_VALIDATION | Endpoint sans id → fantôme dans list/restore. hr vérifié + skip/log. d894d7c. |
+| SF-REL-0027 | ren.ReleaseBuffer hr | P4 | Confirmé | FIXED_PENDING_VALIDATION | Non vérifié (asymétrie cap). Vérifié + loggé. d894d7c. |
+| SF-REL-0028 | pcmOut non flush sur return 2 | P4 | Confirmé | FIXED_PENDING_VALIDATION | Queue stdout perdait le tail PCM sur erreurs. Flush avant return. d894d7c. |
+| SF-REL-0029 | NaN/Infinity arg secondes | P4 | Confirmé | FIXED_PENDING_VALIDATION | TryParse accepte NaN/Infinity → deadline infinie/exception. Rejeté. d894d7c. |
+| SF-REL-0030 | stderr OEM corrompu | P4 | Confirmé | FIXED_PENDING_VALIDATION | Noms accents corrompus selon page code. UTF8 forcé. d894d7c. |
+| SF-REL-0031 | test tautologique | P2 | Confirmé | FIXED_PENDING_VALIDATION | media-permission.test.js testait JS pur, pas l'app. → realDevices() réel dans audio-utils + tests. df353f0. |
+| SF-REL-0032 | parseEndpoints malformé | P3 | Confirmé | FIXED_PENDING_VALIDATION | Ligne sans '|' → name undefined → crash findCableCapture. Chaînes vides garanties. df353f0. |
+| SF-REL-0033 | SPEC divergences | P3 | Confirmé | FIXED_PENDING_VALIDATION | watchdog 10s≠30s, sf:tappcm, noms non hashés, file 500ms, phrase dupliquée. Corrigé. df353f0. |
+| SF-REL-0034 | .gitignore données | P3 | Confirmé | FIXED_PENDING_VALIDATION | SoundFart-data/tools committables si exe copié à la racine. Exclus. df353f0. |
+| SF-REL-0035 | seeds copie partielle | P3 | Confirmé | FIXED_PENDING_VALIDATION | copyFileSync interrompu → existsSync protège le partiel. .part+taille+rename. df353f0. |
+| SF-REL-0036 | autoSetup sans marqueur | P3 | Confirmé | FIXED_PENDING_VALIDATION | Déjà sur câble + restoreFile absent → pas de restauration, silencieux. Warn loggé (pas de faux marqueur). df353f0. |
+| SF-REL-0037 | trackChild 'error' | P3 | Fort probable | FIXED_PENDING_VALIDATION | PID mort reste dans childProcs → taskkill sur PID réutilisé. Retiré sur error. df353f0. |
+| SF-REL-0038 | media:cut extrait vide | P3 | Confirmé | FIXED_PENDING_VALIDATION | -ss au-delà de la fin → mp3 header-only retourné comme valide. Taille <1Ko rejetée. df353f0. |
+| SF-REL-0039 | previewBtn mort | P4 | Confirmé | FIXED_PENDING_VALIDATION | Bouton « ▶ Écouter » dans modale détruite par askDestDir → jamais cliquable. Supprimé. df353f0. |
+| SF-REL-0040 | GetProcessById guard dispose | P4 | Confirmé | FIXED_PENDING_VALIDATION | Process non disposé dans boucle 500ms → pression GC. using ajouté. d894d7c. |
+| SF-REL-0041 | File.Delete catch silencieux | P4 | Confirmé | FIXED_PENDING_VALIDATION | Échec suppression marqueur invisible. Loggé stderr. d894d7c. |
 | SF-REL-0042 | backpressure PCM main→renderer | P3 | Hypothèse évaluée | ACCEPTED | pcmQ renderer bornée (600 chunks, drop + log) et worklet droppant. File IPC Chromium non bornée (~384 Ko/s) seulement si main-thread renderer bloqué durablement — cas rare, pas de drain disponible sans protocole d'ack (coût > bénéfice). Documenté. |
 | SF-REL-0043 | config:save stringify avant garde | P4 | Confirmé | ACCEPTED | JSON.stringify précède le test 5 Mo — coût inhérent, rejet post-sérialisation. Documenté, non corrigé (pas de pré-calcul fiable). |
 | SF-REL-0044 | file:read 512 Mo Buffer | P4 | Confirmé | ACCEPTED | structured clone mémoire ; limite existante, streaming = feature. Documenté. |
@@ -52,27 +70,27 @@ Cycle 1 — audits indépendants du 15/11/2026 (4 subagents : main.js, renderer,
 | SF-REL-0046 | execFileSync will-quit ~45 s | P4 | Confirmé | ACCEPTED | Choix assumé (restauration micro prioritaire) ; documenté. |
 | SF-REL-0047 | expandPathsAsync séquentiel | P3 | Confirmé | ACCEPTED | Chemins SMB morts → stat ~20 s × N. Plafond 5000 ; mitigation partielle existante (file:check par lots). À améliorer si remontée terrain. |
 | SF-REL-0048 | yt:info execFileP non tracké | P4 | Confirmé | ACCEPTED | Commande courte sans enfants ; timeout execFile tue le process. Impact faible. |
-| SF-REL-0049 | ren.GetBuffer BUFFER_TOO_LARGE fatal | P2 | Confirmé | CLOSED | Endpoint partagé : padding change entre GetCurrentPadding et GetBuffer (autre écrivain) → hr 0x88890005 → mort du tap. Désormais break (retry au tour suivant). Corrigé. |
+| SF-REL-0049 | ren.GetBuffer BUFFER_TOO_LARGE fatal | P2 | Confirmé | FIXED_PENDING_VALIDATION | Endpoint partagé : padding change entre GetCurrentPadding et GetBuffer (autre écrivain) → hr 0x88890005 → mort du tap. Désormais break (retry au tour suivant). Corrigé. |
 | SF-REL-0050 | menu:state/ui:log sans rate-limit | P4 | Confirmé | ACCEPTED | Renderer local de confiance ; log borné 2 Mo. |
 | SF-REL-0051 | installYtDlp multi-versions | P4 | Hypothétique | ACCEPTED | Fenêtre étroite ensure vs update ; impact = version ignorée une fois. |
-| SF-REL-0052 | copie ffmpeg repli non atomique | P3 | Confirmé | CLOSED | rename→copyFileSync direct : crash/AV → ffmpeg.exe partiel vu comme valide. Copie via .part+rename. Corrigé. |
+| SF-REL-0052 | copie ffmpeg repli non atomique | P3 | Confirmé | FIXED_PENDING_VALIDATION | rename→copyFileSync direct : crash/AV → ffmpeg.exe partiel vu comme valide. Copie via .part+rename. Corrigé. |
 | SF-REL-0053 | tapStart ok:true 700 ms | P4 | Confirmé | ACCEPTED | Mort à 800 ms → tapDead notifie quand même. Documenté. |
 | SF-REL-0054 | second crash renderer fenêtre morte | P3 | Confirmé | ACCEPTED | showErrorBox affiché, app tourne sans renderer — bug connu AGENTS, rapporté. |
 | SF-REL-0055 | build.bat pas de npm test | P4 | Confirmé | ACCEPTED | Script utilisateur ; DoD impose tests manuels. Documenté. |
-| SF-REL-0056 | engines node>=18 vs Electron | P4 | Confirmé | CLOSED | Ajouté "engines" package.json. df353f0. |
-| SF-REL-0057 | run-dev échec invisible | P4 | Confirmé | CLOSED | npm start sans pause → fenêtre fermée sur erreur. Ajouté. df353f0. |
+| SF-REL-0056 | engines node>=18 vs Electron | P4 | Confirmé | FIXED_PENDING_VALIDATION | Ajouté "engines" package.json. df353f0. |
+| SF-REL-0057 | run-dev échec invisible | P4 | Confirmé | FIXED_PENDING_VALIDATION | npm start sans pause → fenêtre fermée sur erreur. Ajouté. df353f0. |
 
 ## Cycle 2 — passe contradictoire (subagent audits des diffs)
 
 | ID | Sous-système | Gravité | Preuve | Statut | Résumé / correction |
 |---|---|---|---|---|---|
-| SF-REL-0058 | rec:save | P0 | Confirmé (code) | CLOSED | `i === 0 ? p : ...` — variable `p` indéfinie → ReferenceError à CHAQUE sauvegarde. Régression du fix wx (df353f0), invisible à node --check/npm test (handler main.js). **Correctif usine** : logique extraite dans `lib/audio-utils.writeRecording` (testée unitairement, 32/32) — main.js n'est plus qu'un wrapper. |
+| SF-REL-0058 | rec:save | P0 | Confirmé (code) | FIXED_PENDING_VALIDATION | `i === 0 ? p : ...` — variable `p` indéfinie → ReferenceError à CHAQUE sauvegarde. Régression du fix wx (df353f0), invisible à node --check/npm test (handler main.js). **Correctif usine** : logique extraite dans `lib/audio-utils.writeRecording` (testée unitairement, 32/32) — main.js n'est plus qu'un wrapper. |
 | SF-REL-0059 | yt:download taille | P3 | Hypothèse | ACCEPTED | Pas de plafond sur import « audio complet » ; choix utilisateur, disque = risque assumé. Documenté. |
-| SF-REL-0060 | AudioTap flush PCM | P4 | Confirmé | CLOSED | Flush stdout à chaque itération ~4 ms → WriteFile ~250/s, seuil 128 Kio mort. Seuil 16 Kio (~40 ms) + flush palier. |
-| SF-REL-0061 | tap-processor | P4 | Confirmé | CLOSED | `out[0]` absent → TypeError thread audio ; NaN/Inf PCM propagé. Garde + clamp Number.isFinite. |
-| SF-REL-0062 | shortcuts:apply | P4 | Confirmé | CLOSED | Phrase française dans la liste d'accélérateurs → toast absurde. Marqueur '…'. |
-| SF-REL-0063 | CSP object-src | P4 | Confirmé | CLOSED | `object-src 'none'` ajouté. |
-| SF-REL-0064 | media:cut/yt:download destructure | P4 | Confirmé | CLOSED | Destructuration sans garde → TypeError brut sur null. Garde « options invalides ». |
+| SF-REL-0060 | AudioTap flush PCM | P4 | Confirmé | FIXED_PENDING_VALIDATION | Flush stdout à chaque itération ~4 ms → WriteFile ~250/s, seuil 128 Kio mort. Seuil 16 Kio (~40 ms) + flush palier. |
+| SF-REL-0061 | tap-processor | P4 | Confirmé | FIXED_PENDING_VALIDATION | `out[0]` absent → TypeError thread audio ; NaN/Inf PCM propagé. Garde + clamp Number.isFinite. |
+| SF-REL-0062 | shortcuts:apply | P4 | Confirmé | FIXED_PENDING_VALIDATION | Phrase française dans la liste d'accélérateurs → toast absurde. Marqueur '…'. |
+| SF-REL-0063 | CSP object-src | P4 | Confirmé | FIXED_PENDING_VALIDATION | `object-src 'none'` ajouté. |
+| SF-REL-0064 | media:cut/yt:download destructure | P4 | Confirmé | FIXED_PENDING_VALIDATION | Destructuration sans garde → TypeError brut sur null. Garde « options invalides ». |
 
 ## Cycle 3 — audits renderer + main.js restants (2 subagents)
 
@@ -80,22 +98,22 @@ Cycle 1 — audits indépendants du 15/11/2026 (4 subagents : main.js, renderer,
 
 | ID | Gravité | Statut | Résumé |
 |---|---|---|---|
-| SF-REL-0100 | P0 | CLOSED | previewBtn undefined dans recorderModal → ReferenceError, enregistreur inaccessible (régression SF-REL-0039). Supprimé de la modale ; préécoute déplacée dans la modale résultat YouTube. |
-| SF-REL-0101 | P1 | CLOSED | settings.sort='__proto__' → sorts[__proto__] non callable → renderGrid crash (import/config éditée). Whitelist SORTS/CAT_SORTS + coercions favorite/categoryId. |
-| SF-REL-0102 | P1 | CLOSED | askDestDir détruisait la modale YouTube → annulation = perte état, échec téléchargement invisible. pickDir natif + dossier affiché ; modale survit, progression visible. |
-| SF-REL-0103 | P1 | CLOSED | Échec rec:save → status sur nœud détaché, prise perdue en silence. toast + uiLog. |
-| SF-REL-0104 | P2 | CLOSED | Source « audio du PC » silencieuse si worklet ET repli systemStream échouent → pcConnected guard avant rec.start. |
-| SF-REL-0105 | P2 | CLOSED | play() en vol après removeSound/relocateSound → vérif existence+path après getBuffer. |
-| SF-REL-0106 | P2 | CLOSED | importConfig ne purgeait pas bufCache (256 Mo orphelins) → clear bufCache/bytes/longWarned/inflight. |
-| SF-REL-0107 | P2 | CLOSED | Aucune borne sons/catégories ; file:check >5000 → checkMissing mort. Plafonds 5000/500 + import JSON ≤8 Mo. |
-| SF-REL-0108 | P3 | CLOSED | Erreurs file:read (trop gros/EACCES/ext) badgeaient « introuvable » → classification ENOENT vs noFileErr. |
-| SF-REL-0109 | P3 | CLOSED | Appliquer réglages avec énumération dégradée effaçait cableId/monId/micId → pickVal préserve si noEnum. |
-| SF-REL-0110 | P3 | CLOSED | normalizeAll écrasait s.norm=1 en cas d'échec → conserve le réglage. |
+| SF-REL-0100 | P0 | FIXED_PENDING_VALIDATION | previewBtn undefined dans recorderModal → ReferenceError, enregistreur inaccessible (régression SF-REL-0039). Supprimé de la modale ; préécoute déplacée dans la modale résultat YouTube. |
+| SF-REL-0101 | P1 | FIXED_PENDING_VALIDATION | settings.sort='__proto__' → sorts[__proto__] non callable → renderGrid crash (import/config éditée). Whitelist SORTS/CAT_SORTS + coercions favorite/categoryId. |
+| SF-REL-0102 | P1 | FIXED_PENDING_VALIDATION | askDestDir détruisait la modale YouTube → annulation = perte état, échec téléchargement invisible. pickDir natif + dossier affiché ; modale survit, progression visible. |
+| SF-REL-0103 | P1 | FIXED_PENDING_VALIDATION | Échec rec:save → status sur nœud détaché, prise perdue en silence. toast + uiLog. |
+| SF-REL-0104 | P2 | FIXED_PENDING_VALIDATION | Source « audio du PC » silencieuse si worklet ET repli systemStream échouent → pcConnected guard avant rec.start. |
+| SF-REL-0105 | P2 | FIXED_PENDING_VALIDATION | play() en vol après removeSound/relocateSound → vérif existence+path après getBuffer. |
+| SF-REL-0106 | P2 | FIXED_PENDING_VALIDATION | importConfig ne purgeait pas bufCache (256 Mo orphelins) → clear bufCache/bytes/longWarned/inflight. |
+| SF-REL-0107 | P2 | FIXED_PENDING_VALIDATION | Aucune borne sons/catégories ; file:check >5000 → checkMissing mort. Plafonds 5000/500 + import JSON ≤8 Mo. |
+| SF-REL-0108 | P3 | FIXED_PENDING_VALIDATION | Erreurs file:read (trop gros/EACCES/ext) badgeaient « introuvable » → classification ENOENT vs noFileErr. |
+| SF-REL-0109 | P3 | FIXED_PENDING_VALIDATION | Appliquer réglages avec énumération dégradée effaçait cableId/monId/micId → pickVal préserve si noEnum. |
+| SF-REL-0110 | P3 | FIXED_PENDING_VALIDATION | normalizeAll écrasait s.norm=1 en cas d'échec → conserve le réglage. |
 | SF-REL-0111 | P3 | ACCEPTED | Cache bufCache jamais invalidé si fichier remplacé à chemin identique — nécessite stat IPC (mtime+size) ; documenté. |
-| SF-REL-0112 | P3 | CLOSED | loadWave O(échantillons) gelait l'UI sur fichiers très longs → stride interne ≤2000/bucket. |
-| SF-REL-0113 | P4 | CLOSED | F11/Ctrl+Shift+I absents des raccourcis réservés → ajoutés (normalizeCfg + findShortcutOwner). |
-| SF-REL-0114 | P4 | CLOSED | Overlay drag&drop figé sur drag annulé → reset dragend/blur. |
-| SF-REL-0115 | P4 | CLOSED | #addBtn pickFiles sans catch → try/catch + logErr. |
+| SF-REL-0112 | P3 | FIXED_PENDING_VALIDATION | loadWave O(échantillons) gelait l'UI sur fichiers très longs → stride interne ≤2000/bucket. |
+| SF-REL-0113 | P4 | FIXED_PENDING_VALIDATION | F11/Ctrl+Shift+I absents des raccourcis réservés → ajoutés (normalizeCfg + findShortcutOwner). |
+| SF-REL-0114 | P4 | FIXED_PENDING_VALIDATION | Overlay drag&drop figé sur drag annulé → reset dragend/blur. |
+| SF-REL-0115 | P4 | FIXED_PENDING_VALIDATION | #addBtn pickFiles sans catch → try/catch + logErr. |
 | SF-REL-0116 | P4 | ACCEPTED | stopVoice : si onended ne tire pas (contexte suspendu), voix zombie jusqu'au watchdog dur+15 s — fenêtre acceptable, documenté. |
 
 ### main.js / C# — IDs renumerotes SF-REL-0120+ (collision agent)
@@ -103,27 +121,27 @@ Cycle 1 — audits indépendants du 15/11/2026 (4 subagents : main.js, renderer,
 | ID | Gravité | Statut | Résumé |
 |---|---|---|---|
 | SF-REL-0120 | P1 | CLOSED | Marqueur audio-restore.json avec owner=pid mort + micro déjà sur câble → pas de guard pour la nouvelle session → kill suivant = micro coincé. Adoption du marqueur (owner→pid courant) + respawn guard. |
-| SF-REL-0121 | P1 | CLOSED | Race will-quit vs bascule micro : set capture en vol après restoreMicNow → micro coincé sans marqueur. Flag `quitting` testé avant set et spawn guard. |
-| SF-REL-0122 | P2 | CLOSED | tapStop pendant tapStart (compile/spawn) → AudioTap orphelin. Epoch tapEpoch vérifié à 2 points. |
-| SF-REL-0123 | P2 | CLOSED | N guards AudioEndpoint accumulés (un par bascule). Guard sort si marqueur absent ou owner ≠ pid pendant l'attente. |
-| SF-REL-0124 | P2 | CLOSED | audio:restore/watchdog/autoSetup sans mutex commun → audio:restore passe par autoSetupChain ; fallback « non virtuel » exige name non vide (aussi dans chooseRestoreIds). |
-| SF-REL-0125 | P2 | CLOSED | audio-restore.json écrit non atomiquement → JSON tronqué irrécupérable. writeRestoreMarker .tmp+rename. |
+| SF-REL-0121 | P1 | FIXED_PENDING_VALIDATION | Race will-quit vs bascule micro : set capture en vol après restoreMicNow → micro coincé sans marqueur. Flag `quitting` testé avant set et spawn guard. |
+| SF-REL-0122 | P2 | FIXED_PENDING_VALIDATION | tapStop pendant tapStart (compile/spawn) → AudioTap orphelin. Epoch tapEpoch vérifié à 2 points. |
+| SF-REL-0123 | P2 | FIXED_PENDING_VALIDATION | N guards AudioEndpoint accumulés (un par bascule). Guard sort si marqueur absent ou owner ≠ pid pendant l'attente. |
+| SF-REL-0124 | P2 | FIXED_PENDING_VALIDATION | audio:restore/watchdog/autoSetup sans mutex commun → audio:restore passe par autoSetupChain ; fallback « non virtuel » exige name non vide (aussi dans chooseRestoreIds). |
+| SF-REL-0125 | P2 | FIXED_PENDING_VALIDATION | audio-restore.json écrit non atomiquement → JSON tronqué irrécupérable. writeRestoreMarker .tmp+rename. |
 | SF-REL-0126 | P3 | ACCEPTED | Restauration synchrone will-quit ~15 s/étape — choix assumé (restauration prioritaire), documenté. |
-| SF-REL-0127 | P2 | CLOSED | yt:info via execFileP non tracké → execFileTracked (tué au will-quit). |
+| SF-REL-0127 | P2 | FIXED_PENDING_VALIDATION | yt:info via execFileP non tracké → execFileTracked (tué au will-quit). |
 | SF-REL-0128 | P3 | CLOSED | existsSync approuvait les binaires tronqués. toolSane() (seuils : C# 4 Ko, yt-dlp 1 Mo, ffmpeg 10 Mo) + discardCorruptTool → recompile/reinstall. Sonde --version non retenue : les .cs sont recompilés au hash, yt-dlp/ffmpeg re-téléchargés SHA-256 — la taille suffit à détecter le tronqué. |
 | SF-REL-0129 | P3 | ACCEPTED | storageRoot accepte UNC/chemins absolus (choix utilisateur, NAS) — documenté. |
-| SF-REL-0130 | P2 | CLOSED | rec:save : wx protège le nom mais pas le contenu → .part + hardlink atomique (repli wx sur FS sans liens). |
-| SF-REL-0131 | P3 | CLOSED | media:cut : échec ffmpeg → placeholder 0 octet conservé → unlink en catch. |
-| SF-REL-0132 | P3 | CLOSED | .bak lu sans borne de taille → statSync ≤16 Mo aux 2 endroits. (Rotation .bak unique reste ACCEPTED.) |
-| SF-REL-0133 | P3 | CLOSED | watchdog relisait config.json sans borne → statSync ≤16 Mo. |
-| SF-REL-0134 | P3 | CLOSED | downloadVerified lisait les sommes sans borne → ≤256 Ko. |
-| SF-REL-0135 | P3 | CLOSED | yt:download « plus récent » pouvait prendre un .part/artefact → filtre extensions audio + exclusion .part/.ytdl + taille>0. |
+| SF-REL-0130 | P2 | FIXED_PENDING_VALIDATION | rec:save : wx protège le nom mais pas le contenu → .part + hardlink atomique (repli wx sur FS sans liens). |
+| SF-REL-0131 | P3 | FIXED_PENDING_VALIDATION | media:cut : échec ffmpeg → placeholder 0 octet conservé → unlink en catch. |
+| SF-REL-0132 | P3 | FIXED_PENDING_VALIDATION | .bak lu sans borne de taille → statSync ≤16 Mo aux 2 endroits. (Rotation .bak unique reste ACCEPTED.) |
+| SF-REL-0133 | P3 | FIXED_PENDING_VALIDATION | watchdog relisait config.json sans borne → statSync ≤16 Mo. |
+| SF-REL-0134 | P3 | FIXED_PENDING_VALIDATION | downloadVerified lisait les sommes sans borne → ≤256 Ko. |
+| SF-REL-0135 | P3 | FIXED_PENDING_VALIDATION | yt:download « plus récent » pouvait prendre un .part/artefact → filtre extensions audio + exclusion .part/.ytdl + taille>0. |
 | SF-REL-0136 | P4 | ACCEPTED | Artefacts orphelins (.part yt-dlp, arbre ffmpeg, .tmp, .broken-*) non purgés — disque seulement, documenté. |
 | SF-REL-0137 | P4 | ACCEPTED | Doublon de SF-REL-0042 (backpressure PCM) — même conclusion. |
-| SF-REL-0138 | P4 | CLOSED | ui:log acceptait 
+| SF-REL-0138 | P4 | FIXED_PENDING_VALIDATION | ui:log acceptait 
  → injection de lignes de log → strip caractères de contrôle. |
 | SF-REL-0139 | P4 | ACCEPTED | file:read suit les symlinks, pas de realpath — renderer local de confiance, documenté. |
-| SF-REL-0140 | P3 | CLOSED | Fallback restauration : endpoint sans nom traité « non virtuel » → name requis (main.js + lib). |
+| SF-REL-0140 | P3 | FIXED_PENDING_VALIDATION | Fallback restauration : endpoint sans nom traité « non virtuel » → name requis (main.js + lib). |
 
 ## Enquête forensique — crash AudioContext (-1/143)
 
@@ -146,7 +164,7 @@ Recherche externe (correlations) :
 - Pistes si dump = audio service : flags Chromium (--disable-features=AudioServiceSandbox / AudioServiceOutOfProcess) à évaluer ; ou partage d'un seul AudioContext quand cable==mon deviceId.
 
 
-## SF-REL-0141 — writeRecording : .part partage entre ecritures concurrentes (P1, CORRIGE)
+## SF-REL-0141 — writeRecording : .part partage entre ecritures concurrentes (P1, FIXED_PENDING_VALIDATION)
 
 **Symptome** : deux `writeRecording` concurrents dans le meme process (double
 `rec:save`, ou futur appel parallele) ecrivaient le MEME fichier
@@ -171,26 +189,61 @@ Inventaire : 23 handlers `ipcMain.handle` (tous via wrapper `H` + garde
   storageDir est une feature utilisateur legitime (choisie via pickDir) ; le
   renderer est notre propre page sandboxee sans contenu distant. Noms de
   fichiers sanitizes (safeName), pas de traversal.
-- SF-REL-0602 (P1) `fs.mkdirSync` sync sur chemin UNC -> **CORRIGE** :
+- SF-REL-0602 (P1) `fs.mkdirSync` sync sur chemin UNC -> **FIXED_PENDING_VALIDATION** :
   `await fs.promises.mkdir` dans rec:save, media:cut, yt:download.
 - SF-REL-0603 (P2) `file:read` lit tout media absolu -> **ACCEPTED** : meme
   modele de menace que 0601 ; borne 512 Mo conservee.
-- SF-REL-0604 (P2) `shell:openDir` statSync -> **CORRIGE** : stat async.
-- SF-REL-0605 (P3) `maxBuffer` ignore par spawn (yt:info) -> **CORRIGE** :
+- SF-REL-0604 (P2) `shell:openDir` statSync -> **FIXED_PENDING_VALIDATION** : stat async.
+- SF-REL-0605 (P3) `maxBuffer` ignore par spawn (yt:info) -> **FIXED_PENDING_VALIDATION** :
   option morte retiree, plafond reel 4 Mo documente en commentaire.
-- SF-REL-0606 (P3) `audio:autoSetup` opts non valide -> **CORRIGE** : coercion
+- SF-REL-0606 (P3) `audio:autoSetup` opts non valide -> **FIXED_PENDING_VALIDATION** : coercion
   enabled/cableLabel en tete de handler.
 - SF-REL-0607 (P3) ui:log spam -> statSync+readFileSync(2Mo) a chaque ligne
-  quand log >2 Mo -> **CORRIGE** : controle de taille throttle a 1/min.
+  quand log >2 Mo -> **FIXED_PENDING_VALIDATION** : controle de taille throttle a 1/min.
 - SF-REL-0608 (P3) config:save stringify avant borne -> **ACCEPTED** : la
   serialisation est de toute facon requise pour ecrire ; borne post-hoc.
-- SF-REL-0609 (P3) `key` shortcut sans borne -> **CORRIGE** : cap 128 car.
+- SF-REL-0609 (P3) `key` shortcut sans borne -> **FIXED_PENDING_VALIDATION** : cap 128 car.
 - SF-REL-0610 (P3) catch{} expandPaths -> **ACCEPTED** : sonde best-effort,
   l'echec est indiscernable d'un fichier absent par nature ; documente.
 
 Smoke long (2 min, test-profile) : stable, heap=10 Mo constant, pas de crash.
 
 ## Synthèse cycle 1
-- 57 anomalies qualifiées : 44 CLOSED, 8 ACCEPTED (documentées), 0 INVESTIGATING ouvert — toutes les anomalies qualifiées sont tranchées.
+- 57 anomalies qualifiées au cycle 1. **Compteurs rebasés sous Quality Gate V2** : voir tableau de bord en fin de registre — les anciens CLOSED sans validation runtime par anomalie sont FIXED_PENDING_VALIDATION.
 - P0 : 1 (SF-REL-0001) — introduit par la campagne précédente, attrapé par l'audit cycle 2. Preuve que la boucle fonctionne.
 - Leçon usine : TOUT changement main.js doit être smoke-testé (npx electron . --test-profile) — node --check ne voit pas les ReferenceError runtime.
+
+## SF-REL-0611 — Crash renderer AudioContext / WebAudio (exitCode -1/143) — INVESTIGATING
+
+**Symptôme** : `render-process-gone {"reason":"crashed","exitCode":-1}` (parfois 143), précédé de « The AudioContext encountered an error from the audio device or the WebAudio renderer ». Intermittent : ~5 occurrences sur ~10 sessions smoke ; sessions stables de 5-12 min observées depuis le 15/11 12:20.
+**Cause racine** : **UNDETERMINED** — non démontrée. Corrélations : device `dc79ff…` = CABLE Input (VB-Audio Virtual Cable) ; crash aussi ~3 min après création des contextes ; message identique à la mort du process audio utility Chromium (obs-studio#10586). Suspect n°1 : interaction Chromium ↔ driver VB-CABLE / service audio Windows.
+**Mitigations en place (pas des corrections de cause)** : statechange → retry applyAudio borné ; render-process-gone → 1 reload puis dialog ; crashReporter.start (minidumps locaux, sans télémétrie) — positionné APRÈS setPath(userData) depuis 9093732 ; logs deviceId dans makeOutput.
+**En attente** : .dmp Crashpad dans `userData/Crashpad/reports` pour identifier le module/processus fautif. A/B cableId impossible (pick() ré-assigne CABLE Input par design).
+**Validation** : RUNTIME partiel (crash observé en smoke réel) ; aucun test automatisé ne peut couvrir un crash driver.
+**Statut** : INVESTIGATING — ne pas clôturer sans .dmp analysé ou mitigation validée sur le terrain.
+
+## Historique actif des régressions (Quality Gate V2 §9)
+
+| Régression | Origine | Introduite par | Prévention |
+|---|---|---|---|
+| SF-REL-0001 (ReferenceError createWindow) | défaut préexistant | a4e403a (propre campagne) | smoke test-env obligatoire après tout commit main.js — leçon inscrite en §7 V2 |
+| SF-REL-0058 (rec:save `p` indéfini) | fix wx de SF-REL-0010 | df353f0 | logique extraite dans lib/audio-utils.writeRecording + tests unitaires |
+| SF-REL-0100 (previewBtn undefined) | suppression partielle de SF-REL-0039 | df353f0 | revue de diff contradictoire ; le pattern « référence cross-scope » reste à surveiller (node --check ne le voit pas) |
+| SF-REL-0141 (.part partagé PID) | durcissement atomicité SF-REL-0130 | 865b891/9d4f986 | test de concurrence ×20 dans audio-utils.test.js |
+
+Règle : avant de toucher un composant, chercher ici + dans le tableau ses anomalies passées et les tests de non-régression associés. Ne jamais écraser l'historique d'une anomalie réapparue — créer une nouvelle entrée référençant l'originale.
+
+## Tableau de bord V2 (recalculé 15/11/2026)
+
+| Statut | Nombre |
+|---|---|
+| CLOSED | 3 (0001, 0120, 0128 — runtime documenté) |
+| FIXED_PENDING_VALIDATION | 79 |
+| ACCEPTED | 20 |
+| INVESTIGATING | 1 (SF-REL-0611 crash AudioContext) |
+| OPEN / BLOCKED | 0 |
+
+**Lecture honnête** : le registre prouve ~50 corrections de défauts réels
+(STATIC+UNIT), mais ne prouve PAS leur comportement corrigé en runtime,
+ni l'absence de régression matérielle. La quasi-totalité des FIXED_PENDING_
+VALIDATION attend la validation `VALIDATION.md` ou un smoke ciblé par anomalie.

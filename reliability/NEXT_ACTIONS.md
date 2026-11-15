@@ -35,3 +35,16 @@
 - [ ] Analyser le prochain .dmp Crashpad (userData/Crashpad/reports) du
       crash -1/143 : identifier le module/processus fautif (renderer audio
       vs driver VB-CABLE). Smoke long en cours en test-profile.
+
+## Priorites Quality Gate V2
+
+- [ ] Capturer et analyser le .dmp Crashpad du crash SF-REL-0611
+      (userData/Crashpad/reverses) — conditionne la suite de l'enquete.
+- [ ] Validation runtime par anomalie : prioriser les FIXED_PENDING_
+      VALIDATION touchant des chemins critiques (rec:save/writeRecording,
+      lifecycle micro, yt:download, media:cut) via smoke cible ou
+      VALIDATION.md.
+- [ ] Revue independante des diffs des corrections les plus risquees
+      (atomicite, lifecycle, IPC) — formaliser en entry FINDINGS.
+- [ ] Validation materielle reelle (VALIDATION.md) : enregistreur,
+      YouTube, Discord/VB-CABLE, restoration micro, sleep/wake.
