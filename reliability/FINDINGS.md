@@ -512,6 +512,19 @@ de la modale YouTube — ytModalAlive existait mais n'etait jamais lu).
 cdp-drive 12/12. Modales non testees interactivement (UI).
 **Statut** : FIXED_PENDING_VALIDATION.
 
+
+## SF-REL-0637 — decode PCM non borne + decodes/voix illimitees (P2)
+
+**Symptome** : seul le poids COMPRESSE etait borne (150 Mo) ; un
+FLAC/Opus long decodait en Go de PCM -> crash renderer (piste 0611) ;
+N clics = N decodeAudioData paralleles ; polyphonie sans plafond.
+**Fix** : semaphore 2 decodes simultanes ; refus dur >512 Mo PCM
+(~23 min stereo) ; plafond 32 voix simultanees (voices.size).
+**Preuve** : node --check, npm test 39/39, dist rebuild, smoke +
+cdp-drive 12/12. Limite : le PCM peak pendant decodeAudioData reste
+non borne (impossible a connaitre avant decode).
+**Statut** : FIXED_PENDING_VALIDATION.
+
 ## Historique actif des régressions (Quality Gate V2 §9)
 
 | Régression | Origine | Introduite par | Prévention |
@@ -532,7 +545,7 @@ Règle : avant de toucher un composant, chercher ici + dans le tableau ses anoma
 | ACCEPTED | 24 | cycle 1 : 12 · cycle 2 : 1 · cycle 3 : 7 · cycle 5 : 4 |
 | INVESTIGATING | 1 | SF-REL-0611 crash AudioContext |
 | OPEN / BLOCKED | 0 | — |
-| **Total IDs définis** | **139** | IDs uniques, aucun doublon de définition |
+| **Total IDs définis** | **140** | IDs uniques, aucun doublon de définition |
 
 ### Doublons fonctionnels documentés (IDs distincts, même anomalie)
 

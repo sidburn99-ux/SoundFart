@@ -272,6 +272,8 @@ let interruptedRetries = 0; // retry borne sur etat 'interrupted' (reset sur 'ru
 let bufCacheBytes = 0;
 
 const bufInflight = new Map(); // path -> Promise<buf> : evite le double decodage concurrent
+let decodeActive = 0; // semaphore : 2 decodeAudioData simultanes max
+const decodeQueue = []; // promesses en attente de slot decode
 async function getBuffer(path) {
   if (bufCache.has(path)) {
     const e = bufCache.get(path);
@@ -308,6 +310,12 @@ async function getBuffer(path) {
   if (bytes > 64 * 1024 * 1024) uiLog('decode lourd : ' + Math.round(bytes / 1048576) + ' Mo PCM (' + path + ')');
   // Buffer decode plus gros que tout le cache : ne pas le retenir (il
   // evincerait tout pour rien et pourrait lui-meme saturer le renderer).
+  // Plafond dur : au-dela de 512 Mo de PCM (≈23 min stereo), le renderer
+  // etait expose au crash OOM documente (-1/143) — on refuse la lecture.
+  if (bytes > 512 * 1024 * 1024) {
+    const e = new Error('Fichier trop long pour être joué (' + Math.round(buf.duration / 60) + ' min).');
+    e.noFileErr = true; throw e;
+  }
   if (bytes > BUF_CACHE_MAX) {
     toast('Fichier très lourd : joué sans cache pour économiser la mémoire.', 'warn');
     return buf;
@@ -600,6 +608,10 @@ function endVoice(v) {
 }
 
 function play(sound, opts = {}) {
+  // Plafond de voix simultanees : chaque voix = 2 sources + gains + timers
+  // par sortie — des clics en rafale/allers-retours creeaient des centaines
+  // de nodes audio sans limite.
+  if (voices.size >= 32) { toast('Trop de lectures simultanées.', 'warn'); return Promise.resolve(null); }
   const gen = playGen; // si stopAll/teardownAudio passe pendant le await getBuffer, on abandonne
   const active = (opts.monitorOnly ? [audio.mon] : [audio.cable, audio.mon]).filter(Boolean);
   if (!active.length) {
