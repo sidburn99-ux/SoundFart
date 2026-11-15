@@ -166,6 +166,12 @@ internal static class AudioTap
         }
     }
 
+    // Sleep(4) est arrondi a ~15,6 ms par le timer Windows par defaut : sans
+    // timeBeginPeriod(1) le drain WASAPI tourne ~4x trop lent pour la periode
+    // de rendu (~10 ms) — latence et risk de sous-alimentation du cable.
+    [DllImport("winmm.dll")] private static extern uint timeBeginPeriod(uint uPeriod);
+    [DllImport("winmm.dll")] private static extern uint timeEndPeriod(uint uPeriod);
+
     // Decode un paquet en float[] interleave, puis reechantillonne + reencode vers dst.
     private static byte[] Convert(byte[] src, Fmt sf, Fmt df)
     {
@@ -449,6 +455,7 @@ internal static class AudioTap
         var pcmOut = pcmMode ? new System.IO.BufferedStream(Console.OpenStandardOutput(), 65536) : null;
         long pcmPending = 0;
 
+        timeBeginPeriod(1); // granularity 1 ms pour le Sleep(4) de la boucle
         while (DateTime.UtcNow < deadline)
         {
             // Parent verifie par TEMPS (toutes les 500 ms), pas par nombre de paquets :
@@ -478,7 +485,7 @@ internal static class AudioTap
                 {
                     Console.Error.WriteLine("AudioTap: GetNextPacketSize echoue hr=0x" + pkHr.ToString("X8") + " (peripherique invalide ?)");
                     try { src.Stop(); if (dst != null) dst.Stop(); } catch {}
-                    return 2;
+                    timeEndPeriod(1); return 2;
                 }
                 if (pkHr != 0) { if (++sStreak > 500) break; continue; } // code S_ : rien a faire ce tour
                 sStreak = 0;
@@ -489,7 +496,7 @@ internal static class AudioTap
                 {
                     Console.Error.WriteLine("AudioTap: GetBuffer echoue hr=0x" + gbHr.ToString("X8") + " (peripherique invalide ?)");
                     try { src.Stop(); if (dst != null) dst.Stop(); } catch {}
-                    return 2;
+                    timeEndPeriod(1); return 2;
                 }
                 if (gbHr > 0) { if (++sStreak > 500) break; continue; } // code S_ : pas de donnees a consommer ce tour
                 sStreak = 0;
@@ -568,7 +575,7 @@ internal static class AudioTap
                         {
                             Console.Error.WriteLine("AudioTap: render GetBuffer echoue hr=0x" + rgHr.ToString("X8"));
                             try { src.Stop(); dst.Stop(); } catch {}
-                            return 2;
+                            timeEndPeriod(1); return 2;
                         }
                         if (rgHr > 0) break; // code S_ : pas de buffer ce tour (symetrique au cote capture)
                         if (takeBytes == head.Length)
@@ -599,6 +606,7 @@ internal static class AudioTap
         if (pcmOut != null) { try { pcmOut.Flush(); pcmOut.Dispose(); } catch {} }
         try { src.Stop(); if (dst != null) dst.Stop(); } catch {}
         Console.Error.WriteLine("AudioTap: arret");
+        timeEndPeriod(1);
         return 0;
     }
 

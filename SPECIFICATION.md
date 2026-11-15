@@ -27,6 +27,20 @@ src/index.html   markup · src/style.css : thème sombre
 
 Sécurité : CSP stricte (`default-src 'self'`), `contextIsolation`, `sandbox`, navigation bloquée, seuls les fichiers audio sont lisibles.
 
+### Trajet audio (cartographie des chemins critiques)
+
+**Lecture soundboard** : `fichier → sf:readFile (main, ≤512 Mo) → decodeAudioData → cache LRU 256 Mo (entrée >256 Mo non cachée, fichier >150 Mo refusé avant décodage) → AudioBufferSourceNode+GainNode par sortie → bus→DynamicsCompressor→destination`. Sorties : `cable` (périphérique `cableId`, vers Discord via VB-CABLE) et `mon` (`monId`, écoute locale) — dédupliquées par deviceId. `playGen` invalide les lectures en vol au STOP ; `voices` suit chaque voix, `onended` ou watchdog `dur+15 s` la retire ; `stopAll` stoppe sources+gains.
+
+**Enregistrement** : 3 sources mixées dans un `MediaRecorder` — micro (`getUserMedia` + EC/NS/AGC), audio du PC (`AudioTap.exe` WASAPI loopback → PCM stéréo 48 kHz float32, 8 o/frame → stdout → IPC `sf:tappcm` → `tapPcmRem` aligné → AudioWorklet `tap-processor` → `comp`), câble (`getUserMedia` sur CABLE Output ou repli worklet). `flush` du worklet avant `rec.start`. Mort du tap → `sf:tapDead` → arrêt + toast.
+
+**Routage micro → Discord** : `autoSwitchMic` fait basculer l'entrée Windows par défaut sur CABLE Output (`AudioEndpoint.exe set`, rôles console+comm+multi), écrit `audio-restore.json` (ids d'origine + owner=pid) puis spawn `guard` détaché (pid+StartTime anti-réutilisation). Restauration : will-quit, `uncaughtException`, guard si mort du parent, watchdog 30 s (suspendu si l'entrée change hors SoundFart). Micro physique → `getUserMedia` → `lim` (compresseur) → bus câble — le master ne couvre que les sons.
+
+**Cycle de vie** : `applyAudio` sérialisé (`audioApplyChain`) → `teardownAudio` (stopAll, playGen++, endVoice, ctx.close, micStream.stop) → `makeOutput` par sortie (`setSinkId`, écoute `statechange` : suspended/interrupted/closed logués). `devicechange` débouncé 500 ms → refreshDevices+resolveDevices+applyAudio. Render-process-gone → 1 reload max.
+
+**WASAPI (AudioTap.cs)** : partagé, `AUDCLNT_STREAMFLAGS_LOOPBACK`, format négocié via `IsFormatSupported`→`GetMixFormat`, conversion PCM 16/32 bits↔float32 stéréo 48 kHz, file bornée 500 ms (drop logué), parent-check par PID+StartTime toutes les 500 ms, `timeBeginPeriod(1)` pour le Sleep(4). Codes S_ tolérés, HRESULT<0 fatals avec message. `DEVICE_INVALIDATED` → sortie code 2 → `tapDead` côté renderer (pas de reconnexion automatique : le flux est recréé au prochain enregistrement).
+
+**Récupération micro (AudioEndpoint.cs)** : `list`/`get`/`set`/`restore`/`guard`. `chooseRestoreIds` (JS) ≡ `RestoreFromFile` (C#) : défaut Windows non virtuel > ids d'origine > 1er non virtuel. Owner revérifié sur la même lecture que les ids (anti-TOCTOU guard/nouvelle instance). `SetDefaultEndpoint` journalise chaque rôle sur stderr.
+
 ---
 
 ## Fonctionnalités implémentées
@@ -133,6 +147,10 @@ Sécurité : CSP stricte (`default-src 'self'`), `contextIsolation`, `sandbox`, 
 - Formats conteneurs exotiques (mkv, mov…) : décodage dépend de l'ffmpeg embarqué d'Electron, certains peuvent échouer.
 - Raccourcis globaux : testés à l'enregistrement, pas validés en jeu.
 - L'enregistreur multi-sources : micro + loopback + câble simultanés non testé en charge réelle.
+- **Watchdog voix** (arrêt forcé après `dur+15 s` si `onended` ne tire pas, ex. AudioContext suspendu) : implémenté, non testé en veille/réveil réel.
+- **AudioTap** : pas de reconnexion automatique sur `DEVICE_INVALIDATED` — le flux meurt proprement (`tapDead`) et est recréé à la prochaine utilisation ; une reprise à chaud reste à étudier.
+- **I/O fichiers** : `files:expand`/`file:check` sont désormais asynchrones (plus de gel sur chemin réseau), non testés sur NAS injoignable réel.
+- **Endurance** : aucune session de plusieurs heures mesurée (mémoire, CPU, fuites) — non réalisée.
 
 ## Scripts
 

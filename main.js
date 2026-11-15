@@ -29,7 +29,7 @@ function execFileTracked(file, args, opts = {}) {
     });
   });
 }
-const { AUDIO_EXT, VIRTUAL_RE: VIRTUAL_RE_MAIN, parseEndpoints, parseGet, findCableCapture, chooseRestoreIds, safeName, expandPaths: expand } = require('./lib/audio-utils');
+const { AUDIO_EXT, VIRTUAL_RE: VIRTUAL_RE_MAIN, parseEndpoints, parseGet, findCableCapture, chooseRestoreIds, safeName, expandPaths, expandPathsAsync } = require('./lib/audio-utils');
 let win = null;
 
 // ---------- journal d'erreurs : SoundFart-data\soundfart.log ----------
@@ -238,11 +238,12 @@ H('config:save', (_e, cfg) => {
 });
 
 // ---------- fichiers ----------
-// expand() vient de lib/audio-utils.js (expandPaths) — testable via node:test.
+// expandPaths/expandPathsAsync viennent de lib/audio-utils.js — testables via node:test.
 
-H('files:expand', (_e, paths) => {
+H('files:expand', async (_e, paths) => {
   if (!Array.isArray(paths) || paths.length > 2000 || paths.some((p) => typeof p !== 'string')) throw new Error('chemins invalides');
-  return expand(paths);
+  // Async : un dossier reseau injoignable ne doit pas geler le process main.
+  return expandPathsAsync(paths);
 });
 
 H('files:pick', async () => {
@@ -270,9 +271,21 @@ H('file:read', async (_e, p) => {
   return fs.promises.readFile(p);
 });
 
-H('file:check', (_e, paths) => {
+H('file:check', async (_e, paths) => {
   if (!Array.isArray(paths) || paths.length > 5000) throw new Error('chemins invalides');
-  return paths.filter((p) => typeof p !== 'string' || !fs.existsSync(p));
+  // Async + par lots : jusqu'a 5000 existsSync synchrones sur le thread main
+  // pouvaient geler l'app plusieurs secondes sur un volume reseau.
+  const missing = [];
+  const BATCH = 200;
+  for (let i = 0; i < paths.length; i += BATCH) {
+    const chunk = paths.slice(i, i + BATCH);
+    const ok = await Promise.all(chunk.map(async (p) => {
+      if (typeof p !== 'string') return false;
+      try { await fs.promises.access(p); return true; } catch { return false; }
+    }));
+    chunk.forEach((p, j) => { if (typeof p !== 'string' || !ok[j]) missing.push(p); });
+  }
+  return missing;
 });
 H('file:reveal', async (_e, p) => {
   if (typeof p !== 'string' || !path.isAbsolute(p)) throw new Error('chemin invalide');
@@ -1134,7 +1147,7 @@ app.whenReady().then(() => {
     }).catch((e) => { log('[displaymedia] getSources: ' + e.message, 'warn'); callback({}); });
   });
   createWindow();
-  setInterval(watchdogMic, 10000);
+  setInterval(watchdogMic, 30000); // 30 s suffisent : 2 spawn AudioEndpoint toutes les 10 s coutaient ~2 % CPU en continu
 });
 
 app.on('window-all-closed', () => app.quit());

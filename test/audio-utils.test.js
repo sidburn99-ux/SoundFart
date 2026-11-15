@@ -139,3 +139,19 @@ test('expandPaths : audio seulement, profondeur, dossiers', () => {
     assert.deepEqual(U.expandPaths([path.join(dir, 'nope'), path.join(dir, 'b.txt')]), []);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+// ---------- expandPathsAsync (meme contrat que expandPaths, non bloquant) ----------
+test('expandPathsAsync : memes resultats que la version synchrone', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-async-'));
+  try {
+    fs.mkdirSync(path.join(dir, 'sub'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'a.mp3'), 'x');
+    fs.writeFileSync(path.join(dir, 'b.txt'), 'x');
+    fs.writeFileSync(path.join(dir, 'sub', 'c.wav'), 'x');
+    const sync = U.expandPaths([dir]).map((p) => path.basename(p)).sort();
+    const asy = (await U.expandPathsAsync([dir])).map((p) => path.basename(p)).sort();
+    assert.deepEqual(asy, sync);
+    assert.deepEqual(asy, ['a.mp3', 'c.wav']);
+    assert.deepEqual(await U.expandPathsAsync([path.join(dir, 'nope')]), []);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
