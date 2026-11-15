@@ -28,11 +28,16 @@ class TapProcessor extends AudioWorkletProcessor {
   }
   process(_inputs, outputs) {
     const out = outputs[0];
-    const n = out[0] ? out[0].length : 128;
+    if (!out || !out[0]) return true; // sortie sans canal : rien a remplir
+    const n = out[0].length;
     for (let c = 0; c < out.length; c++) out[c].fill(0);
     for (let i = 0; i < n && this.len >= 2; i++) {
-      out[0][i] = this.buf[this.r];
-      if (out[1]) out[1][i] = this.buf[(this.r + 1) & (this.cap - 1)];
+      const L = this.buf[this.r];
+      const R = this.buf[(this.r + 1) & (this.cap - 1)];
+      // Un NaN/Inf dans le PCM (corruption, bug amont) ne doit pas
+      // propager de bruit infini dans l'enregistrement.
+      out[0][i] = Number.isFinite(L) ? L : 0;
+      if (out[1]) out[1][i] = Number.isFinite(R) ? R : 0;
       this.r = (this.r + 2) & (this.cap - 1);
       this.len -= 2;
     }

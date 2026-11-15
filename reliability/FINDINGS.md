@@ -62,6 +62,18 @@ Cycle 1 — audits indépendants du 15/11/2026 (4 subagents : main.js, renderer,
 | SF-REL-0056 | engines node>=18 vs Electron | P4 | Confirmé | CLOSED | Ajouté "engines" package.json. df353f0. |
 | SF-REL-0057 | run-dev échec invisible | P4 | Confirmé | CLOSED | npm start sans pause → fenêtre fermée sur erreur. Ajouté. df353f0. |
 
+## Cycle 2 — passe contradictoire (subagent audits des diffs)
+
+| ID | Sous-système | Gravité | Preuve | Statut | Résumé / correction |
+|---|---|---|---|---|---|
+| SF-REL-0058 | rec:save | P0 | Confirmé (code) | CLOSED | `i === 0 ? p : ...` — variable `p` indéfinie → ReferenceError à CHAQUE sauvegarde d'enregistrement. Régression du fix wx (df353f0). Corrigé : `base${extOk}`. |
+| SF-REL-0059 | yt:download taille | P3 | Hypothèse | ACCEPTED | Pas de plafond sur import « audio complet » ; choix utilisateur, disque = risque assumé. Documenté. |
+| SF-REL-0060 | AudioTap flush PCM | P4 | Confirmé | CLOSED | Flush stdout à chaque itération ~4 ms → WriteFile ~250/s, seuil 128 Kio mort. Seuil 16 Kio (~40 ms) + flush palier. |
+| SF-REL-0061 | tap-processor | P4 | Confirmé | CLOSED | `out[0]` absent → TypeError thread audio ; NaN/Inf PCM propagé. Garde + clamp Number.isFinite. |
+| SF-REL-0062 | shortcuts:apply | P4 | Confirmé | CLOSED | Phrase française dans la liste d'accélérateurs → toast absurde. Marqueur '…'. |
+| SF-REL-0063 | CSP object-src | P4 | Confirmé | CLOSED | `object-src 'none'` ajouté. |
+| SF-REL-0064 | media:cut/yt:download destructure | P4 | Confirmé | CLOSED | Destructuration sans garde → TypeError brut sur null. Garde « options invalides ». |
+
 ## Synthèse cycle 1
 - 57 anomalies qualifiées : 44 CLOSED, 8 ACCEPTED (documentées), 0 INVESTIGATING ouvert — toutes les anomalies qualifiées sont tranchées.
 - P0 : 1 (SF-REL-0001) — introduit par la campagne précédente, attrapé par l'audit cycle 2. Preuve que la boucle fonctionne.

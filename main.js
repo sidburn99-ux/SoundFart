@@ -329,7 +329,7 @@ H('shortcuts:apply', (_e, entries) => {
     seen.add(accel);
     valid.push({ key, accel });
   }
-  if (list.length > 200) failed.push('>200 entrees ignorees');
+  if (list.length > 200) failed.push('…'); // marquee de troncature, pas une accel
   globalShortcut.unregisterAll();
   for (const { key, accel } of valid.slice(0, 200)) {
     try {
@@ -361,7 +361,7 @@ H('rec:save', async (_e, opts) => {
   // existsSync+writeFile laissait une fenetre ou deux rec:save concurrents
   // choisissaient le meme chemin et le second ecrasait le premier.
   for (let i = 0; ; i++) {
-    const cand = i === 0 ? p : path.join(rdir, `${base}-${i}${extOk}`);
+    const cand = i === 0 ? path.join(rdir, `${base}${extOk}`) : path.join(rdir, `${base}-${i}${extOk}`);
     try {
       await fs.promises.writeFile(cand, buf, { flag: 'wx' });
       return cand;
@@ -434,7 +434,9 @@ async function ensureFfmpeg() {
   return ffmpegPromise;
 }
 
-H('media:cut', async (_e, { input, start, end, dir }) => {
+H('media:cut', async (_e, o) => {
+  if (!o || typeof o !== 'object' || Array.isArray(o)) throw new Error('options invalides');
+  const { input, start, end, dir } = o;
   if (typeof input !== 'string' || !path.isAbsolute(input)) throw new Error('chemin source invalide');
   if (!AUDIO_EXT.includes(path.extname(String(input)).toLowerCase())) throw new Error('format audio non supporté');
   if (!Number.isFinite(+start) || +start < 0 || !Number.isFinite(+end) || +end <= +start) throw new Error('bornes de coupe invalides');
@@ -730,7 +732,9 @@ H('yt:info', async (_e, url) => {
 });
 
 let ytDownloadBusy = false; // single-flight : 2 imports concurrents = progression entrelacee + update yt-dlp possible pendant execution
-H('yt:download', async (_e, { url, start, end, dir, full }) => {
+H('yt:download', async (_e, o) => {
+  if (!o || typeof o !== 'object' || Array.isArray(o)) throw new Error('options invalides');
+  const { url, start, end, dir, full } = o;
   if (ytDownloadBusy) throw new Error('Un import YouTube est déjà en cours — attends la fin.');
   ytDownloadBusy = true;
   try {

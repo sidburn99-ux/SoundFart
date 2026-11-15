@@ -646,7 +646,7 @@ internal static class AudioTap
                     // ecriture immediate sur stdout (le silence est deja des zeros)
                     pcmOut.Write(outBuf, 0, outBuf.Length);
                     pcmPending += outBuf.Length;
-                    if (pcmPending >= 131072) { pcmOut.Flush(); pcmPending = 0; }
+                    if (pcmPending >= 16384) { pcmOut.Flush(); pcmPending = 0; } // ~40 ms a 384 Ko/s
                     statWritten += outBuf.Length;
                     continue;
                 }
@@ -665,7 +665,11 @@ internal static class AudioTap
 
             uint padNow;
             if (!pcmMode && dst.GetCurrentPadding(out padNow) == 0) statPadding = padNow;
-            if (pcmMode && pcmPending > 0) { pcmOut.Flush(); pcmPending = 0; }
+            // Flush par palier (>=16 Kio), pas a chaque iteration (~4 ms) :
+            // un WriteFile stdout par tour saturait le pipeline IPC sans gain
+            // de latence utile. Le reliquat part au prochain palier ou sur
+            // les chemins de sortie (return 2 / fin de boucle).
+            if (pcmMode && pcmPending >= 16384) { pcmOut.Flush(); pcmPending = 0; }
             if (DateTime.UtcNow - statLast > TimeSpan.FromSeconds(2))
             {
                 statLast = DateTime.UtcNow;
