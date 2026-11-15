@@ -372,16 +372,53 @@ async function applyAudioInner() {
   return warns.length === 0;
 }
 
+let permWarnShown = false;
+const warnPermOnce = (msg) => {
+  logErr('refreshDevices', new Error(msg));
+  if (!permWarnShown) { permWarnShown = true; toast('Accès audio refusé ou indisponible — la liste des périphériques peut être incomplète. Vérifie l\'autorisation micro.', 'warn'); }
+};
+
 async function refreshDevices(askPermission) {
+  audio.devicesDegraded = false;
   if (askPermission) {
-    try { (await navigator.mediaDevices.getUserMedia({ audio: true })).getTracks().forEach((t) => t.stop()); } catch {}
+    // Ce getUserMedia est VOLONTAIRE : c'est lui qui fait passer la permission
+    // 'microphone' — sans lui, enumerateDevices ne retourne que des
+    // placeholders vides (deviceId=''). L'echec est journalise, jamais masque.
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+      s.getTracks().forEach((t) => t.stop());
+    } catch (e) {
+      audio.devicesDegraded = true;
+      warnPermOnce('getUserMedia refuse: ' + (e && e.name ? e.name : e) + ' ' + (e && e.message ? e.message : ''));
+      return false;
+    }
   }
-  const list = await navigator.mediaDevices.enumerateDevices();
-  audio.devices.out = list.filter((d) => d.kind === 'audiooutput' && d.deviceId !== 'communications');
-  audio.devices.inp = list.filter((d) => d.kind === 'audioinput' && d.deviceId !== 'communications');
+  let list;
+  try {
+    list = await navigator.mediaDevices.enumerateDevices();
+  } catch (e) {
+    audio.devicesDegraded = true;
+    warnPermOnce('enumerateDevices a echoue: ' + (e && e.name ? e.name : e));
+    return false;
+  }
+  // Sans permission audio, Chromium retourne des entrees generiques avec
+  // deviceId='' — ce n'est PAS une liste vide : c'est une detection degradee.
+  const real = list.filter((d) => d.deviceId);
+  if (!real.length) {
+    audio.devicesDegraded = true;
+    warnPermOnce('enumerateDevices sans deviceId (permission audio absente)');
+    return false;
+  }
+  audio.devices.out = real.filter((d) => d.kind === 'audiooutput' && d.deviceId !== 'communications');
+  audio.devices.inp = real.filter((d) => d.kind === 'audioinput' && d.deviceId !== 'communications');
+  return true;
 }
 
 function resolveDevices() {
+  // Enumeration degradee (permission refusee, transient) : ne PAS effacer les
+  // ids/labels memorises — une detection incomplete ne doit jamais ecraser
+  // une configuration audio valide.
+  if (audio.devicesDegraded) return;
   const s = cfg.settings;
   const pick = (idKey, lblKey, list, regex, fallbackId) => {
     let d = s[idKey] && list.find((x) => x.deviceId === s[idKey]);

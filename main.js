@@ -1114,23 +1114,33 @@ function createWindow() {
 
 app.whenReady().then(() => {
   Menu.setApplicationMenu(buildMenu());
-  // Seul l'acces audio est autorise : 'media' n'est accorde que si la requete
-  // ne demande que de l'audio (jamais la camera) ; 'display-capture' pour le
-  // repli loopback de l'enregistreur.
-  const allowed = (p) => p === 'media' || p === 'display-capture';
-  session.defaultSession.setPermissionRequestHandler((_wc, permission, cb, details) => {
-    if (permission === 'media') {
-      const types = (details && details.mediaTypes) || [];
-      return cb(types.length > 0 && types.every((t) => t === 'audio'));
+  // Permissions audio : 'microphone' (Chromium recent separe micro de 'media'
+  // — refuser 'microphone' vide enumerateDevices et refuse getUserMedia),
+  // 'media' accorde seulement si audio seul, 'display-capture' pour le
+  // repli loopback. Chaque decision est journalisee (permission, origine,
+  // mediaTypes, raison) — un refus audio est toujours explicable.
+  const { decideMediaPermission } = require('./lib/media-permission');
+  const permOriginOk = (wc) => {
+    try { return /[\\/]index\.html$/.test(new URL(wc.getURL()).pathname); } catch { return false; }
+  };
+  const logPerm = (permission, origin, mediaTypes, d) =>
+    log('[perm] ' + permission + ' origin=' + String(origin).slice(0, 120)
+      + ' mediaTypes=' + JSON.stringify(mediaTypes || null)
+      + ' -> ' + (d.allow ? 'ALLOW' : 'DENY') + ' (' + d.reason + ')', d.allow ? 'info' : 'warn');
+  session.defaultSession.setPermissionRequestHandler((wc, permission, cb, details) => {
+    const origin = wc && wc.getURL ? wc.getURL() : '?';
+    const mediaTypes = details && details.mediaTypes;
+    if (!permOriginOk(wc)) {
+      logPerm(permission, origin, mediaTypes, { allow: false, reason: 'origine non autorisee' });
+      return cb(false);
     }
-    cb(allowed(permission));
+    const d = decideMediaPermission(permission, details);
+    logPerm(permission, origin, mediaTypes, d);
+    cb(d.allow);
   });
-  session.defaultSession.setPermissionCheckHandler((_wc, permission, _origin, details) => {
-    if (permission === 'media') {
-      const types = (details && details.mediaTypes) || [];
-      return types.length > 0 && types.every((t) => t === 'audio');
-    }
-    return allowed(permission);
+  session.defaultSession.setPermissionCheckHandler((wc, permission, _origin, details) => {
+    if (!permOriginOk(wc)) return false;
+    return decideMediaPermission(permission, details).allow;
   });
   // Enregistreur : autorise getDisplayMedia pour capturer l'audio systeme (boucle locale Windows)
   session.defaultSession.setDisplayMediaRequestHandler((request, callback) => {
