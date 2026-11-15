@@ -578,3 +578,13 @@ il ne reste que 0611 (.dmp), VALIDATION.md materiel, endurance.
 - Note harnais : play() refuse a juste titre un objet son absent de
   cfg.sounds (garde SF-REL-0633) — les voice:false precedents etaient
   des faux negatifs de test, pas des bugs.
+
+## 15/11/2026 (suite 13) — VALIDATION.md C regression V2 executee
+
+- Flux enregistreur complet pilote par CDP (test/cdp-recflow.js) :
+  recorderModal -> micro seul (pcOn/cableOn OFF) -> 4 s de prise ->
+  stop -> askDestDir -> OK -> modale « Enregistrement termine » ->
+  « Ajouter a la bibliotheque » -> son present dans cfg.sounds et
+  play() OK. Nettoyage : son retire (retour 29 sons).
+- Reste non couvert sur cet item : niveau non silencieux du micro
+  (necessite oreille/entree reelle).

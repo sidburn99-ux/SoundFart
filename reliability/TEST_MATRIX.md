@@ -37,6 +37,7 @@ pas testables via npm test — couverts par revue indépendante + runtime.
 | rec:save blob réel → webm 24 Ko | cdp-recsave.js | fichier persisté exact |
 | AudioTap WASAPI loopback | cdp-tap.js | 73 chunks PCM, RMS 0,285 / peak 0,635 |
 | Stress churn (play/stop rafale, modales, rec:save, cycles audio) | cdp-stress.js | 40/40 itérations, heap stable 10 Mo, 0 crash — recherche SF-REL-0611 |
+| Régression V2 enregistreur (micro → stop → askDestDir → « Ajouter à la bibliothèque » → jouable) | cdp-recflow.js | flux complet validé : prise 4 s, fichier persisté, son ajouté (29→30), `play()` OK, nettoyage |
 
 ## Exécuté réel — smoke
 

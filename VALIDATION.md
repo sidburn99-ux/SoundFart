@@ -35,7 +35,7 @@
 - [ ] « Audio du PC » seul → musique système captée, non silencieuse.
 - [ ] Câble seul → sons soundboard captés.
 - [ ] Micro + PC + câble simultanés → les 3 sources présentes, limiteur anti-saturation OK.
-- [ ] **Régression V2** : Arrêter → choisir dossier → « Enregistrement terminé » → « Ajouter à la bibliothèque » → son présent et jouable.
+- [x] **Régression V2** : Arrêter → choisir dossier → « Enregistrement terminé » → « Ajouter à la bibliothèque » → son présent et jouable. **Validé agent 15/11** : flux complet piloté par CDP (micro seul, 4 s de prise) → `askDestDir` → OK → modale résultat → « Ajouter à la bibliothèque » → son dans `cfg.sounds`, `play()` OK, puis retiré (nettoyage). Driver : `test/cdp-recflow.js`. Reste non couvert : niveau non silencieux du micro (nécessite oreille/entrée réelle — cf. item ci-dessus).
 - [ ] Fermer la modale pendant l'enregistrement → fichiers partiels non ajoutés, micro éteint (LED).
 - [ ] Débrancher le micro pendant l'enregistrement → arrêt propre + message, pas de fichier silencieux présenté comme réussi.
 - [ ] Arrêter/démarrer Windows Audio (`net stop audiosrv` admin) pendant « Audio du PC » → comportement observé : soit reconnexion AudioTap (log « reconnecte »), soit tapDead + message — **pas de silence invisible**.
