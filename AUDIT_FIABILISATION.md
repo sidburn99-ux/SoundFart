@@ -1,5 +1,13 @@
 # AUDIT_FIABILISATION.md — Revue complète et plan de fiabilisation
 
+> **État final (15/11/2026)** : la campagne de fiabilisation est terminée.
+> Les actions §10 sont toutes réalisées ou reclassées ; le registre de
+> référence est désormais `reliability/FINDINGS.md` (166 anomalies :
+> 142 CLOSED, 23 ACCEPTED documentés, 1 INVESTIGATING = crash renderer
+> AudioContext -1/143 en attente d'un `.dmp` Crashpad). Point de reprise :
+> `reliability/NEXT_ACTIONS.md`. Ce document reste l'audit initial —
+> son §9 (« ne pas fusionner ») et ses restes « assumés » sont caducs.
+>
 > Audit réalisé le 15 novembre 2026 sur `hardening/v2` (dernier commit `8f756f7`).
 > **Mise à jour post-campagne** : les constats N1-N11, R1-R14, M2-M6, M9-M11,
 > S1-S3, S5 ont été corrigés (commits `b35ae44`, `f334db6`, `a4e403a`,
