@@ -135,8 +135,14 @@ function migrateOldConfig() {
   // Reprise des sons de l'ancienne version Python (chemins uniquement)
   try {
     const old = path.join(app.getPath('appData'), 'DiscordSoundboard', 'config.json');
+    // Borne comme config.json/.bak (16 Mo) : un fichier legacy geant ou
+    // bloque gelait le demarrage du main.
+    if (fs.statSync(old).size > 16 * 1024 * 1024) return null;
     const j = JSON.parse(fs.readFileSync(old, 'utf-8'));
     if (!Array.isArray(j.sounds) || !j.sounds.length) return null;
+    // Un element sans path string ferait planter basename() -> toute la
+    // migration perdue ; on filtre avant le map.
+    j.sounds = j.sounds.filter((x) => x && typeof x.path === 'string' && x.path);
     const now = Date.now();
     return {
       version: 1,
@@ -984,14 +990,22 @@ H('sounds:seed', () => {
     fs.mkdirSync(dst, { recursive: true });
     return fs.readdirSync(src).filter((f) => DEFAULT_SOUND_NAMES[f]).map((f) => {
       const out = path.join(dst, f);
-      if (!fs.existsSync(out)) {
+      const srcF = path.join(src, f);
+      // Un fichier pre-existant tronque (ancien bug, AV) passait
+      // existsSync : on compare la taille a la source et on recopie si
+      // differente — un .part interrompu n'est plus protege pour toujours.
+      let needCopy = true;
+      if (fs.existsSync(out)) {
+        try { needCopy = fs.statSync(out).size !== fs.statSync(srcF).size; } catch { needCopy = true; }
+      }
+      if (needCopy) {
         // Copie verbifiee : un copyFileSync interrompu (crash, AV) laissait un
         // fichier partiel que existsSync protegeait ensuite pour toujours.
         const tmp = out + '.part';
         try {
-          fs.copyFileSync(path.join(src, f), tmp);
-          const a = fs.statSync(path.join(src, f)).size, b = fs.statSync(tmp).size;
-          if (a !== b) throw new Error('copie incomplete');
+          fs.copyFileSync(srcF, tmp);
+          const a = fs.statSync(srcF).size, b = fs.statSync(tmp).size;
+          if (!a || a !== b) throw new Error('copie incomplete');
           fs.renameSync(tmp, out);
         } catch (ce) {
           try { fs.unlinkSync(tmp); } catch {}
@@ -1271,7 +1285,11 @@ async function watchdogMic() {
     try { if (fs.statSync(configFile()).size > 16 * 1024 * 1024) return; } catch { return; }
     const cfg = JSON.parse(fs.readFileSync(configFile(), 'utf-8'));
     const st = cfg && cfg.settings;
-    if (!st || st.autoSwitchMic === false || st.watchdogMic === false) return;
+    if (!st || typeof st !== 'object' || Array.isArray(st)) return;
+    // Aligne sur normalizeCfg (app.js) : absent = defaut actif, present
+    // doit etre strictement true — 'false' string ou autre desactive.
+    if (st.autoSwitchMic !== undefined && st.autoSwitchMic !== true) return;
+    if (st.watchdogMic !== undefined && st.watchdogMic !== true) return;
     const eps = parseEndpoints(await audioExecP(tool, ['list']));
     const target = findCableCapture(eps, st.cableLabel);
     if (!target) return;

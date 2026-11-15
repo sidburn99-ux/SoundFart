@@ -385,6 +385,21 @@ sauvegardes KO sans feedback.
 **Fix** : addPaths borne a 5000 - len(cfg.sounds) + toast de troncature.
 **Statut** : FIXED_PENDING_VALIDATION.
 
+
+## SF-REL-0624 — P3 audit config : 3 durcissements (groupe)
+
+1. migrateOldConfig : lecture non bornee -> borne 16 Mo + filtre des
+   elements sans path string (un element casse faisait perdre toute la
+   migration via basename(undefined)).
+2. sounds:seed : fichier pre-existant tronque passait existsSync ->
+   comparaison de taille a la source + recopie si different ; source
+   vide rejetee (!a).
+3. watchdogMic : lecture config brute divergeait de normalizeCfg ->
+   meme semantique (absent=actif, present doit etre === true) + rejet
+   settings non-objet.
+**Preuve** : node --check, npm test 39/39, dist rebuild, smoke OK.
+**Statut** : FIXED_PENDING_VALIDATION.
+
 ## Historique actif des régressions (Quality Gate V2 §9)
 
 | Régression | Origine | Introduite par | Prévention |
@@ -405,7 +420,7 @@ Règle : avant de toucher un composant, chercher ici + dans le tableau ses anoma
 | ACCEPTED | 24 | cycle 1 : 12 · cycle 2 : 1 · cycle 3 : 7 · cycle 5 : 4 |
 | INVESTIGATING | 1 | SF-REL-0611 crash AudioContext |
 | OPEN / BLOCKED | 0 | — |
-| **Total IDs définis** | **126** | IDs uniques, aucun doublon de définition |
+| **Total IDs définis** | **127** | IDs uniques, aucun doublon de définition |
 
 ### Doublons fonctionnels documentés (IDs distincts, même anomalie)
 
