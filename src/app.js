@@ -2413,6 +2413,11 @@ async function init() {
   window.sf.onMicWatchOff && window.sf.onMicWatchOff(() => {
     toast('Entrée micro modifiée pendant la session — surveillance auto suspendue (réglages → surveillance micro).', 'warn');
   });
+  window.sf.onPowerResume && window.sf.onPowerResume(() => {
+    // Reveil systeme : peripheriques re-enumeres sans devicechange fiable.
+    refreshDevices(false).then(() => { resolveDevices(); updateCableUi(); })
+      .catch((e) => logErr('powerResume', e));
+  });
   window.sf.onShortcut((key) => {
     if (key === '__stop__') { stopAll(false); return; }
     const s = cfg.sounds.find((x) => x.id === key);

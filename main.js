@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, session, Menu, globalShortcut, desktopCapturer, crashReporter } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, session, Menu, globalShortcut, desktopCapturer, crashReporter, powerMonitor } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const https = require('https');
@@ -47,6 +47,19 @@ const SESSION_ID = crypto.randomBytes(3).toString('hex');
 const LOG_LEVELS = { info: 0, warn: 1, error: 2 };
 let logLevel = LOG_LEVELS.info;
 let lastSizeCheck = 0;
+// Debit max pour les messages ISSUS du renderer (ui:log, console-message) :
+// un renderer buggé spamant console.error ecrivait des Go/min sur disque et
+// bloquait le main via appendFileSync synchrone (SF-REL-0651).
+const UI_LOG_MAX_PER_SEC = 30;
+let uiLogWinStart = 0, uiLogWinCount = 0, uiLogDropped = 0;
+function uiLogAllowed() {
+  const now = Date.now();
+  if (now - uiLogWinStart >= 1000) { uiLogWinStart = now; uiLogWinCount = 0; }
+  if (++uiLogWinCount <= UI_LOG_MAX_PER_SEC) return true;
+  uiLogDropped++;
+  if (uiLogDropped % 100 === 0) log('[log] ' + uiLogDropped + ' messages renderer ignores (spam)', 'warn');
+  return false;
+}
 function log(msg, lvl = 'info') {
   try {
     if ((LOG_LEVELS[lvl] || 0) < logLevel) return;
@@ -60,10 +73,20 @@ function log(msg, lvl = 'info') {
     if (now - lastSizeCheck > 60000) {
       lastSizeCheck = now;
       try {
-        if (fs.statSync(f).size > 2 * 1024 * 1024) {
-          fs.writeFileSync(f, fs.readFileSync(f).slice(-500 * 1024));
+        const size = fs.statSync(f).size;
+        if (size > 2 * 1024 * 1024) {
+          // Lire le fichier ENTIER (readFileSync) pouvait jeter (fichier
+          // geant / RAM) -> trim en echec a chaque passage, log sans borne.
+          // On ne lit que les 500 derniers Ko via un descripteur positionne.
+          const keep = Math.min(500 * 1024, size);
+          const fd = fs.openSync(f, 'r');
+          try {
+            const tail = Buffer.alloc(keep);
+            fs.readSync(fd, tail, 0, keep, size - keep);
+            fs.writeFileSync(f, tail);
+          } finally { fs.closeSync(fd); }
         }
-      } catch {}
+      } catch (e) { log('[log] trim echoue: ' + (e && e.message), 'warn'); }
     }
     fs.appendFileSync(f, new Date().toISOString() + ' [' + lvl + '] [s' + SESSION_ID + '] ' + msg + '\n');
   } catch {}
@@ -115,6 +138,25 @@ try {
   });
 } catch (e) { log('[crash] crashReporter: ' + e.message, 'warn'); }
 
+// Les minidumps Crashpad n'etaient jamais purges : croissance non bornee
+// sur profil portable/USB (notamment le bug renderer -1/143 recurrent).
+// On supprime les .dmp de plus de 30 jours au demarrage — les dumps recents
+// (preuves SF-REL-0611) sont preserves.
+try {
+  const crashDir = path.join(app.getPath('userData'), 'Crashpad');
+  for (const sub of ['reports', 'reversed']) {
+    const d = path.join(crashDir, sub);
+    if (!fs.existsSync(d)) continue;
+    for (const f of fs.readdirSync(d)) {
+      if (!f.endsWith('.dmp')) continue;
+      try {
+        const fp = path.join(d, f);
+        if (Date.now() - fs.statSync(fp).mtimeMs > 30 * 86400000) fs.unlinkSync(fp);
+      } catch {}
+    }
+  }
+} catch (e) { log('[crash] purge dumps: ' + (e && e.message), 'warn'); }
+
 const configFile = () => path.join(app.getPath('userData'), 'config.json');
 
 // Garde IPC : seuls les evenements venant de la page de l'app (index.html,
@@ -142,7 +184,7 @@ function migrateOldConfig() {
     if (!Array.isArray(j.sounds) || !j.sounds.length) return null;
     // Un element sans path string ferait planter basename() -> toute la
     // migration perdue ; on filtre avant le map.
-    j.sounds = j.sounds.filter((x) => x && typeof x.path === 'string' && x.path);
+    j.sounds = j.sounds.filter((x) => x && typeof x.path === 'string' && x.path).slice(0, 5000);
     const now = Date.now();
     return {
       version: 1,
@@ -222,7 +264,7 @@ ipcMain.on('menu:state', (e, s) => {
 ipcMain.on('ui:log', (e, m) => {
   // Strip les caracteres de controle : un message avec \r\n pourrait forger
   // des entrees de log au format timestamp/niveau.
-  if (fromApp(e)) log('[ui] ' + String(m).replace(/[\r\n\x00-\x1f]/g, ' ').slice(0, 800));
+  if (fromApp(e) && uiLogAllowed()) log('[ui] ' + String(m).replace(/[\r\n\x00-\x1f]/g, ' ').slice(0, 800));
 });
 
 H('desktop:source', async () => {
@@ -1135,15 +1177,18 @@ ipcMain.on('audio:restore', (e) => {
   autoSetupChain = run.catch(() => {});
 });
 async function audioRestoreImpl() {
+  if (quitting) return; // ne pas compiler/lancer AudioEndpoint pendant la sortie
   micSwitching = true;
   try {
     const tool = await ensureAudioTool();
+    if (quitting) return;
     if (!tool) { log('[mic-restore] outil audio indisponible : ' + (lastToolErr || 'inconnu'), 'warn'); return; }
     // Securite : sans audio-restore.json, SoundFart n'a jamais bascule le micro
     // (ou l'a deja restaure) -> on ne touche a RIEN, meme si une entree pointe
     // sur un peripherique virtuel (choix volontaire possible : Voicemeeter,
     // CABLE Output utilise par une autre app, etc.).
     if (!fs.existsSync(restoreFile())) return;
+    if (quitting) return; // will-quit gere deja la restauration synchrone
     if (await restoreMicNowP(tool)) return;
     // restoreFile present = bascule faite par SoundFart mais restauration
     // incomplete (cible introuvable, JSON corrompu...) : dernier recours borne,
@@ -1310,8 +1355,12 @@ async function watchdogMic() {
   if (watchdogBusy || micWatchSuspended || micSwitching) return;
   watchdogBusy = true;
   try {
-    const tool = audioToolPath();
-    if (!tool || !fs.existsSync(tool) || !fs.existsSync(restoreFile()) || !fs.existsSync(configFile())) return;
+    if (!fs.existsSync(restoreFile()) || !fs.existsSync(configFile())) return;
+    // ensureAudioTool (single-flight) : si l'exe a ete supprime/tronque en
+    // cours de session, le watchdog le recompilait jamais et la surveillance
+    // micro etait muette a jamais — y compris a la fermeture (SF-REL-0653).
+    const tool = await ensureAudioTool();
+    if (!tool) return;
     // Borne de lecture : config:load limite a 16 Mo, le watchdog doit
     // appliquer la meme regle (un fichier bloque/geant gele le main).
     try { if (fs.statSync(configFile()).size > 16 * 1024 * 1024) return; } catch { return; }
@@ -1374,7 +1423,7 @@ function createWindow() {
     const d = (event && typeof event === 'object' && 'message' in event)
       ? { level: event.level, message: event.message, line: event.lineNumber, sourceId: event.sourceId }
       : { level, message, line, sourceId };
-    if (d.level === 3 || d.level === 'error') log(`[page] ${d.message} (${d.sourceId}:${d.line})`, 'error');
+    if ((d.level === 3 || d.level === 'error') && uiLogAllowed()) log(`[page] ${d.message} (${d.sourceId}:${d.line})`, 'error');
   });
   let rendererReloads = 0; // anti-boucle : 1 reload max par session apres crash renderer
   win.webContents.on('render-process-gone', (_e, details) => {
@@ -1464,6 +1513,16 @@ app.whenReady().then(() => {
     }).catch((e) => { log('[displaymedia] getSources: ' + e.message, 'warn'); callback({}); });
   });
   createWindow();
+  // Sleep/wake : les peripheriques audio peuvent etre re-enumeres
+  // differemment au reveil sans devicechange fiable ; on journalise et on
+  // demande au renderer de re-resoudre ses peripheriques. Limite connue :
+  // un enregistrement MediaRecorder en cours peut contenir un trou
+  // silencieux pendant la veille (non detectable sans horloge audio).
+  powerMonitor.on('suspend', () => log('[power] veille systeme', 'warn'));
+  powerMonitor.on('resume', () => {
+    log('[power] reveil systeme');
+    if (win && !win.isDestroyed()) { try { win.webContents.send('sf:powerResume'); } catch (e) { log('[power] send powerResume: ' + (e && e.message), 'warn'); } }
+  });
   setInterval(watchdogMic, 30000); // 30 s suffisent : 2 spawn AudioEndpoint toutes les 10 s coutaient ~2 % CPU en continu
 });
 

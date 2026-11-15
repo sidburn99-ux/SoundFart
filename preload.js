@@ -40,4 +40,5 @@ contextBridge.exposeInMainWorld('sf', {
   onTapDead: on('sf:tapDead'),
   onTapPcm: on('sf:tapPcm'),
   onMicWatchOff: on('sf:micWatchOff'),
+  onPowerResume: on('sf:powerResume'),
 });

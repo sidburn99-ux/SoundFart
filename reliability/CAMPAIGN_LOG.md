@@ -367,3 +367,16 @@ confirme justifie (confirmBox ferme deja settings en amont de onDone).
 Remarques conservees : id '' possible (pre-existant, basse), toast
 saveConfig une seule fois a vie (choix assume). 0639 reste FPV : sa
 borne de file decode n'a pas encore sa propre revue.
+
+## V2 — audit lifecycle OS + scripts (15/11/2026)
+
+Subagent : single-instance, powerMonitor, session, Crashpad, scripts
+build, storageRoot, migrateOldConfig. Sain : single-instance correct,
+window-all-closed/will-quit idempotent, permissions bornees, scripts
+propres, electron-builder whitelist stricte (aucune donnee utilisateur
+embarquee).
+Corriges : 0650 trim log OOM (P1), 0651 rate-limit ui:log, 0652
+powerMonitor suspend/resume + refresh devices, 0653 watchdog
+ensureAudioTool, 0654 gardes quitting restore, 0655 purge dumps >30j,
+0657 borne migrate. 0656 ACCEPTED (sonde sync = pire que pending async).
+Verifs : node --check x3, npm test 39/39, dist, smoke + cdp-drive.

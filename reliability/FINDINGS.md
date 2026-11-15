@@ -609,6 +609,85 @@ les deux champs, sinon reinitialisation.
 **Preuve** : node --check, npm test 39/39, dist, smoke + cdp-drive.
 **Statut** : CLOSED — revue independante (CORRECT sans reserve) + npm test 39/39 + dist + smoke + cdp-drive PASS. Limites documentees par entree.
 
+
+## SF-REL-0650 — trim log : readFileSync integral -> trim en echec a jamais (P1)
+
+**Symptome** : au-dela de 2 Mo, le trim lisait le fichier ENTIER en RAM ;
+un fichier geant rendait readFileSync throw -> catch silencieux -> trim
+re-echouait toutes les 60 s -> log sans borne jusqu'au disque plein.
+**Fix** : lecture des 500 derniers Ko via descripteur positionne
+(readSync avec offset) + warn logge si le trim echoue.
+**Preuve** : node --check, npm test 39/39, dist, smoke + cdp-drive.
+**Statut** : FIXED_PENDING_VALIDATION.
+
+## SF-REL-0651 — ui:log/console-message sans limite de debit (P2)
+
+**Symptome** : chaque message renderer ecrivait synchrone sur disque sans
+quota -> renderer buggé = Go/min + blocage main (appendFileSync).
+**Fix** : uiLogAllowed() — 30 msg/s par fenetre glissante, surplus comptes
+et resume « N messages ignores » toutes les 100. Applique aux 2 canaux.
+**Preuve** : node --check, npm test 39/39, dist, smoke + cdp-drive.
+**Statut** : FIXED_PENDING_VALIDATION.
+
+## SF-REL-0652 — aucun handler powerMonitor : sleep/wake non gere (P2)
+
+**Symptome** : pas de log ni reaction au sleep/wake ; peripheriques
+re-enumeres sans devicechange fiable ; enregistrement MediaRecorder
+pouvait contenir un trou silencieux pendant la veille.
+**Fix** : powerMonitor suspend/resume logges ; au resume, envoi
+'sf:powerResume' -> renderer re-resout peripheriques. Limite documentee :
+le trou dans un enregistrement en cours n'est pas detectable sans
+horloge audio (non corrige — a evaluer si terrain le remonte).
+**Preuve** : node --check, npm test 39/39, dist, smoke + cdp-drive.
+**Statut** : FIXED_PENDING_VALIDATION.
+
+## SF-REL-0653 — watchdog micro : exe absent -> surveillance muette (P2)
+
+**Symptome** : watchdogMic testait existsSync(tool) et sortait — un exe
+supprime/tronque en session desarmait la surveillance a jamais, micro
+coince possible a la fermeture sans recours.
+**Fix** : ensureAudioTool() (single-flight, recompile via csc) dans le
+tick watchdog au lieu du test existsSync.
+**Preuve** : node --check, npm test 39/39, dist, smoke + cdp-drive.
+**Statut** : FIXED_PENDING_VALIDATION.
+
+## SF-REL-0654 — audioRestoreImpl sans garde quitting (P3)
+
+**Symptome** : un audio:restore arrive au moment du quit pouvait
+compiler C# (csc 60 s) ou lancer 'set capture' APRES la restauration
+synchrone du will-quit -> peripherique re-bascule sans marqueur.
+**Fix** : tests quitting en tete + apres ensureAudioTool + avant
+restoreMicNowP.
+**Preuve** : node --check, npm test 39/39, dist, smoke + cdp-drive.
+**Statut** : FIXED_PENDING_VALIDATION.
+
+## SF-REL-0655 — Crashpad : minidumps jamais purges (P3)
+
+**Symptome** : reports/reversed accumulaient les .dmp sans borne
+(profil portable/USB, bug renderer -1/143 recurrent).
+**Fix** : purge au demarrage des .dmp >30 jours — les dumps recents
+(Preuves SF-REL-0611) sont preserves.
+**Preuve** : node --check, npm test 39/39, dist, smoke + cdp-drive.
+**Statut** : FIXED_PENDING_VALIDATION.
+
+## SF-REL-0656 — storageRoot : chemin arbitraire sans validation FS (P3, ACCEPTED)
+
+**Constat** : dir absolu accepte tel quel ; chemin sur USB retire/partage
+mort peut pendre fs.promises.mkdir indefiniment -> rec:save/yt:download
+pending a jamais.
+**Decision** : ACCEPTED — une sonde statSync synchrone sur lecteur mort
+bloquerait le main (PIRE que le pending async actuel) ; un timeout sur
+mkdir necessiterait de toucher chaque handler d'ecriture. Limite
+documentee, a reevaluer si terrain.
+**Statut** : ACCEPTED.
+
+## SF-REL-0657 — migrateOldConfig : tableau sounds non borne (P3)
+
+**Symptome** : ~200k entrees -> map() sur thread main au config:load.
+**Fix** : slice(0, 5000) coherent avec normalizeCfg.
+**Preuve** : node --check, npm test 39/39, dist, smoke + cdp-drive.
+**Statut** : FIXED_PENDING_VALIDATION.
+
 ## Historique actif des régressions (Quality Gate V2 §9)
 
 | Régression | Origine | Introduite par | Prévention |
@@ -625,11 +704,11 @@ Règle : avant de toucher un composant, chercher ici + dans le tableau ses anoma
 | Statut | Nombre | Détail |
 |---|---|---|
 | CLOSED | 32 | 0141 + 0612-0619 + 0620-0630 + 0631-0638 + 0640 (non-anomalie) + 0641/0643/0644 |
-| FIXED_PENDING_VALIDATION | 83 | cycles 1-5 historiques + 0639 (borne file en revue) |
-| ACCEPTED | 21 | cycles 1-5 + 0642 |
+| FIXED_PENDING_VALIDATION | 90 | cycles 1-5 historiques + 0639 + 0650-0655/0657 |
+| ACCEPTED | 22 | cycles 1-5 + 0642 + 0656 |
 | INVESTIGATING | 1 | SF-REL-0611 crash AudioContext |
 | OPEN / BLOCKED | 0 | — |
-| **Total IDs définis** | **137** | IDs uniques ; trous de numerotation 0065-0099 et 0117-0119 (jamais attribues) |
+| **Total IDs définis** | **145** | IDs uniques ; trous de numerotation 0065-0099 et 0117-0119 (jamais attribues) |
 
 ### Doublons fonctionnels documentés (IDs distincts, même anomalie)
 
