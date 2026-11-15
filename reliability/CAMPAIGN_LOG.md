@@ -476,3 +476,12 @@ il ne reste que 0611 (.dmp), VALIDATION.md materiel, endurance.
   npm test 40/40 apres l'affinage.
 - Registre : 166 anomalies — 142 CLOSED, 0 FPV, 23 ACCEPTED,
   1 INVESTIGATING (0611).
+
+## 15/11/2026 (suite 3) — driver stress CDP pour SF-REL-0611
+
+- test/cdp-stress.js ajoute : 40 iterations de play/stopAll en rafale,
+  churn de modales, rec:save burst, teardownAudio/applyAudio x5.
+- Resultat : 40/40 iterations propres, heap stable 10 Mo, 0 crash,
+  0 .dmp. Preuve negative pour 0611 — ne ferme PAS l'anomalie
+  (investigation maintenue, exposition smoke continue).
+- Registre inchange : 142 CLOSED, 0 FPV, 23 ACCEPTED, 1 INVESTIGATING.

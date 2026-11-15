@@ -36,13 +36,15 @@ pas testables via npm test — couverts par revue indépendante + runtime.
 | Boucle VB-CABLE entrée→sortie | cdp-cableloop.js | RMS 0,282 / peak 0,407 — niveau non nul mesuré |
 | rec:save blob réel → webm 24 Ko | cdp-recsave.js | fichier persisté exact |
 | AudioTap WASAPI loopback | cdp-tap.js | 73 chunks PCM, RMS 0,285 / peak 0,635 |
+| Stress churn (play/stop rafale, modales, rec:save, cycles audio) | cdp-stress.js | 40/40 itérations, heap stable 10 Mo, 0 crash — recherche SF-REL-0611 |
 
 ## Exécuté réel — smoke
 
 | Vérification | Résultat |
 |---|---|
 | dist\SoundFart.exe --test-profile | fenêtre, config.json, audio-restore.json, [perm] ALLOW — smoke de démarrage, PAS une validation comportementale |
-| Endurance | smoke continu depuis ~15:59, heap stable, aucun `.dmp` Crashpad à ce jour |
+| Endurance | smoke continu, heap stable, aucun `.dmp` Crashpad à ce jour |
+| Stress SF-REL-0611 | cdp-stress.js 40 itérations (rafales play/stop, churn modales, rec:save, teardown/applyAudio ×5) : aucun crash, heap 10 Mo stable — résultat négatif, ne ferme PAS 0611 |
 
 ## NON couvert — validation matérielle requise (VALIDATION.md)
 
