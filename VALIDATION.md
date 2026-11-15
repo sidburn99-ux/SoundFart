@@ -63,8 +63,8 @@
 - [ ] Fermer pendant un téléchargement yt-dlp → plus de processus `yt-dlp.exe`/`ffmpeg.exe` orphelins (vérifier Gestionnaire des tâches).
 - [ ] Importer 200 sons d'un coup → UI fluide, pas de freeze.
 - [ ] Session 2-4 h : sons en boucle + enregistrements → heap stable dans soundfart.log, pas de croissance continue.
-- [ ] Corrompre `config.json` (texte invalide) → redémarrage → `.broken-*` créé, `.bak` chargé, bibliothèque préservée.
-- [ ] Copier un `config.json` > 16 Mo → refus propre, pas de freeze.
+- [x] Corrompre `config.json` (texte invalide) → redémarrage → `.broken-*` créé, `.bak` chargé, bibliothèque préservée. **Validé agent 15/11** : config corrompue → `config.json.broken-<ts>` créé, 31 sons rechargés depuis `.bak`, config.json réécrit saine au démarrage.
+- [x] Copier un `config.json` > 16 Mo → refus propre, pas de freeze. **Validé agent 15/11** : config 17 Mo → rejet taille, `.broken-*` créé, `.bak` chargé (31 sons), pas de freeze.
 
 ## G. Matrice matériel minimale
 

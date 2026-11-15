@@ -528,3 +528,15 @@ il ne reste que 0611 (.dmp), VALIDATION.md materiel, endurance.
   l'independance, ecart UX mineur.
 - 0681/0682 -> CLOSED. Registre : 168 anomalies — 144 CLOSED, 0 FPV,
   23 ACCEPTED, 1 INVESTIGATING.
+
+## 15/11/2026 (suite 7) — items VALIDATION.md logiciels executes
+
+- Section F (resilience config) validee en runtime sur test-profile :
+  - config.json corrompu (texte invalide) -> config.json.broken-<ts>
+    cree, .bak charge (31 sons), config.json reecrit saine.
+  - config.json 17 Mo -> rejet borne 16 Mo, .broken cree, .bak charge,
+    pas de freeze.
+- Items VALIDATION.md coches dans le document. Restent : tous les
+  items materiels (A audio reel partiellement couvert CDP, B periph,
+  C enregistrement multi-source, D Discord, E partiellement CDP,
+  F endurance/orphelins).
