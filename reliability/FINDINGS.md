@@ -163,7 +163,8 @@ Recherche externe (correlations) :
 - Chromium fait tourner l'audio dans un process utility séparé (audio.mojom.AudioService) ; il peut crasher sur changement de périphérique et se fait tuer par un hang-monitor (3 min, kTerminateCurrentProcess). À sa mort, l'AudioContext reçoit exactement notre message « encountered an error from the audio device or the WebAudio renderer » et passe suspended — cf. obsproject/obs-studio#10586 (même symptôme).
 - Chromium bug 353979250 (2024) : device de sortie non-défaut invalide → RenderError au lieu de fallback. Le device CABLE (virtuel) est le candidat idéal à l'invalidation.
 - Chromium bug 1408376 (fixé M119) : crash dans closeContext sur setSinkId pending — notre teardownAudio ferme des contextes avec setSinkId possiblement en vol.
-- Pistes si dump = audio service : flags Chromium (--disable-features=AudioServiceSandbox / AudioServiceOutOfProcess) à évaluer ; ou partage d'un seul AudioContext quand cable==mon deviceId.
+- Pistes si dump = audio service : flags Chromium (--disable-features=AudioServiceSandbox / AudioServiceOutOfProcess) à évaluer ; ou partage d'un seul AudioContext quand cable==mon deviceId — **implémenté 15/11 (74ab247)**.
+- **Confirmation externe (15/11, recherche)** : le message « The AudioContext encountered an error from the audio device or the WebAudio renderer » est émis quand le **process utility audio Chromium** meurt (crash ou hang-monitor 3 min, `audio_thread_hang_monitor.cc`) — obs-studio#10586, flutter_sound_web#3, hermes-agent#69016. Notre hypothèse « mort du audio service » est donc corroborée par des rapports identiques hors SoundFart. Le renderer ne peut pas récupérer un AudioContext mort — Chromium ne le relance pas (seul un reload le fait, déjà en place).
 
 
 ## SF-REL-0141 — writeRecording : .part partage entre ecritures concurrentes (P1, CLOSED — voir conditions)
