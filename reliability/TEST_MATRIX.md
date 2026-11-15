@@ -20,6 +20,16 @@ registre.
 | JS | node --check sur chaque fichier modifié |
 | package | npm audit 0 vulnérabilité |
 
+## Exécuté réel (RUNTIME via CDP — test/cdp-drive.js, 15/11/2026)
+| Check | Résultat |
+|---|---|
+| rec:save -> fichier persisté recordings/ | PASS (8 octets vérifiés) |
+| rec:save data null -> rejet | PASS |
+| play() voix 2 nodes + ctx running + stopAll | PASS |
+| AudioContext cable+mon 'running' | PASS |
+| file:check absent / yt:info URL invalide | PASS |
+| Suite | 7/7 — session sa9fe21, aucune erreur log |
+
 ## Exécuté réel (smoke, pas fonctionnel)
 | Vérification | Résultat |
 |---|---|

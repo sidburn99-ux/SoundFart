@@ -259,6 +259,29 @@ Règle : avant de toucher un composant, chercher ici + dans le tableau ses anoma
 partiellement mais traitent des mécanismes distincts : rate-limit IPC vs
 coût disk I/O — comptés séparés.)
 
+### Validation runtime CDP (15/11/2026, test/cdp-drive.js)
+
+Driver CDP ajoute : exe lance avec `--remote-debugging-port=9222`,
+Runtime.evaluate dans la page reelle. 7/7 checks PASS sur session
+sa9fe21 (test-profile) :
+
+- rec:save de bout en bout : `window.sf.saveRecording` -> fichier
+  `recordings/cdp-runtime-*.webm` cree et persiste (8 octets verifies
+  sur disque) — chemin IPC + writeRecording + mkdir async (SF-REL-0602)
+  valides en RUNTIME. Couvre partiellement SF-REL-0058, SF-REL-0141,
+  SF-REL-0130.
+- Contrat d'erreur rec:save : data null -> rejet propre.
+- play() voix reelle : 2 nodes (cable+mon), contexts 'running',
+  stopAll -> voices=0. Cycle de vie voix valide en RUNTIME.
+- AudioContexts cable(dc79ff)+mon(default) 'running' — pipeline audio
+  actif, pertinent pour SF-REL-0611 (session stable).
+- file:check absent -> detection OK ; yt:info URL invalide -> rejet
+  « URL YouTube invalide ».
+
+Impact : ces entrees gagnent une preuve RUNTIME, mais restent
+FIXED_PENDING_VALIDATION — la revue independante du diff et le test
+de non-regression cible restent requis pour CLOSED.
+
 ### Conditions V2 non satisfaites — état par entrée
 
 Pour les 89 FIXED_PENDING_VALIDATION, les conditions manquantes les plus

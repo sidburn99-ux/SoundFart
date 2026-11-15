@@ -114,3 +114,16 @@ de main.js exige smoke test-env >= 60 s avec verification du log.
 - Aucune preuve réinventée : ce qui n'est pas documenté reste
   NOT VERIFIED ; le registre ne prétend pas à l'exhaustivité au-delà
   des 114 entrées.
+
+## V2 — validation runtime CDP (15/11/2026)
+
+- test/cdp-drive.js cree : driver Chrome DevTools Protocol (WebSocket
+  natif Node) pour executer du JS dans le renderer reel — debloque la
+  validation runtime sans interaction UI manuelle.
+- Exe lance `--remote-debugging-port=9222 --test-profile` ; 7/7 checks
+  PASS : rec:save persiste un vrai fichier, contrat d'erreur OK,
+  play()/stopAll cycle de vie voix OK, contexts running, file:check et
+  yt:info rejets propres.
+- Preuve RUNTIME ajoutee au registre pour les chemins couverts ;
+  aucune entree CLOSE — revue independante du diff toujours requise.
+- Smoke session sa9fe21 stable, heap constant, pas de crash.
