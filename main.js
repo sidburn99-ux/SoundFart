@@ -218,7 +218,11 @@ H('config:load', () => {
     }
     // Dernier recours : la sauvegarde .bak (ecrite a chaque config:save) contient
     // la derniere config validee — mieux que de demarrer sur une bibliotheque vide.
-    try { return JSON.parse(fs.readFileSync(f + '.bak', 'utf-8')); } catch {}
+    // Mais seulement si c'est bien un objet config (pas un tableau/string).
+    try {
+      const b = JSON.parse(fs.readFileSync(f + '.bak', 'utf-8'));
+      if (b && typeof b === 'object' && !Array.isArray(b)) return b;
+    } catch {}
     return null;
   }
 });
@@ -300,7 +304,9 @@ H('shortcuts:apply', (_e, entries) => {
   const list = Array.isArray(entries) ? entries.slice(0, 5000) : [];
   const valid = [], failed = [];
   const seen = new Set();
-  for (const { key, accel } of list) {
+  for (const it of list) {
+    if (!it || typeof it !== 'object') continue; // entree null/primitive : ne doit pas jeter avant unregisterAll
+    const { key, accel } = it;
     if (typeof key !== 'string' || typeof accel !== 'string' || accel.length > 64 || !key) continue;
     if (seen.has(accel)) { failed.push(accel); continue; } // doublon : un seul peut etre enregistre
     seen.add(accel);
@@ -374,9 +380,9 @@ async function ensureFfmpeg() {
         const dest = ffmpegDir();
         fs.mkdirSync(dest, { recursive: true });
         try {
-          await execFileP('tar', ['-xf', zip, '-C', dest, '*ffmpeg.exe'], { timeout: 180000, windowsHide: true });
+          await execFileTracked('tar', ['-xf', zip, '-C', dest, '*ffmpeg.exe'], { timeout: 180000 });
         } catch {
-          await execFileP('tar', ['-xf', zip, '-C', dest], { timeout: 300000, windowsHide: true });
+          await execFileTracked('tar', ['-xf', zip, '-C', dest], { timeout: 300000 });
         }
         const found = findFile(dest, 'ffmpeg.exe');
         if (found && found !== ffmpegPath()) {
@@ -529,7 +535,7 @@ async function ytdlpInstalledVersion() {
     if (meta && meta.version) return meta.version;
   } catch {}
   try {
-    const { stdout } = await execFileP(ytdlpPath(), ['--version'], { timeout: 15000, windowsHide: true });
+    const { stdout } = await execFileTracked(ytdlpPath(), ['--version'], { timeout: 15000 });
     const v = String(stdout).trim().split(/\s+/)[0];
     return /^\d{4}\.\d{2}\.\d{2}$/.test(v) ? v : null;
   } catch { return null; }
@@ -571,9 +577,9 @@ async function maybeUpdateYtDlp(force = false) {
     let meta = {};
     try { meta = JSON.parse(fs.readFileSync(ytdlpMetaFile(), 'utf-8')) || {}; } catch {}
     if (!force && meta.at && Date.now() - meta.at < YTDLP_UPDATE_MS) return false;
-    const { stdout } = await execFileP('powershell.exe', ['-NoProfile', '-Command',
+    const { stdout } = await execFileTracked('powershell.exe', ['-NoProfile', '-Command',
       `(Invoke-RestMethod -Uri 'https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest' -Headers @{'User-Agent'='SoundFart'}).tag_name`],
-      { timeout: 20000, windowsHide: true });
+      { timeout: 20000 });
     const latest = String(stdout).trim();
     if (!/^\d{4}\.\d{2}\.\d{2}$/.test(latest)) return false;
     const current = (await ytdlpInstalledVersion()) || YTDLP_VERSION;
@@ -658,11 +664,17 @@ H('yt:info', async (_e, url) => {
   await ensureYtDlp();
   ytProgress(-1);
   const { stdout } = await execFileP(ytdlpPath(), ['--dump-single-json', '--no-playlist', '--no-warnings', url], { maxBuffer: 64 * 1024 * 1024, timeout: 120000, windowsHide: true });
-  const j = JSON.parse(stdout);
+  let j;
+  try { j = JSON.parse(stdout); }
+  catch (e) { throw new Error('yt-dlp a renvoyé des métadonnées illisibles : ' + e.message); }
   return { title: j.title || '', duration: j.duration || 0, url: j.webpage_url || url };
 });
 
+let ytDownloadBusy = false; // single-flight : 2 imports concurrents = progression entrelacee + update yt-dlp possible pendant execution
 H('yt:download', async (_e, { url, start, end, dir, full }) => {
+  if (ytDownloadBusy) throw new Error('Un import YouTube est déjà en cours — attends la fin.');
+  ytDownloadBusy = true;
+  try {
   if (!validHttpUrl(url) || !isYoutubeUrl(url)) throw new Error('URL YouTube invalide');
   if (!full && (!Number.isFinite(+start) || +start < 0 || !Number.isFinite(+end) || +end <= +start)) throw new Error('bornes invalides');
   await ensureYtDlp();
@@ -702,6 +714,7 @@ H('yt:download', async (_e, { url, start, end, dir, full }) => {
     if (await maybeUpdateYtDlp(true)) return await tryDownload();
     throw e;
   }
+  } finally { ytDownloadBusy = false; }
 });
 
 // ---------- bascule automatique de l'entree micro (CABLE Output) ----------
@@ -742,7 +755,7 @@ async function doCompileCs(csName, exeBase) {
   try { fs.unlinkSync(tmpOut); } catch {}
   // compilation vers un nom temporaire puis renommage : un echec ne laisse jamais
   // un exe partiel qui aurait l'air valide
-  await execFileP(csc, ['/nologo', '/target:exe', '/platform:anycpu', '/out:' + tmpOut, cs], { timeout: 60000, windowsHide: true });
+  await execFileTracked(csc, ['/nologo', '/target:exe', '/platform:anycpu', '/out:' + tmpOut, cs], { timeout: 60000 });
   if (!fs.existsSync(tmpOut)) throw new Error('compilation ' + csName + ' sans exe produit');
   try { fs.renameSync(tmpOut, target); } catch { fs.copyFileSync(tmpOut, target); }
   try { fs.unlinkSync(tmpOut); } catch {}
@@ -829,7 +842,13 @@ H('sounds:seed', () => {
   } catch { return []; }
 });
 
-H('audio:autoSetup', async (_e, { enabled, cableLabel }) => {
+let autoSetupChain = Promise.resolve(); // serialise les bascules micro : 2 appels concurrents spawnaient des guards AudioEndpoint dupliques
+H('audio:autoSetup', (e, opts) => {
+  const run = autoSetupChain.then(() => autoSetupImpl(opts));
+  autoSetupChain = run.catch(() => {});
+  return run;
+});
+async function autoSetupImpl({ enabled, cableLabel }) {
   try {
     const tool = await ensureAudioTool();
     if (!tool) return { ok: false, err: 'composant audio natif indisponible : ' + (lastToolErr || 'compilation impossible') };
@@ -867,7 +886,7 @@ H('audio:autoSetup', async (_e, { enabled, cableLabel }) => {
   } catch (e) {
     return { ok: false, err: e.message };
   }
-});
+}
 
 // Restauration manuelle du micro (bouton reglages + beforeunload). Si
 // audio-restore.json existe -> restoreMicNow (meme priorite qu'a la fermeture).
@@ -1019,7 +1038,7 @@ H('audio:tapStop', () => {
 // raccourcis globaux). Si l'entree est modifiee hors SoundFart, on considere que
 // c'est un choix de l'utilisateur : la surveillance est suspendue pour la session
 // (reglage « surveillance micro » pour la reactiver au prochain lancement).
-const audioExecP = (tool, args) => execFileP(tool, args, { encoding: 'utf8', timeout: 15000, windowsHide: true }).then((r) => r.stdout);
+const audioExecP = (tool, args) => execFileTracked(tool, args, { encoding: 'utf8', timeout: 15000 }).then((r) => r.stdout);
 let watchdogBusy = false;
 let micWatchSuspended = false;
 
@@ -1094,6 +1113,10 @@ function createWindow() {
     if (rendererReloads === 0 && win && !win.isDestroyed()) {
       rendererReloads++;
       setTimeout(() => { if (win && !win.isDestroyed()) win.webContents.reload(); }, 500);
+    } else if (win && !win.isDestroyed()) {
+      // Second crash : la fenetre est morte sans diagnostic — on le dit
+      // au lieu de laisser l'utilisateur devant une app figee.
+      dialog.showErrorBox('SoundFart', 'Le moteur audio a planté une seconde fois.\n\nRedémarre l\'application — si le problème revient, envoie soundfart.log au support.');
     }
   });
   win.webContents.on('did-fail-load', (_e, code, desc, url) => {
@@ -1143,6 +1166,17 @@ app.whenReady().then(() => {
     return decideMediaPermission(permission, details).allow;
   });
   // Enregistreur : autorise getDisplayMedia pour capturer l'audio systeme (boucle locale Windows)
+  // Origine : seule la page SoundFart peut demander une capture — comme
+  // permOriginOk pour les permissions (un frame etranger ne passe pas).
+  let originOk = false;
+  try {
+    const u = request.securityOrigin || (request.frame && request.frame.url) || '';
+    originOk = /[\\/]index\.html$/.test(new URL(u).pathname);
+  } catch {}
+  if (!originOk) {
+    log('[displaymedia] refuse: origine ' + String(request.securityOrigin || '?').slice(0, 120), 'warn');
+    return callback({});
+  }
   session.defaultSession.setDisplayMediaRequestHandler((request, callback) => {
     log(`[displaymedia] requete audio=${request.audioRequested} video=${request.videoRequested}`);
     desktopCapturer.getSources({ types: ['screen'] }).then((sources) => {
@@ -1168,6 +1202,10 @@ process.on('uncaughtException', (e) => {
     const t = audioToolPath();
     if (fs.existsSync(t) && fs.existsSync(restoreFile())) restoreMicNow(t);
   } catch {}
+  // Continuer dans un etat potentiellement corrompu est plus risque que de
+  // sortir : on restaure le micro (will-quit le refera, idempotent) puis on
+  // quitte proprement au lieu de laisser tourner un main blesse.
+  setTimeout(() => { try { app.quit(); } catch {} }, 500);
 });
 process.on('unhandledRejection', (e) => log('[fatal] unhandledRejection: ' + (e && e.stack || e), 'error'));
 app.on('will-quit', () => {
