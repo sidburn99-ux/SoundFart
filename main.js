@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, session, Menu, globalShortcut, desktopCapturer } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, session, Menu, globalShortcut, desktopCapturer, crashReporter } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const https = require('https');
@@ -69,6 +69,16 @@ const isPrimary = app.requestSingleInstanceLock();
 if (!isPrimary) {
   app.exit(0);
 } else {
+  // Forensique crash renderer (-1/143, bug connu non resolu) : les minidumps
+  // Crashpad dans userData/Crashpad permettent une analyse post-mortem.
+  try {
+    crashReporter.start({
+      productName: 'SoundFart',
+      submitURL: '', // pas de telemetrie : collecte locale uniquement
+      uploadToServer: false,
+      compress: true,
+    });
+  } catch (e) { log('[crash] crashReporter: ' + e.message, 'warn'); }
   app.on('second-instance', () => {
     if (win) {
       if (win.isMinimized()) win.restore();

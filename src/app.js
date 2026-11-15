@@ -329,6 +329,9 @@ function cacheDelete(path) {
 }
 
 async function makeOutput(deviceId) {
+  // Forensique crash -1/143 : journaliser le peripherique exact — le crash
+  // AudioContext precedent ne disait pas sur QUEL device il est survenu.
+  uiLog('makeOutput: creation AudioContext device=' + (deviceId || 'defaut'));
   const ctx = new AudioContext({ sampleRate: SR, latencyHint: 'interactive' });
   try {
     await ctx.setSinkId(deviceId);

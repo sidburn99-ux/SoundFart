@@ -125,6 +125,16 @@ Cycle 1 — audits indépendants du 15/11/2026 (4 subagents : main.js, renderer,
 | SF-REL-0139 | P4 | ACCEPTED | file:read suit les symlinks, pas de realpath — renderer local de confiance, documenté. |
 | SF-REL-0140 | P3 | CLOSED | Fallback restauration : endpoint sans nom traité « non virtuel » → name requis (main.js + lib). |
 
+## Enquête forensique — crash AudioContext (-1/143)
+
+Observations smoke (test-profile, vraie machine) :
+- Crash intermittent : 3 occurrences (11:18, 11:35, 11:38) sur ~6 runs ; runs 12:00 et 12:05 ont survécu >60 s.
+- Pattern : ~10 s après création des 2 AudioContext de sortie (cable + mon), les DEUX passent 'suspended' avec « The AudioContext encountered an error from the audio device or the WebAudio renderer » — quasi simultanément. Le crash suit parfois, parfois non.
+- deviceIds journalisés : cable=dc79ff…, mon=default. Les contextes sont créés à l'init (applyAudio), pas à la lecture.
+- Hypothèse : hoquet du service audio Windows / endpoint suspendu (économie d'énergie, driver Realtek/G930) qui fait tomber le renderer Chromium — niveau en dessous de JS, non corrigeable dans app.js.
+- Mitigations en place : statechange → toast + retry applyAudio borné (3×) ; render-process-gone → 1 reload puis dialog ; crashReporter.start ajouté (minidumps locaux dans userData/Crashpad, sans télémétrie) ; uiLog du deviceId dans makeOutput.
+- Reste : corréler un .dmp Crashpad avec la prochaine occurrence ; si récurrent, tester désactivation de l'économie d'énergie des endpoints USB/audio ou flag Chromium.
+
 ## Synthèse cycle 1
 - 57 anomalies qualifiées : 44 CLOSED, 8 ACCEPTED (documentées), 0 INVESTIGATING ouvert — toutes les anomalies qualifiées sont tranchées.
 - P0 : 1 (SF-REL-0001) — introduit par la campagne précédente, attrapé par l'audit cycle 2. Preuve que la boucle fonctionne.
