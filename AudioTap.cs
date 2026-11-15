@@ -318,7 +318,24 @@ internal static class AudioTap
     // ------------------------- boucle -------------------------
     // pcmMode : au lieu de reinjecter dans le cable, ecrit du PCM float32 stereo 48 kHz
     //           sur stdout (recupere par SoundFart pour l'enregistreur, sans passer par le cable).
-    private static int Run(IMMDeviceEnumerator en, string cableName, int parentPid, double seconds, string srcName, bool pcmMode)
+    // Contexte d'un flux audio initialise : clients COM, formats negocies,
+    // etat de conversion. Un TapCtx n'est valable que tant que ses peripheriques
+    // vivent — apres DEVICE_INVALIDATED on n'en reutilise JAMAIS un morceau.
+    private sealed class TapCtx
+    {
+        public IAudioClient src, dst;
+        public IAudioCaptureClient cap;
+        public IAudioRenderClient ren;
+        public Fmt sf, df;
+        public bool convert;
+        public uint dstBufFrames;
+    }
+
+    // Init complet : resolution des peripheriques (par nom ou defaut), activation
+    // IAudioClient, GetMixFormat, Initialize, GetService, Start. Appele au demarrage
+    // ET a chaque reconnexion a chaud — chaque appel repart de zero (nouveaux
+    // devices, nouveaux clients COM, buffers reinitialises).
+    private static TapCtx InitTap(IMMDeviceEnumerator en, string cableName, string srcName, bool pcmMode)
     {
         // source : loopback du peripherique de sortie par defaut (ou srcName si fourni)
         IMMDevice srcDev = null;
@@ -441,6 +458,28 @@ internal static class AudioTap
             Console.Error.WriteLine("AudioTap: dst.Start hr=0x" + hr.ToString("X8"));
         }
         Console.Error.WriteLine("AudioTap: capture demarree" + (pcmMode ? " (mode pcm -> stdout)" : ""));
+        return new TapCtx { src = src, dst = dst, cap = cap, ren = ren, sf = sf, df = df, convert = convert, dstBufFrames = dstBufFrames };
+    }
+
+    private static int Run(IMMDeviceEnumerator en, string cableName, int parentPid, double seconds, string srcName, bool pcmMode)
+    {
+        // Init avec retries : peripherique pas encore pret (driver en cours de
+        // chargement, devicechange en cours) -> on reessaie avant d'abandonner.
+        TapCtx t = null;
+        Exception lastInitErr = null;
+        for (int att = 0; att < 5 && t == null; att++)
+        {
+            if (att > 0) Thread.Sleep(500 * att);
+            try { t = InitTap(en, cableName, srcName, pcmMode); }
+            catch (Exception ie) { lastInitErr = ie; Console.Error.WriteLine("AudioTap: init " + (att + 1) + "/5: " + ie.Message); }
+        }
+        if (t == null) throw lastInitErr ?? new Exception("init impossible");
+        IAudioClient src = t.src, dst = t.dst;
+        IAudioCaptureClient cap = t.cap;
+        IAudioRenderClient ren = t.ren;
+        Fmt sf = t.sf, df = t.df;
+        bool convert = t.convert;
+        uint dstBufFrames = t.dstBufFrames;
 
         var queue = new Queue<byte[]>();
         long queuedBytes = 0;
@@ -474,6 +513,7 @@ internal static class AudioTap
             }
 
             // 1) aspirer les paquets disponibles
+            bool wantReconnect = false;
             int sStreak = 0; // codes S_ consecutifs : borne le spin interne
             while (true)
             {
@@ -484,6 +524,7 @@ internal static class AudioTap
                 if (pkHr < 0)
                 {
                     Console.Error.WriteLine("AudioTap: GetNextPacketSize echoue hr=0x" + pkHr.ToString("X8") + " (peripherique invalide ?)");
+                    if (pkHr == unchecked((int)0x88890004)) { wantReconnect = true; break; } // AUDCLNT_E_DEVICE_INVALIDATED
                     try { src.Stop(); if (dst != null) dst.Stop(); } catch {}
                     timeEndPeriod(1); return 2;
                 }
@@ -495,6 +536,7 @@ internal static class AudioTap
                 if (gbHr < 0)
                 {
                     Console.Error.WriteLine("AudioTap: GetBuffer echoue hr=0x" + gbHr.ToString("X8") + " (peripherique invalide ?)");
+                    if (gbHr == unchecked((int)0x88890004)) { wantReconnect = true; break; } // AUDCLNT_E_DEVICE_INVALIDATED
                     try { src.Stop(); if (dst != null) dst.Stop(); } catch {}
                     timeEndPeriod(1); return 2;
                 }
@@ -542,6 +584,32 @@ internal static class AudioTap
                 queue.Enqueue(outBuf);
                 queuedBytes += outBuf.Length;
             }
+            if (wantReconnect)
+            {
+                // AUDCLNT_E_DEVICE_INVALIDATED : peripherique retire ou service
+                // audio reinitalise. Arret propre, re-resolution complete (l'id
+                // a pu changer), re-init — borne a 5 tentatives, backoff
+                // 0.5 s -> 2.5 s ; au-dela, echec net (code 2 -> tapDead).
+                try { src.Stop(); if (dst != null) dst.Stop(); } catch {}
+                TapCtx t2 = null;
+                for (int att = 0; att < 5 && t2 == null; att++)
+                {
+                    Thread.Sleep(500 * (att + 1));
+                    try { t2 = InitTap(en, cableName, srcName, pcmMode); }
+                    catch (Exception rex) { Console.Error.WriteLine("AudioTap: reconnexion " + (att + 1) + "/5: " + rex.Message); }
+                }
+                if (t2 == null)
+                {
+                    Console.Error.WriteLine("AudioTap: reconnexion impossible apres 5 tentatives");
+                    timeEndPeriod(1); return 2;
+                }
+                src = t2.src; dst = t2.dst; cap = t2.cap; ren = t2.ren;
+                sf = t2.sf; df = t2.df; convert = t2.convert; dstBufFrames = t2.dstBufFrames;
+                queue.Clear(); queuedBytes = 0; // buffers de l'ancien format : invalides
+                Console.Error.WriteLine("AudioTap: reconnecte -> " + sf.channels + "ch " + sf.rate + "Hz " + sf.bits + "b -> "
+                    + df.channels + "ch " + df.rate + "Hz " + df.bits + "b" + (convert ? " (conversion)" : " (copie)"));
+                continue; // boucle externe : re-drain avec les nouveaux clients
+            }
             if (parentDead) break;
 
             uint padNow;
@@ -574,6 +642,7 @@ internal static class AudioTap
                         if (rgHr < 0)
                         {
                             Console.Error.WriteLine("AudioTap: render GetBuffer echoue hr=0x" + rgHr.ToString("X8"));
+                            if (rgHr == unchecked((int)0x88890004)) { wantReconnect = true; break; } // AUDCLNT_E_DEVICE_INVALIDATED
                             try { src.Stop(); dst.Stop(); } catch {}
                             timeEndPeriod(1); return 2;
                         }

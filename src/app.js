@@ -240,6 +240,9 @@ async function getBuffer(path) {
     const ab = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
   const buf = await decoder.decodeAudioData(ab);
   const bytes = bufBytes(buf);
+  // Forensique crash renderer (-1/143) : la taille PCM decodee est la donnee
+  // qui manque pour distinguer OOM decode vs crash driver — on la journalise.
+  if (bytes > 64 * 1024 * 1024) uiLog('decode lourd : ' + Math.round(bytes / 1048576) + ' Mo PCM (' + path + ')');
   // Buffer decode plus gros que tout le cache : ne pas le retenir (il
   // evincerait tout pour rien et pourrait lui-meme saturer le renderer).
   if (bytes > BUF_CACHE_MAX) {
@@ -1883,6 +1886,15 @@ function youtubeModal() {
 
 // ================================================================ demarrage
 async function init() {
+  // Telemetrie memoire periodique : performance.memory (Chromium) permet de
+  // correlER un crash renderer (-1/143) avec une saturation du heap —
+  // indice cle pour trancher OOM vs crash de la couche audio Windows.
+  setInterval(() => {
+    try {
+      const m = performance.memory;
+      if (m) uiLog('heap=' + Math.round(m.usedJSHeapSize / 1048576) + '/' + Math.round(m.jsHeapSizeLimit / 1048576) + ' Mo');
+    } catch {}
+  }, 60000);
   window.sf.getVersion().then((v) => { const e = $('#appVersion'); if (e) e.textContent = 'v' + v; }).catch(() => {});
   const saved = await window.sf.loadConfig();
   cfg = normalizeCfg(saved);

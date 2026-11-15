@@ -95,6 +95,7 @@ node --check <f>  # syntaxe JS
 | Utiliser l'application | `GUIDE.md` |
 | État d'avancement et tests | `suivi.tsv` |
 | Tester sur VM Windows propre | `TESTS_VM.md` |
+| Valider l'audio sur matériel réel | `VALIDATION.md` |
 | Historique des versions | `JOURNAL.md`, `JOURNAL_DE_DEVELOPMENT.md` |
 | Reprendre un chantier hardening | `TECHNICAL_HARDENING_PLAN.md` |
 | Mentions légales | `THIRD-PARTY-NOTICES` |

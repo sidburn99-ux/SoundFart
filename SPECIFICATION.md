@@ -37,7 +37,7 @@ Sécurité : CSP stricte (`default-src 'self'`), `contextIsolation`, `sandbox`, 
 
 **Cycle de vie** : `applyAudio` sérialisé (`audioApplyChain`) → `teardownAudio` (stopAll, playGen++, endVoice, ctx.close, micStream.stop) → `makeOutput` par sortie (`setSinkId`, écoute `statechange` : suspended/interrupted/closed logués). `devicechange` débouncé 500 ms → refreshDevices+resolveDevices+applyAudio. Render-process-gone → 1 reload max.
 
-**WASAPI (AudioTap.cs)** : partagé, `AUDCLNT_STREAMFLAGS_LOOPBACK`, format négocié via `IsFormatSupported`→`GetMixFormat`, conversion PCM 16/32 bits↔float32 stéréo 48 kHz, file bornée 500 ms (drop logué), parent-check par PID+StartTime toutes les 500 ms, `timeBeginPeriod(1)` pour le Sleep(4). Codes S_ tolérés, HRESULT<0 fatals avec message. `DEVICE_INVALIDATED` → sortie code 2 → `tapDead` côté renderer (pas de reconnexion automatique : le flux est recréé au prochain enregistrement).
+**WASAPI (AudioTap.cs)** : partagé, `AUDCLNT_STREAMFLAGS_LOOPBACK`, format négocié via `IsFormatSupported`→`GetMixFormat`, conversion PCM 16/32 bits↔float32 stéréo 48 kHz, file bornée 500 ms (drop logué), parent-check par PID+StartTime toutes les 500 ms, `timeBeginPeriod(1)` pour le Sleep(4). Codes S_ tolérés, HRESULT<0 fatals avec message. `AUDCLNT_E_DEVICE_INVALIDATED` → reconnexion à chaud : Stop/Release, re-résolution complète des périphériques (l'id a pu changer), re-init (`InitTap`), file vidée — bornée à 5 tentatives (backoff 0,5→2,5 s), échec net code 2 → `tapDead` côté renderer. Init de démarrage : 5 retries (driver en cours de chargement). `timeBeginPeriod(1)` pour le Sleep(4).
 
 **Récupération micro (AudioEndpoint.cs)** : `list`/`get`/`set`/`restore`/`guard`. `chooseRestoreIds` (JS) ≡ `RestoreFromFile` (C#) : défaut Windows non virtuel > ids d'origine > 1er non virtuel. Owner revérifié sur la même lecture que les ids (anti-TOCTOU guard/nouvelle instance). `SetDefaultEndpoint` journalise chaque rôle sur stderr.
 
@@ -148,7 +148,7 @@ Sécurité : CSP stricte (`default-src 'self'`), `contextIsolation`, `sandbox`, 
 - Raccourcis globaux : testés à l'enregistrement, pas validés en jeu.
 - L'enregistreur multi-sources : micro + loopback + câble simultanés non testé en charge réelle.
 - **Watchdog voix** (arrêt forcé après `dur+15 s` si `onended` ne tire pas, ex. AudioContext suspendu) : implémenté, non testé en veille/réveil réel.
-- **AudioTap** : pas de reconnexion automatique sur `DEVICE_INVALIDATED` — le flux meurt proprement (`tapDead`) et est recréé à la prochaine utilisation ; une reprise à chaud reste à étudier.
+- **AudioTap** : reconnexion à chaud sur `DEVICE_INVALIDATED` implémentée (5 tentatives bornées) — non testée sur débranchement USB réel ni redémarrage `audiosrv`.
 - **I/O fichiers** : `files:expand`/`file:check` sont désormais asynchrones (plus de gel sur chemin réseau), non testés sur NAS injoignable réel.
 - **Endurance** : aucune session de plusieurs heures mesurée (mémoire, CPU, fuites) — non réalisée.
 
