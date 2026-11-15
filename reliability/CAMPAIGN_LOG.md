@@ -324,3 +324,19 @@ npm test 39/39, dist rebuild, smoke + cdp-drive 12/12 PASS.
 - FPV en attente de revue : 0631-0638 (8 anomalies renderer/config/
   IPC). P2/P3 residuels documentes : renderGrid par frappe,
   expandPaths sync quasi-mort, settings absent -> watchdog desarme.
+
+## V2 — revue groupee 0631-0638 + 2 residus corriges (15/11/2026)
+
+Revue adverse independante : 0631-0635, 0638 valides ; 2 anomalies :
+- 0636 : l'inert pose AVANT modalClose() etait defait par le close()
+  de l'ancienne modale -> fond interactif des qu'une modale en
+  remplace une autre. Fix : inert pose APRES modalClose().
+- 0637 : decodeActive/decodeQueue declares mais JAMAIS cables
+  (dead code) -> decodeAudioData sans aucune borne de concurrence.
+  Fix : acquireDecode/releaseDecode autour du decode, slot transfere
+  au waiter (pas de deadlock).
+- Reserves documentees non corrigees : faux positif macOS normAccel
+  (CommandOrControl=Cmd vs Ctrl), modale yt non solicitee si l'user
+  ferme la modale pendant yt:download, pic OOM pendant decode
+  (inevitable), scans checkMissing abandones continuent en vol.
+Verifs : node --check, npm test 39/39, dist, smoke + cdp-drive PASS.

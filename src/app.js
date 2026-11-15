@@ -192,13 +192,13 @@ let modalClose = null;
 let modalSeq = 0; // jeton de possession : les flux async verifient que LEUR modale est encore affichee
 function modal(title, body, buttons, opts = {}) {
   const root = $('#modal-root');
-  // inerte l'UI derriere : Tab/Entree/Espace ne peuvent plus agir sur les
-  // boutons de la bibliotheque pendant qu'une modale est ouverte (SF-REL-0636).
   const appEl = document.getElementById('app');
-  if (appEl) appEl.inert = true;
   // Une nouvelle modale remplace l'ancienne : fermer proprement la precedente
-  // pour declencher son onClose (ex. cleanup de l'enregistreur).
+  // pour declencher son onClose (ex. cleanup de l'enregistreur). Son close()
+  // remet appEl.inert=false — l'inert de la NOUVELLE modale doit etre pose
+  // APRES cet appel, sinon le fond redevient interactif (SF-REL-0636).
   if (modalClose) { try { modalClose(); } catch {} }
+  if (appEl) appEl.inert = true;
   let closed = false;
   const close = () => {
     if (closed) return;
@@ -274,6 +274,15 @@ let bufCacheBytes = 0;
 const bufInflight = new Map(); // path -> Promise<buf> : evite le double decodage concurrent
 let decodeActive = 0; // semaphore : 2 decodeAudioData simultanes max
 const decodeQueue = []; // promesses en attente de slot decode
+function acquireDecode() {
+  if (decodeActive < 2) { decodeActive++; return Promise.resolve(); }
+  return new Promise((res) => decodeQueue.push(res));
+}
+function releaseDecode() {
+  const next = decodeQueue.shift();
+  if (next) next(); // le slot est transfere au waiter : decodeActive inchange
+  else decodeActive--;
+}
 async function getBuffer(path) {
   if (bufCache.has(path)) {
     const e = bufCache.get(path);
@@ -301,9 +310,11 @@ async function getBuffer(path) {
     const ab = data instanceof ArrayBuffer ? data
       : data && data.buffer ? data.buffer.slice(data.byteOffset || 0, (data.byteOffset || 0) + data.byteLength)
       : new Uint8Array(data).buffer; // robustness : ArrayBuffer pur ou Uint8Array
+  await acquireDecode();
   let buf;
   try { buf = await decoder.decodeAudioData(ab); }
   catch (de) { de.noFileErr = true; throw de; } // codec/format : fichier present mais indecodable
+  finally { releaseDecode(); }
   const bytes = bufBytes(buf);
   // Forensique crash renderer (-1/143) : la taille PCM decodee est la donnee
   // qui manque pour distinguer OOM decode vs crash driver — on la journalise.
