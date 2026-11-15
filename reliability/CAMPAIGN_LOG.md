@@ -197,3 +197,15 @@ de main.js exige smoke test-env >= 60 s avec verification du log.
   valides runtime de bout en bout.
 - Reste : revue 553ac13 pour CLOSED 0615, MediaRecorder micro/loopback,
   Discord routing, endurance, .dmp 0611 (toujours aucun dump).
+
+## V2 — MediaRecorder + boucle VB-CABLE validees (15/11/2026)
+
+- cdp-rec.js : getUserMedia micro reel (permission ALLOW, label
+  CABLE Output), MediaRecorder webm/opus 1.44 s decode OK — RMS ~0
+  attendu (cable sans signal).
+- cdp-cableloop.js : 440 Hz -> CABLE Input -> capture CABLE Output ->
+  RMS 0.282 / peak 0.407. Boucle VB-CABLE complete avec audio NON NUL
+  mesure. Permission media, capture micro, encodage opus, routage
+  cable : tous prouves runtime.
+- Reste : rec:save avec audio reel, AudioTap loopback systeme,
+  Discord routing, endurance, .dmp 0611.
