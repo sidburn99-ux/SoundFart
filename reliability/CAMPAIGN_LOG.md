@@ -552,3 +552,13 @@ il ne reste que 0611 (.dmp), VALIDATION.md materiel, endurance.
 - Supression pendant lecture via CDP : play() -> voix active ->
   removeSound + confirm -> son retire (cfg.sounds 30->29), voix
   arretee proprement, pas d'erreur. Item A.4 coche.
+
+## 15/11/2026 (suite 10) — VALIDATION.md A.3 + F orphelins executes
+
+- A.3 : 10 play() rapides du meme son -> voix toutes nettoyees
+  (voices 8->0), heap 10 Mo, pas de zombie ni crash.
+- F orphelins : yt:download video 3h (~130 Mo .part) + taskkill /F
+  (kill brutal = simulation crash) -> 0 yt-dlp/ffmpeg residuel.
+  .part conserve (limitation documentee SF-REL-0136), supprime
+  manuellement apres test.
+- Items coches dans VALIDATION.md.
