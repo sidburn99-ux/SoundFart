@@ -137,6 +137,14 @@ Observations smoke (test-profile, vraie machine) :
 - Mitigations en place : statechange → toast + retry applyAudio borné (3×) ; render-process-gone → 1 reload puis dialog ; crashReporter.start ajouté (minidumps locaux dans userData/Crashpad, sans télémétrie) ; uiLog du deviceId dans makeOutput.
 - Reste : corréler un .dmp Crashpad avec la prochaine occurrence ; si récurrent, tester désactivation de l'économie d'énergie des endpoints USB/audio ou flag Chromium.
 
+Données supplémentaires (12:11-12:15) : crash aussi ~3 MIN après création des contextes (pas seulement à la création) ; device dc79ff = "CABLE Input (VB-Audio Virtual Cable)" → suspect n°1. Bug d'instrumentation corrigé : crashReporter.start() s'exécutait AVANT setPath('userData') → dumps dans %APPDATA% ; déplacé après (commit 9093732). A/B cableId impossible : pick() ré-assigne CABLE Input auto par design.
+
+Recherche externe (correlations) :
+- Chromium fait tourner l'audio dans un process utility séparé (audio.mojom.AudioService) ; il peut crasher sur changement de périphérique et se fait tuer par un hang-monitor (3 min, kTerminateCurrentProcess). À sa mort, l'AudioContext reçoit exactement notre message « encountered an error from the audio device or the WebAudio renderer » et passe suspended — cf. obsproject/obs-studio#10586 (même symptôme).
+- Chromium bug 353979250 (2024) : device de sortie non-défaut invalide → RenderError au lieu de fallback. Le device CABLE (virtuel) est le candidat idéal à l'invalidation.
+- Chromium bug 1408376 (fixé M119) : crash dans closeContext sur setSinkId pending — notre teardownAudio ferme des contextes avec setSinkId possiblement en vol.
+- Pistes si dump = audio service : flags Chromium (--disable-features=AudioServiceSandbox / AudioServiceOutOfProcess) à évaluer ; ou partage d'un seul AudioContext quand cable==mon deviceId.
+
 
 ## SF-REL-0141 — writeRecording : .part partage entre ecritures concurrentes (P1, CORRIGE)
 
