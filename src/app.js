@@ -854,13 +854,15 @@ function logErr(tag, e) { console.error(tag, e); }
 const uiLog = (m) => { try { window.sf.uiLog(m); } catch {} };
 
 // ================================================================ normalisation
+// Pic reel : scan COMPLET de chaque canal — l'echantillonnage precedent
+// (max 200k points) ratait les pics etroits sur les longs fichiers et
+// sur-amplifiait le son (~+2,6 dB constate sur un extrait de 3 min).
 async function computeNorm(path) {
   const buf = await getBuffer(path);
   let peak = 0;
   for (let c = 0; c < buf.numberOfChannels; c++) {
     const d = buf.getChannelData(c);
-    const step = Math.max(1, Math.floor(d.length / 200000));
-    for (let i = 0; i < d.length; i += step) {
+    for (let i = 0; i < d.length; i++) {
       const v = Math.abs(d[i]);
       if (v > peak) peak = v;
     }
@@ -887,6 +889,43 @@ async function normalizeAll() {
   }
   save(); closeP(); renderAll();
   toast(`Normalisation terminée : ${done - failed} son(s) ajusté(s)` + (failed ? `, ${failed} ignoré(s)` : '') + '.');
+}
+
+// Test audibility de la cible : 1,2 s de bruit rose (proche d'un programme
+// audio) dont le pic est mis exactement a settings.normTarget, joue UNIQUEMENT
+// sur l'ecoute locale — jamais sur le cable Discord (tes potes n'ont pas a
+// entendre le test).
+function testNormTarget(targetPct) {
+  const out = audio.mon;
+  if (!out) { toast('Choisis d\'abord une « écoute locale » dans les réglages.', 'warn'); return; }
+  const ctx = out.ctx;
+  if (ctx.state !== 'running') ctx.resume().catch(() => {});
+  const target = Number.isFinite(+targetPct) ? Math.min(1, Math.max(0.1, +targetPct / 100)) : (Number.isFinite(+cfg.settings.normTarget) ? +cfg.settings.normTarget : 0.89);
+  const dur = 1.2, n = Math.floor(dur * ctx.sampleRate);
+  const buf = ctx.createBuffer(1, n, ctx.sampleRate);
+  const d = buf.getChannelData(0);
+  // Bruit rose approxime (filtre passe-bas) : plus representatif qu'une sine.
+  let b0 = 0, b1 = 0, b2 = 0, peak = 0;
+  for (let i = 0; i < n; i++) {
+    const w = Math.random() * 2 - 1;
+    b0 = 0.99765 * b0 + w * 0.0990460;
+    b1 = 0.96300 * b1 + w * 0.2965164;
+    b2 = 0.57000 * b2 + w * 1.0526913;
+    const pink = b0 + b1 + b2 + w * 0.1848;
+    const env = Math.min(1, i / (0.01 * ctx.sampleRate), (n - i) / (0.05 * ctx.sampleRate));
+    const v = pink * env;
+    d[i] = v;
+    const a = Math.abs(v);
+    if (a > peak) peak = a;
+  }
+  if (peak > 0) { const k = target / peak; for (let i = 0; i < n; i++) d[i] *= k; }
+  const src = ctx.createBufferSource();
+  src.buffer = buf;
+  const g = ctx.createGain();
+  src.connect(g); g.connect(out.bus);
+  src.onended = () => { try { g.disconnect(); } catch {} };
+  src.start();
+  toast('Test : pic à ' + Math.round(target * 100) + ' % — écouté sur « ' + (cfg.settings.monLabel || 'écoute locale') + ' » uniquement.');
 }
 
 // ================================================================ utilitaires
@@ -1427,6 +1466,7 @@ function settingsModal() {
   const watchMic = el('input', { type: 'checkbox', checked: s.watchdogMic !== false, title: 'Revérifie périodiquement que l\'entrée micro est toujours sur le câble. Se met en pause pour la session si tu changes le micro toi-même (Discord inclus).' });
 
   const normTargetIn = el('input', { type: 'number', min: 10, max: 100, step: 1, value: Math.round((Number.isFinite(+s.normTarget) ? +s.normTarget : 0.89) * 100), title: 'Niveau de crête cible en % de l\'amplitude maximale. 89 % ≈ -1 dBFS (défaut). Plus haut = sons plus forts (le limiteur en aval absorbe les dépassements), plus bas = plus doux.' });
+  const normTestBtn = el('button', { class: 'ghost', text: 'Tester', title: 'Joue 1,2 s de bruit dont le pic est exactement au niveau saisi — sur ton écoute locale uniquement (pas sur Discord).', onclick: () => testNormTarget(normTargetIn.value) });
   const normAllBtn = el('button', { text: 'Normaliser toute la bibliothèque', title: 'Ramène le pic de chaque son au niveau cible ci-contre. Les fichiers audio ne sont jamais modifiés — seul le gain en lecture change.', onclick: () => { closeSettings(); normalizeAll(); } });
   const exportBtn = el('button', { text: 'Exporter la configuration', onclick: exportConfig });
   const importBtn = el('button', { text: 'Importer une configuration', onclick: () => importConfig(closeSettings) });
@@ -1468,7 +1508,7 @@ function settingsModal() {
       'Dossier par défaut des fichiers créés par SoundFart (imports YouTube, enregistrements, extraits MP3) — un choix de dossier est aussi proposé avant chaque ajout.'),
     field('Raccourci global STOP', el('div', { class: 'row' }, stopBtn), stopHint),
     field('Niveaux audio', el('div', { class: 'row' },
-      el('span', { class: 'hint', text: 'Cible de pic :' }), normTargetIn, el('span', { class: 'hint', text: '%' }), normAllBtn),
+      el('span', { class: 'hint', text: 'Cible de pic :' }), normTargetIn, el('span', { class: 'hint', text: '%' }), normTestBtn, normAllBtn),
       'Ramène le pic de chaque son au niveau cible (les fichiers ne sont pas modifiés). Plus haut = plus fort, plus bas = plus doux — 89 % ≈ -1 dBFS.'),
     field('Sauvegarde', el('div', { class: 'row' }, exportBtn, importBtn),
       'La configuration contient les références aux fichiers, catégories, découpes, raccourcis et favoris — pas les fichiers audio eux-mêmes.'),
