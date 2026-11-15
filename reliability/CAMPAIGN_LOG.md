@@ -399,3 +399,13 @@ compteur partage + console-message non sanitize), 0652 (delai 2,5 s
 post-resume), 0653 (ensureAudioTool apres gardes config), 0654 (gardes
 quitting autoSetupImpl + fallback). FPV en attente re-revue.
 Verifs : node --check x3, npm test 39/39, dist, smoke + cdp-drive.
+
+## V2 — revue par lots FPV historiques : 82 CLOSED (15/11/2026)
+
+Deux revues adverses en parallele : lot A (57 IDs main.js/app.js) et
+lot B (23 IDs C#/lib/scripts) — TOUS CONFIRMES, fixes presents et
+corrects dans le code actuel, aucun absent ni douteux. 0039 couvert
+par la preuve de 0100. Total : 82 anomalies cycle 1/2 -> CLOSED.
+Registre : 145 IDs, 114 CLOSED, 8 FPV (0639, 0650-0655, 0657 — residus
+de 52b5b66 en attente re-revue), 22 ACCEPTED, 1 INVESTIGATING (0611).
+Reste : re-revue 52b5b66, .dmp 0611, validation materielle VALIDATION.md.
