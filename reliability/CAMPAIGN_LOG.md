@@ -540,3 +540,9 @@ il ne reste que 0611 (.dmp), VALIDATION.md materiel, endurance.
   items materiels (A audio reel partiellement couvert CDP, B periph,
   C enregistrement multi-source, D Discord, E partiellement CDP,
   F endurance/orphelins).
+
+## 15/11/2026 (suite 8) — VALIDATION.md A.6 execute
+
+- WAV 172,8 Mo (15 min stereo 48 kHz) genere via ffmpeg des tools,
+  play() via CDP -> refuse propre (voice:false), heap 10 Mo stable,
+  0 voix, pas de crash. Item A.6 coche. Fichier test supprime.

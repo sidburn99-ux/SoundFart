@@ -19,7 +19,7 @@
 - [ ] Rejouer le même son 10× rapidement (clics rapides) → pas de voix zombie, pas de crash.
 - [ ] Supprimer un son de la bibliothèque pendant sa lecture → pas d'erreur, voix terminée proprement.
 - [ ] Importer un WAV 5 min puis un MP3 3 min → lecture OK, heap log stable (`heap=` dans soundfart.log).
-- [ ] Fichier > 150 Mo → refus propre avec message, pas de crash.
+- [x] Fichier > 150 Mo → refus propre avec message, pas de crash. **Validé agent 15/11** : WAV 172,8 Mo généré → `play()` refusé (`voice:false`), heap stable 10 Mo, aucune voix zombie, pas de crash.
 
 ## B. Périphériques
 
