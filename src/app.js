@@ -57,7 +57,7 @@ const defaults = () => ({
   version: 1,
   sounds: [],
   categories: [],
-  settings: { cableId: '', cableLabel: '', monId: 'default', monLabel: '', micId: '', micLabel: '', micMix: false, master: 80, sort: 'added-desc', catSort: 'manual', stopShortcut: 'CommandOrControl+Alt+S', storageDir: '', autoSwitchMic: true, watchdogMic: true, groupByCat: true },
+  settings: { cableId: '', cableLabel: '', monId: 'default', monLabel: '', micId: '', micLabel: '', micMix: false, master: 80, sort: 'added-desc', catSort: 'manual', stopShortcut: 'CommandOrControl+Alt+S', storageDir: '', autoSwitchMic: true, watchdogMic: true, groupByCat: true, normTarget: 0.89 },
   ui: { cat: 'all' },
 });
 
@@ -96,6 +96,9 @@ function normalizeCfg(saved) {
   if (typeof c.settings.stopShortcut !== 'string' || c.settings.stopShortcut.length > 64) c.settings.stopShortcut = defaults().settings.stopShortcut;
   if (typeof c.settings.sort !== 'string' || !SORTS.some(([v]) => v === c.settings.sort)) c.settings.sort = 'added-desc';
   if (typeof c.settings.catSort !== 'string' || !CAT_SORTS.some(([v]) => v === c.settings.catSort)) c.settings.catSort = 'manual';
+  // Cible de normalisation : fraction du plein echelle (0.89 ~ -1 dBFS).
+  const nt = +c.settings.normTarget;
+  c.settings.normTarget = (Number.isFinite(nt) && nt > 0 && nt <= 1) ? Math.min(1, Math.max(0.1, nt)) : defaults().settings.normTarget;
   c.ui = mergeSub(defaults().ui, c.ui);
   if (!Array.isArray(c.sounds)) c.sounds = [];
   if (!Array.isArray(c.categories)) c.categories = [];
@@ -863,7 +866,8 @@ async function computeNorm(path) {
     }
   }
   if (!peak) return 1;
-  return Math.min(4, Math.round((0.89 / peak) * 100) / 100);
+  const target = Number.isFinite(+cfg.settings.normTarget) ? +cfg.settings.normTarget : 0.89;
+  return Math.min(4, Math.round((target / peak) * 100) / 100);
 }
 
 async function normalizeAll() {
@@ -1422,7 +1426,8 @@ function settingsModal() {
   const autoMic = el('input', { type: 'checkbox', checked: !!s.autoSwitchMic, title: 'Au lancement, l\'entrée micro Windows bascule sur « CABLE Output » (pour que Discord capte ta voix via le câble), puis revient à ton vrai micro à la fermeture ou en cas de crash.' });
   const watchMic = el('input', { type: 'checkbox', checked: s.watchdogMic !== false, title: 'Revérifie périodiquement que l\'entrée micro est toujours sur le câble. Se met en pause pour la session si tu changes le micro toi-même (Discord inclus).' });
 
-  const normAllBtn = el('button', { text: 'Normaliser toute la bibliothèque', title: 'Ramène le volume de chaque son à un niveau cible commun. Les fichiers audio ne sont jamais modifiés — seul le gain en lecture change.', onclick: () => { closeSettings(); normalizeAll(); } });
+  const normTargetIn = el('input', { type: 'number', min: 10, max: 100, step: 1, value: Math.round((Number.isFinite(+s.normTarget) ? +s.normTarget : 0.89) * 100), title: 'Niveau de crête cible en % de l\'amplitude maximale. 89 % ≈ -1 dBFS (défaut). Plus haut = sons plus forts (le limiteur en aval absorbe les dépassements), plus bas = plus doux.' });
+  const normAllBtn = el('button', { text: 'Normaliser toute la bibliothèque', title: 'Ramène le pic de chaque son au niveau cible ci-contre. Les fichiers audio ne sont jamais modifiés — seul le gain en lecture change.', onclick: () => { closeSettings(); normalizeAll(); } });
   const exportBtn = el('button', { text: 'Exporter la configuration', onclick: exportConfig });
   const importBtn = el('button', { text: 'Importer une configuration', onclick: () => importConfig(closeSettings) });
 
@@ -1462,8 +1467,9 @@ function settingsModal() {
     field('Dossier de stockage', el('div', { class: 'row' }, dirLbl, pickDirBtn, openDirBtn, resetDirBtn),
       'Dossier par défaut des fichiers créés par SoundFart (imports YouTube, enregistrements, extraits MP3) — un choix de dossier est aussi proposé avant chaque ajout.'),
     field('Raccourci global STOP', el('div', { class: 'row' }, stopBtn), stopHint),
-    field('Niveaux audio', el('div', { class: 'row' }, normAllBtn),
-      'Normalise le volume de tous les sons vers un niveau cible (les fichiers ne sont pas modifiés).'),
+    field('Niveaux audio', el('div', { class: 'row' },
+      el('span', { class: 'hint', text: 'Cible de pic :' }), normTargetIn, el('span', { class: 'hint', text: '%' }), normAllBtn),
+      'Ramène le pic de chaque son au niveau cible (les fichiers ne sont pas modifiés). Plus haut = plus fort, plus bas = plus doux — 89 % ≈ -1 dBFS.'),
     field('Sauvegarde', el('div', { class: 'row' }, exportBtn, importBtn),
       'La configuration contient les références aux fichiers, catégories, découpes, raccourcis et favoris — pas les fichiers audio eux-mêmes.'),
   ], [
@@ -1488,6 +1494,8 @@ function settingsModal() {
       s.storageDir = s.storageDir || '';
       s.autoSwitchMic = autoMic.checked;
       s.watchdogMic = watchMic.checked;
+      const nt = +normTargetIn.value / 100;
+      s.normTarget = (Number.isFinite(nt) && nt > 0) ? Math.min(1, Math.max(0.1, nt)) : defaults().settings.normTarget;
       save(); c();
       if (await applyAudio().catch((e) => { logErr('applyAudio', e); return false; })) toast('Réglages audio appliqués.');
       applyShortcuts();
