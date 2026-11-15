@@ -37,7 +37,7 @@ function execFileTracked(file, args, opts = {}) {
     });
   });
 }
-const { AUDIO_EXT, VIRTUAL_RE: VIRTUAL_RE_MAIN, parseEndpoints, parseGet, findCableCapture, chooseRestoreIds, safeName, expandPaths, expandPathsAsync, writeRecording } = require('./lib/audio-utils');
+const { AUDIO_EXT, VIRTUAL_RE: VIRTUAL_RE_MAIN, parseEndpoints, parseGet, findCableCapture, chooseRestoreIds, safeName, expandPaths, expandPathsAsync, writeRecording, cbOrNoop } = require('./lib/audio-utils');
 let win = null;
 
 // ---------- journal d'erreurs : SoundFart-data\soundfart.log ----------
@@ -534,7 +534,7 @@ const validHttpUrl = (u) => {
 };
 
 function downloadFile(url, dest, onProgress) {
-  if (typeof onProgress !== 'function') onProgress = () => {};
+  onProgress = cbOrNoop(onProgress);
   return new Promise((resolve, reject) => {
     const get = (u, n) => {
       // Les redirections ne doivent jamais sortir du HTTPS (anti-downgrade MITM).
@@ -557,7 +557,7 @@ function downloadFile(url, dest, onProgress) {
         res.on('data', (c) => {
           got += c.length;
           if (got > 300 * 1024 * 1024) { req.destroy(new Error('téléchargement trop volumineux')); return; }
-          if (total) onProgress(got / total);
+          if (total) { try { onProgress(got / total); } catch {} }
         });
         res.on('error', (e) => { out.destroy(); reject(e); });
         res.pipe(out);
@@ -710,7 +710,7 @@ async function ensureYtDlp() {
 }
 
 function runYt(args, onProgress) {
-  if (typeof onProgress !== 'function') onProgress = () => {};
+  onProgress = cbOrNoop(onProgress);
   return new Promise((resolve, reject) => {
     const p = trackChild(spawn(ytdlpPath(), args, { windowsHide: true }));
     let err = '', done = false;
@@ -724,12 +724,12 @@ function runYt(args, onProgress) {
     p.stderr.on('data', (d) => {
       const s = String(d);
       const m = /\[download\]\s+([\d.]+)%/.exec(s);
-      if (m) onProgress(parseFloat(m[1]));
+      if (m) { try { onProgress(parseFloat(m[1])); } catch {} }
       if (err.length < 65536) err += d;
     });
     p.stdout.on('data', (d) => {
       const m = /\[download\]\s+([\d.]+)%/.exec(String(d));
-      if (m) onProgress(parseFloat(m[1]));
+      if (m) { try { onProgress(parseFloat(m[1])); } catch {} }
     });
     p.on('error', (e) => { if (!done) { done = true; clearTimeout(timer); reject(e); } });
     p.on('close', (code) => {
@@ -1200,7 +1200,7 @@ H('audio:tapStart', async () => {
       audioTapProc = null;
       tapPcmRem = Buffer.alloc(0);
       // Mort non volontaire (crash AudioTap / peripherique disparu) : on previent le renderer
-      if (!wasKilled && win && !win.isDestroyed()) { try { win.webContents.send('sf:tapDead', true); } catch {} }
+      if (!wasKilled && win && !win.isDestroyed()) { try { win.webContents.send('sf:tapDead', true); } catch (e) { log('[tap] send tapDead: ' + (e && e.message), 'warn'); } }
     });
     proc.on('error', () => {
       if (audioTapProc !== proc) return;
@@ -1264,7 +1264,7 @@ async function watchdogMic() {
     if (cur.console !== target.id || cur.comm !== target.id || cur.multi !== target.id) {
       micWatchSuspended = true;
       log('[mic-watchdog] entree modifiee hors SoundFart -> surveillance suspendue pour la session', 'warn');
-      if (win && !win.isDestroyed()) win.webContents.send('sf:micWatchOff', target.name);
+      if (win && !win.isDestroyed()) { try { win.webContents.send('sf:micWatchOff', target.name); } catch (e) { log('[mic-watchdog] send micWatchOff: ' + (e && e.message), 'warn'); } }
     }
   } catch (e) { log('[mic-watchdog] ' + e.message, 'warn'); }
   finally { watchdogBusy = false; }

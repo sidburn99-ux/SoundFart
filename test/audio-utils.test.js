@@ -265,3 +265,17 @@ test('parseTs : fuzz bornes et formats', () => {
   const bad = ['abc', '1:2:3:4', '-5', '1,5', {}, 'NaN', '1:2:3:4:5'];
   for (const v of bad) assert.ok(Number.isNaN(U.parseTs(v)), JSON.stringify(v));
 });
+
+test('cbOrNoop : normalise les callbacks (SF-REL-0612/0614)', () => {
+  // Le defaut historique : onProgress undefined/null/non-fonction
+  // provoquait TypeError dans un handler -> mort du process main.
+  for (const v of [undefined, null, 0, 'x', {}, [], true]) {
+    const cb = U.cbOrNoop(v);
+    assert.equal(typeof cb, 'function');
+    assert.doesNotThrow(() => cb(0.5), JSON.stringify(v));
+  }
+  let called = 0;
+  const real = U.cbOrNoop((f) => { called++; assert.equal(f, 0.5); });
+  real(0.5);
+  assert.equal(called, 1);
+});

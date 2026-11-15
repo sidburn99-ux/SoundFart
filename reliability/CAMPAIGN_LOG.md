@@ -221,3 +221,17 @@ de main.js exige smoke test-env >= 60 s avec verification du log.
 - Couverts desormais runtime : getUserMedia, MediaRecorder, rec:save,
   boucle VB-CABLE, AudioTap loopback. Reste : Discord routing, sleep/
   wake, endurance, .dmp 0611, VALIDATION.md materiel.
+
+## V2 — 0612-0615 CLOSED + durcissement final (15/11/2026)
+
+- Revue independante complete : inventaire 8 webContents.send, normalisation
+  onProgress, filet uncaughtException. Residu : sf:micWatchOff (1267) non
+  protege + onProgress invoque nu dans 3 handlers + catch{} silencieux.
+- Fix : cbOrNoop extrait dans lib/audio-utils.js (testable), try/catch sur
+  les 3 invocations onProgress, micWatchOff/tapDead logges en warn,
+  sf:menu/sf:shortcut/tous les sends de handlers desormais proteges.
+- Test : cbOrNoop unit test (undefined/null/0/'x'/{}/[]/true -> noop ;
+  vrai callback preserve). npm test 38/38.
+- Runtime : smoke OK, yt:info reel re-valide (runYt modifie).
+- 0612-0615 -> CLOSED (limite documentee : test sur le helper, call-sites
+  main.js non couverts par npm test).
