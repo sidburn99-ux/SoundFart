@@ -28,7 +28,13 @@ function execFileTracked(file, args, opts = {}) {
     let out = '', err = '', done = false;
     const timer = opts.timeout ? setTimeout(() => { if (!done) { done = true; try { p.kill(); } catch {} reject(new Error('délai dépassé')); } }, opts.timeout) : null;
     if (p.stdout) p.stdout.on('data', (d) => { if (out.length < 4 * 1024 * 1024) out += d; });
-    if (p.stderr) p.stderr.on('data', (d) => { if (err.length < 65536) err += d; });
+    // opts.errTail : garder uniquement les N derniers octets de stderr
+    // (rolling) — pour les outils verbeux dont le resume utile est a la FIN
+    // (ex. ffmpeg ebur128 : des centaines de lignes « t: » avant le Summary).
+    if (p.stderr) p.stderr.on('data', (d) => {
+      if (opts.errTail) { err += d; if (err.length > opts.errTail * 2) err = err.slice(-opts.errTail); }
+      else if (err.length < 65536) err += d;
+    });
     p.on('error', (e) => { if (!done) { done = true; if (timer) clearTimeout(timer); reject(e); } });
     p.on('close', (code) => {
       if (done) return;
@@ -37,7 +43,7 @@ function execFileTracked(file, args, opts = {}) {
     });
   });
 }
-const { AUDIO_EXT, VIRTUAL_RE: VIRTUAL_RE_MAIN, parseEndpoints, parseGet, findCableCapture, chooseRestoreIds, safeName, expandPaths, expandPathsAsync, writeRecording, cbOrNoop } = require('./lib/audio-utils');
+const { AUDIO_EXT, VIRTUAL_RE: VIRTUAL_RE_MAIN, parseEndpoints, parseGet, findCableCapture, chooseRestoreIds, safeName, expandPaths, expandPathsAsync, writeRecording, cbOrNoop, parseEbur128 } = require('./lib/audio-utils');
 let win = null;
 
 // ---------- journal d'erreurs : SoundFart-data\soundfart.log ----------
@@ -573,6 +579,23 @@ H('media:cut', async (_e, o) => {
     throw new Error('extrait illisible : ' + se.message);
   }
   return out;
+});
+
+// Mesure de reference pour la normalisation : ffmpeg ebur128=peak=true
+// donne la loudness integree (EBU R128) ET le True Peak en une passe.
+// stderr est conserve en queue (errTail) : les lignes « t: » defilent
+// pendant toute la duree et le Summary n'arrive qu'a la fin.
+H('file:loudness', async (_e, p) => {
+  if (typeof p !== 'string' || !path.isAbsolute(p)) throw new Error('chemin invalide');
+  if (!AUDIO_EXT.includes(path.extname(String(p)).toLowerCase())) throw new Error('format audio non supporté');
+  try { const st = await fs.promises.stat(p); if (!st.isFile()) throw new Error('pas un fichier'); } catch (e) { throw new Error('fichier introuvable'); }
+  const fdir = await ensureFfmpeg();
+  const { stderr } = await execFileTracked(path.join(fdir, 'ffmpeg.exe'),
+    ['-hide_banner', '-nostats', '-i', String(p), '-vn', '-sn', '-dn', '-af', 'ebur128=peak=true', '-f', 'null', '-'],
+    { timeout: 300000, errTail: 262144 });
+  const m = parseEbur128(stderr);
+  if (!m || (m.lufs == null && m.truePeakDb == null)) throw new Error('mesure ebur128 illisible');
+  return m;
 });
 
 // ---------- import YouTube (yt-dlp, telecharge au premier usage) ----------

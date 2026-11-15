@@ -54,7 +54,7 @@ const playingCount = new Map();
 let saveTimer;
 
 const defaults = () => ({
-  version: 1,
+  version: 2,
   sounds: [],
   categories: [],
   settings: { cableId: '', cableLabel: '', monId: 'default', monLabel: '', micId: '', micLabel: '', micMix: false, master: 80, sort: 'added-desc', catSort: 'manual', stopShortcut: 'CommandOrControl+Alt+S', storageDir: '', autoSwitchMic: true, watchdogMic: true, groupByCat: true, normLufs: -18 },
@@ -148,6 +148,14 @@ function normalizeCfg(saved) {
     }
     if (s.trimEnd != null && Number.isFinite(+s.trimStart) && +s.trimEnd <= +s.trimStart) s.trimEnd = null;
   });
+  // Migration v1 -> v2 : les s.norm heritees de la normalisation par PIC
+  // ne sont pas des gains LUFS — on les invalide (x1) pour forcer un
+  // recalcul. Volumes manuels, decoupes, fondus, favoris, categories et
+  // raccourcis sont preserves ; les fichiers audio ne sont jamais
+  // modifies. Testee sur la version DE L'IMPORT (clean), pas sur la
+  // fusionnee : une config sans version est traitee comme legacy.
+  if (window.SFUtils.isPreLufsConfig(clean.version)) c.sounds.forEach((s) => { s.norm = 1; });
+  c.version = 2;
   // Raccourcis : dedupe insensible a la casse — un import peut creer des
   // doublons que l'UI bloque mais qui sinon faisaient echouer register().
   {
@@ -856,53 +864,37 @@ function logErr(tag, e) { console.error(tag, e); }
 const uiLog = (m) => { try { window.sf.uiLog(m); } catch {} };
 
 // ================================================================ normalisation
-// Loudness integree facon BS.1770 : ponderation K (high-shelf ~+4 dB a
-// 1682 Hz puis high-pass ~38 Hz) rendue par OfflineAudioContext, puis
-// energies par blocs de 400 ms (pas 100 ms) avec double porte
-// (absolue -70 LUFS puis relative -10 LUFS). Contrairement a la norm
-// par pic, un extrait dense mais calme ressort plus fort qu'un pic
-// isole — c'est le volume PERCU disponible qu'on egale.
-async function measureLoudness(buf) {
-  const sr = buf.sampleRate, len = buf.length;
-  if (!len) return -Infinity;
-  const off = new OfflineAudioContext(buf.numberOfChannels, len, sr);
-  const src = off.createBufferSource();
-  src.buffer = buf;
-  const sh = off.createBiquadFilter();
-  sh.type = 'highshelf'; sh.frequency.value = 1681.974; sh.gain.value = 3.9998; sh.Q.value = 0.7072;
-  const hp = off.createBiquadFilter();
-  hp.type = 'highpass'; hp.frequency.value = 38.135; hp.Q.value = 0.5003;
-  src.connect(sh); sh.connect(hp); hp.connect(off.destination);
-  src.start();
-  const k = await off.startRendering();
-  const nch = k.numberOfChannels;
-  const data = [];
-  for (let c = 0; c < nch; c++) data.push(k.getChannelData(c));
-  const block = Math.max(1, Math.floor(0.4 * sr));
-  const hop = Math.max(1, Math.floor(0.1 * sr));
-  const blockZ = (st, en) => {
-    let z = 0;
-    for (let c = 0; c < nch; c++) {
-      const d = data[c]; let s = 0;
-      for (let i = st; i < en; i++) { const v = d[i]; s += v * v; }
-      z += s / (en - st);
+// Mesure pour la normalisation : ffmpeg ebur128=peak=true (IPC
+// file:loudness) = loudness integree EBU R128 + True Peak, reference.
+// Repli degrade si ffmpeg est indisponible OU si le fichier est trop
+// court : ebur128 exige un bloc de 400 ms et renvoie I: -70 (plancher,
+// pas -inf) pour les fichiers < 400 ms et les silences — valeur non
+// exploitable. Le repli JS (SFUtils.loudnessFromPcm, coefficients BS.1770
+// exacts) couvre tout le buffer en une zone pour les courts fichiers.
+async function measureForNorm(path) {
+  let ffTp = null;
+  try {
+    const m = await window.sf.fileLoudness(path);
+    // I: au plancher -70 = trop court ou trop silencieux -> loudness
+    // inexploitable ; le True Peak reste valide et est conserve.
+    if (m && Number.isFinite(m.lufs) && m.lufs > -69.5) {
+      return { lufs: m.lufs, truePeakDb: m.truePeakDb, degraded: false };
     }
-    return z;
+    ffTp = m ? m.truePeakDb : null;
+  } catch (e) { logErr('fileLoudness', e); }
+  const buf = await getBuffer(path);
+  const chs = [];
+  for (let c = 0; c < buf.numberOfChannels; c++) chs.push(buf.getChannelData(c));
+  const lufs = window.SFUtils.loudnessFromPcm(chs, buf.sampleRate);
+  let peak = 0;
+  for (const d of chs) for (let i = 0; i < d.length; i++) { const a = Math.abs(d[i]); if (a > peak) peak = a; }
+  return {
+    lufs,
+    // Sans True Peak ffmpeg : le pic echantillon SOUS-estime le True
+    // Peak — traite comme tel quand meme (repli degrade documente).
+    truePeakDb: Number.isFinite(ffTp) ? ffTp : (peak > 0 ? 20 * Math.log10(peak) : -Infinity),
+    degraded: true,
   };
-  const zs = [];
-  for (let st = 0; st + block <= len; st += hop) zs.push(blockZ(st, st + block));
-  // Fichier plus court qu'un bloc : une seule zone = tout le buffer,
-  // sinon les blips < 400 ms seraient consideres silencieux.
-  if (!zs.length) zs.push(blockZ(0, len));
-  // Portes en domaine energie : -70 LUFS absolue, puis -10 LUFS relative.
-  const absGate = Math.pow(10, (-70 + 0.691) / 10);
-  const gated = zs.filter((z) => z > absGate);
-  if (!gated.length) return -Infinity;
-  const zAbs = gated.reduce((a, b) => a + b, 0) / gated.length;
-  const relGate = zAbs * 0.1;
-  const fin = gated.filter((z) => z > relGate);
-  const zFin = fin.length ? fin.reduce((a, b) => a + b, 0) / fin.length : zAbs;
-  return -0.691 + 10 * Math.log10(zFin);
 }
 
 function normLufsTarget() {
@@ -910,15 +902,14 @@ function normLufsTarget() {
   return (Number.isFinite(v) && v <= 0 && v >= -40) ? v : -18;
 }
 
-// Gain = ecart de loudness : +20log10(g) d'ecart en LUFS. Plafonne a x4
-// (un son trop faible n'est pas propulse indefiniment — le limiteur
-// aval absorbe les pics resultant d'une amplification forte).
+// Gain = ecart de loudness, plafonne par le True Peak (normGain, lib) :
+// un son dense ne doit jamais etre amplifie au point de depasser le
+// plafond en pic interpolate — le limiteur aval n'est pas une protection
+// True Peak. null -> 1 (silence ou mesure impossible : on ne touche pas).
 async function computeNorm(path) {
-  const buf = await getBuffer(path);
-  const L = await measureLoudness(buf);
-  if (!Number.isFinite(L)) return 1; // silence : pas de gain a calculer
-  const g = Math.pow(10, (normLufsTarget() - L) / 20);
-  return Math.min(4, Math.round(g * 100) / 100);
+  const m = await measureForNorm(path);
+  const g = window.SFUtils.normGain({ lufs: m.lufs, truePeakDb: m.truePeakDb, targetLufs: normLufsTarget() });
+  return g == null ? 1 : g;
 }
 
 // host fourni (panneau reglages) : la progression s'affiche EN LIGNE et le
@@ -939,7 +930,7 @@ async function normalizeAll(host) {
   }
   for (const s of targets) {
     if (cancelled) break;
-    try { s.norm = await computeNorm(s.path); } catch { failed++; /* garder s.norm : un echec ne doit pas effacer un reglage perso */ }
+    try { s.norm = await computeNorm(s.path); } catch (e) { failed++; logErr('computeNorm', e); /* garder s.norm : un echec ne doit pas effacer un reglage perso */ }
     prog.textContent = `${++done} / ${targets.length}`;
     await new Promise((r) => setTimeout(r, 0));
   }
@@ -975,9 +966,11 @@ async function testNormTarget(targetLufs) {
       const env = Math.min(1, i / (0.01 * ctx.sampleRate), (n - i) / (0.05 * ctx.sampleRate));
       d[i] = pink * env;
     }
-    const L = await measureLoudness(buf);
+    const L = window.SFUtils.loudnessFromPcm([buf.getChannelData(0)], ctx.sampleRate);
     if (Number.isFinite(L)) {
-      const k = Math.pow(10, (target - L) / 20);
+      // Gain borne x4 comme la normalisation : au-dela le signal
+      // s'ecrêterait et la loudness percue ne correspondrait plus.
+      const k = Math.min(4, Math.pow(10, (target - L) / 20));
       for (let i = 0; i < n; i++) d[i] *= k;
     }
     const src = ctx.createBufferSource();
@@ -1527,7 +1520,13 @@ function settingsModal() {
   const autoMic = el('input', { type: 'checkbox', checked: !!s.autoSwitchMic, title: 'Au lancement, l\'entrée micro Windows bascule sur « CABLE Output » (pour que Discord capte ta voix via le câble), puis revient à ton vrai micro à la fermeture ou en cas de crash.' });
   const watchMic = el('input', { type: 'checkbox', checked: s.watchdogMic !== false, title: 'Revérifie périodiquement que l\'entrée micro est toujours sur le câble. Se met en pause pour la session si tu changes le micro toi-même (Discord inclus).' });
 
-  const normTargetIn = el('input', { type: 'number', min: -30, max: 0, step: 1, value: normLufsTarget(), title: 'Loudness cible en LUFS (volume perçu, pas le pic). -18 LUFS par défaut. Plus haut (proche de 0) = plus fort, plus bas = plus doux. Le limiteur en aval absorbe les dépassements.' });
+  const normTargetIn = el('input', { type: 'number', min: -40, max: 0, step: 1, value: normLufsTarget(), title: 'Loudness cible en LUFS (volume perçu, pas le pic). -18 LUFS par défaut. Plus haut (proche de 0) = plus fort, plus bas = plus doux. Le limiteur en aval absorbe les dépassements.' });
+  // Persiste la valeur des que le champ est valide — sinon « Normaliser
+  // ce son » (editeur) ou un « Fermer » utilisaient l'ancienne cible.
+  normTargetIn.addEventListener('change', () => {
+    const nl = +normTargetIn.value;
+    if (Number.isFinite(nl) && nl <= 0) { s.normLufs = Math.max(-40, nl); save(); }
+  });
   const normTestBtn = el('button', { class: 'ghost', text: 'Tester', title: 'Joue 1,2 s de bruit dont la loudness est exactement au niveau saisi — sur ton écoute locale uniquement (pas sur Discord).', onclick: () => testNormTarget(normTargetIn.value) });
   const normProg = el('div', {});
   const normAllBtn = el('button', { text: 'Normaliser toute la bibliothèque', title: 'Ramène la loudness perçue de chaque son au niveau LUFS ci-contre (la valeur saisie est appliquée d\'abord). Les fichiers audio ne sont jamais modifiés — seul le gain en lecture change. La progression s\'affiche ici, le panneau reste ouvert.', onclick: async () => {
@@ -1605,7 +1604,7 @@ function settingsModal() {
         el('div', { class: 'row' },
           el('span', { class: 'hint', text: 'Cible loudness (LUFS) :' }), normTargetIn, el('span', { class: 'hint', text: 'LUFS' }), normTestBtn, normAllBtn),
         normProg),
-        'Ramène la loudness perçue de chaque son au niveau cible (les fichiers ne sont pas modifiés). Plus haut = plus fort, plus bas = plus doux — -18 LUFS par défaut.'),
+        'Ramène la loudness perçue de chaque son au niveau cible sans dépasser le plafond True Peak (les fichiers ne sont pas modifiés). Plus haut = plus fort, plus bas = plus doux — -18 LUFS par défaut. La mesure utilise ffmpeg si disponible (téléchargé une fois, ~80 Mo, comme pour les exports MP3).'),
       field('Réinitialiser', el('div', { class: 'row' }, resetSoundsBtn),
         'Remet chaque son à volume 100 % et normalisation ×1 (cliquer deux fois pour confirmer).'),
     ]},
