@@ -209,3 +209,15 @@ de main.js exige smoke test-env >= 60 s avec verification du log.
   cable : tous prouves runtime.
 - Reste : rec:save avec audio reel, AudioTap loopback systeme,
   Discord routing, endurance, .dmp 0611.
+
+## V2 — AudioTap loopback + rec:save audio reel valides (15/11/2026)
+
+- cdp-recsave.js : blob webm reel -> saveRecording ->
+  recordings/cable-loop-test.webm 24446 o. rec:save prouve avec audio
+  authentique.
+- cdp-tap.js : audioTapStart -> oscillateur sortie defaut -> 73 chunks
+  PCM 1,4 Mo via sf:tapPcm -> RMS 0.285 / peak 0.635. Capture systeme
+  WASAPI prouvee avec niveau non nul.
+- Couverts desormais runtime : getUserMedia, MediaRecorder, rec:save,
+  boucle VB-CABLE, AudioTap loopback. Reste : Discord routing, sleep/
+  wake, endurance, .dmp 0611, VALIDATION.md materiel.
