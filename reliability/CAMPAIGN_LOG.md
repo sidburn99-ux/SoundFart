@@ -158,3 +158,14 @@ de main.js exige smoke test-env >= 60 s avec verification du log.
   (~80 Mo, même downloadVerified désormais prouvé), media:cut bout en
   bout, MediaRecorder micro/loopback, Discord routing — voir
   VALIDATION.md / NEXT_ACTIONS.
+
+## V2 — SF-REL-0613 P0 ffmpeg + media:cut valide (15/11/2026)
+
+- media:cut via CDP a révélé l'impossibilité d'installer ffmpeg :
+  tar GNU (Git) shadowe bsdtar -> « C: » distant puis « not a tar
+  archive » (zip). Bug en chaîne masqué par SF-REL-0612.
+- Fix : System32\tar.exe (bsdtar) prioritaire, repli PATH.
+- Runtime : ffmpeg.zip SHA-256 x3, extraction OK, coupe réelle
+  dry-fart_extrait.mp3 1996 o. media:cut FONCTIONNEL de bout en bout.
+- yt:info reel valide (Big Buck Bunny). Reste : yt:download complet,
+  MediaRecorder micro/loopback, Discord routing, endurance, .dmp 0611.

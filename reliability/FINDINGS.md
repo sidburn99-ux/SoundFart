@@ -261,6 +261,26 @@ est desormais valide de bout en bout.
 **Statut** : FIXED_PENDING_VALIDATION — revue independante du diff
 encore requise pour CLOSED (diff trivial : 2 params par defaut).
 
+
+## SF-REL-0613 — ffmpeg inexploitable : tar GNU lit pas zip + « C: » distant (P0)
+
+**Symptôme** : `media:cut` et toute conversion audio YouTube (-x) échouaient
+à l'installation ffmpeg. Deux bugs en chaîne, le second masqué par le
+premier :
+1. `tar -xf C:\…\ffmpeg.zip` — le tar du PATH (Git GNU tar 1.35,
+   C:\Program Files\Git\usr\bin\tar.exe shadowe System32) interprète
+   « C: » comme hôte distant -> « Cannot connect to C: resolve failed ».
+2. Avec --force-local, GNU tar ne lit pas zip -> « not a tar archive ».
+   Seul bsdtar (System32\tar.exe) lit le zip.
+**Cause racine** : dépendance à l'exécutable `tar` du PATH sans
+contrôle de version/capacité.
+**Fix** : priorité explicite à `%SystemRoot%\System32\tar.exe`
+(bsdtar) avec repli sur `tar` du PATH.
+**Preuve** : runtime CDP — media:cut complet : ffmpeg.zip 80 Mo SHA-256
+vérifié x3 sessions, extraction bsdtar OK, coupe réelle
+`cuts/dry-fart_extrait.mp3` (1996 o > seuil 1 Ko). npm test 37/37.
+**Statut** : FIXED_PENDING_VALIDATION (revue indépendante requise).
+
 ## Historique actif des régressions (Quality Gate V2 §9)
 
 | Régression | Origine | Introduite par | Prévention |
@@ -277,11 +297,11 @@ Règle : avant de toucher un composant, chercher ici + dans le tableau ses anoma
 | Statut | Nombre | Détail |
 |---|---|---|
 | CLOSED | 1 | SF-REL-0141 (9 conditions remplies — voir entrée) |
-| FIXED_PENDING_VALIDATION | 89 | cycle 1 : 45 · cycle 2 : 6 · cycle 3 : 31 · cycle 5 : 6 · 0612 : 1 |
+| FIXED_PENDING_VALIDATION | 90 | cycle 1 : 45 · cycle 2 : 6 · cycle 3 : 31 · cycle 5 : 6 · 0612-0613 : 2 |
 | ACCEPTED | 24 | cycle 1 : 12 · cycle 2 : 1 · cycle 3 : 7 · cycle 5 : 4 |
 | INVESTIGATING | 1 | SF-REL-0611 crash AudioContext |
 | OPEN / BLOCKED | 0 | — |
-| **Total IDs définis** | **115** | IDs uniques, aucun doublon de définition |
+| **Total IDs définis** | **116** | IDs uniques, aucun doublon de définition |
 
 ### Doublons fonctionnels documentés (IDs distincts, même anomalie)
 
