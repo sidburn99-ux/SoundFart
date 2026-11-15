@@ -157,7 +157,7 @@ function migrateOldConfig() {
 
 // ---------- menu application (F11) ----------
 let menuState = {};
-const sendMenu = (action) => () => { if (win && !win.isDestroyed()) win.webContents.send('sf:menu', action); };
+const sendMenu = (action) => () => { if (win && !win.isDestroyed()) { try { win.webContents.send('sf:menu', action); } catch {} } };
 
 function buildMenu() {
   const st = menuState || {};
@@ -361,7 +361,7 @@ H('shortcuts:apply', (_e, entries) => {
   for (const { key, accel } of valid.slice(0, 200)) {
     try {
       const ok = globalShortcut.register(accel, () => {
-        if (win && !win.isDestroyed()) win.webContents.send('sf:shortcut', key);
+        if (win && !win.isDestroyed()) { try { win.webContents.send('sf:shortcut', key); } catch {} }
       });
       if (!ok) failed.push(accel);
     } catch {
