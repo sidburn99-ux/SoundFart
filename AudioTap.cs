@@ -476,7 +476,8 @@ internal static class AudioTap
         Console.Error.WriteLine("AudioTap: init loopback hr=0x" + hr.ToString("X8"));
         if (hr != 0) throw new Exception("init loopback echoue (0x" + hr.ToString("X8") + ")");
         uint srcBufFrames;
-        src.GetBufferSize(out srcBufFrames);
+        int srcSizeHr = src.GetBufferSize(out srcBufFrames);
+        if (srcSizeHr != 0) throw new Exception("GetBufferSize source echoue (0x" + srcSizeHr.ToString("X8") + ")");
         Console.Error.WriteLine("AudioTap: srcBuf=" + srcBufFrames);
 
         // init rendu cable (ignore en mode pcm : pas de destination, stdout a la place)

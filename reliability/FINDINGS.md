@@ -703,13 +703,13 @@ endpoint dont DeviceName avait echoue ("") — levirtuel pouvait etre
 choisi comme repli, exactement le cas durci cote JS (chooseRestoreIds).
 **Fix** : nom non vide exige dans NonVirtual ET dans la selection fb.
 **Preuve** : csc compile OK, AudioEndpoint list/get reels OK.
-**Statut** : FIXED_PENDING_VALIDATION.
+**Statut** : CLOSED — revue independante du diff b9ea0a7 : CORRECT sans reserve + csc compile + AudioEndpoint list/get reels + cdp-tap runtime (RMS 0,285) + npm test 39/39 + dist + smoke. Limites documentees.
 
 ## SF-REL-0661 — guard restauration one-shot : echec transitoire = micro coince (P3)
 
 **Fix** : RestoreFromFile boucle 5 tentatives backoff 2s->10s tant que
 le marqueur existe et que rc!=0.
-**Preuve** : csc compile OK. **Statut** : FIXED_PENDING_VALIDATION.
+**Preuve** : csc compile OK. **Statut** : CLOSED — revue independante du diff b9ea0a7 : CORRECT sans reserve + csc compile + AudioEndpoint list/get reels + cdp-tap runtime (RMS 0,285) + npm test 39/39 + dist + smoke. Limites documentees.
 
 ## SF-REL-0662 — guards AudioEndpoint dormants accumules (P3, ACCEPTED)
 
@@ -729,13 +729,13 @@ toute facon. Documente. **Statut** : ACCEPTED.
 borne ni check parent -> 100% CPU possible sur driver buggé.
 **Fix** : zeroFrames>200 -> break (sortie vers boucle externe bornee).
 **Preuve** : csc compile OK + cdp-tap runtime (73 chunks, RMS 0,285).
-**Statut** : FIXED_PENDING_VALIDATION.
+**Statut** : CLOSED — revue independante du diff b9ea0a7 : CORRECT sans reserve + csc compile + AudioEndpoint list/get reels + cdp-tap runtime (RMS 0,285) + npm test 39/39 + dist + smoke. Limites documentees.
 
 ## SF-REL-0665 — maxQueued fige apres reconnexion (P3)
 
 **Fix** : maxQueued recalcule depuis df.bytesPerSec apres InitTap
 reconnect (format peut changer 44.1->96 kHz). Mode non-pcm.
-**Statut** : FIXED_PENDING_VALIDATION.
+**Statut** : CLOSED — revue independante du diff b9ea0a7 : CORRECT sans reserve + csc compile + AudioEndpoint list/get reels + cdp-tap runtime (RMS 0,285) + npm test 39/39 + dist + smoke. Limites documentees.
 
 ## SF-REL-0666 — parentStart adopte sur PID reutilise (P3, ACCEPTED)
 
@@ -753,22 +753,22 @@ toujours ('data' handler), EPIPE -> IOException -> sortie. Documente.
 
 **Fix** : Marshal.ReleaseComObject sur src/dst/cap/ren avant
 reassignation t2 — sessions WASAPI fantomes evitees.
-**Statut** : FIXED_PENDING_VALIDATION.
+**Statut** : CLOSED — revue independante du diff b9ea0a7 : CORRECT sans reserve + csc compile + AudioEndpoint list/get reels + cdp-tap runtime (RMS 0,285) + npm test 39/39 + dist + smoke. Limites documentees.
 
 ## SF-REL-0669 — dst.GetBufferSize hr ignore -> silence mode reinjection (P3)
 
 **Fix** : hr verifie + throw (mode non-pcm inutilise mais code sain).
-**Statut** : FIXED_PENDING_VALIDATION.
+**Statut** : CLOSED — revue independante du diff b9ea0a7 : CORRECT sans reserve + csc compile + AudioEndpoint list/get reels + cdp-tap runtime (RMS 0,285) + npm test 39/39 + dist + smoke. Limites documentees.
 
 ## SF-REL-0670 — parentPid non numerique -> anti-orphelin muet (P3)
 
 **Fix** : warning stderr au lieu d'un no-op silencieux.
-**Statut** : FIXED_PENDING_VALIDATION.
+**Statut** : CLOSED — revue independante du diff b9ea0a7 : CORRECT sans reserve + csc compile + AudioEndpoint list/get reels + cdp-tap runtime (RMS 0,285) + npm test 39/39 + dist + smoke. Limites documentees.
 
 ## SF-REL-0671 — seconds negatif = duree infinie (P3)
 
 **Fix** : seconds<0 rejete avec NaN/Infinity.
-**Statut** : FIXED_PENDING_VALIDATION.
+**Statut** : CLOSED — revue independante du diff b9ea0a7 : CORRECT sans reserve + csc compile + AudioEndpoint list/get reels + cdp-tap runtime (RMS 0,285) + npm test 39/39 + dist + smoke. Limites documentees.
 
 ## SF-REL-0672 — allocations par paquet ~3 MB/s GC (P3, ACCEPTED)
 
