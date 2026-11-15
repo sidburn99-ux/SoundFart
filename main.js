@@ -528,7 +528,7 @@ const validHttpUrl = (u) => {
   try { const x = new URL(String(u)); return x.protocol === 'https:'; } catch { return false; }
 };
 
-function downloadFile(url, dest, onProgress) {
+function downloadFile(url, dest, onProgress = () => {}) {
   return new Promise((resolve, reject) => {
     const get = (u, n) => {
       // Les redirections ne doivent jamais sortir du HTTPS (anti-downgrade MITM).
@@ -703,7 +703,7 @@ async function ensureYtDlp() {
   return ytdlpPromise;
 }
 
-function runYt(args, onProgress) {
+function runYt(args, onProgress = () => {}) {
   return new Promise((resolve, reject) => {
     const p = trackChild(spawn(ytdlpPath(), args, { windowsHide: true }));
     let err = '', done = false;

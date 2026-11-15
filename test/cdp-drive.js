@@ -89,6 +89,30 @@ async function check(name, fn) {
   await check('yt:info URL invalide (chemin erreur)', () => evaluate(
     `window.sf.ytInfo("pas-une-url").then(()=>"no-throw").catch(e=>String(e&&e.message||e).slice(0,100))`));
 
+  // ---- batch 2 : cycle de vie config / audio / fichiers ----
+  await check('config save/load roundtrip', async () => {
+    const before = await evaluate('cfg.sounds.length');
+    await evaluate('window.sf.saveConfig(cfg)');
+    const loaded = await evaluate('window.sf.loadConfig()');
+    return { before, loadedSounds: loaded && loaded.sounds ? loaded.sounds.length : null };
+  });
+
+  await check('applyAudio re-run (recreate contexts)', async () => {
+    const r = await evaluate('(async()=>{try{await applyAudio();return{ok:true,cable:audio.cable?audio.cable.ctx.state:null,mon:audio.mon?audio.mon.ctx.state:null};}catch(e){return{ok:false,err:String(e&&e.message||e).slice(0,120)};}})()');
+    return r;
+  });
+
+  await check('file:check sons reels (5 premiers)', () => evaluate(
+    'window.sf.checkFiles((cfg.sounds||[]).slice(0,5).map(s=>s.path))'));
+
+  await check('teardownAudio + applyAudio (cycle complet)', async () => {
+    const r = await evaluate('(async()=>{try{await teardownAudio();const torn={cable:audio.cable,mon:audio.mon,mic:!!audio.micStream};await applyAudio();return{torn:{cableNull:torn.cable===null,monNull:torn.mon===null,micNull:!torn.mic},cable:audio.cable?audio.cable.ctx.state:null,mon:audio.mon?audio.mon.ctx.state:null};}catch(e){return{err:String(e&&e.message||e).slice(0,150)};}})()');
+    return r;
+  });
+
+  await check('stopAll idle-safe', () => evaluate(
+    '(async()=>{stopAll(true);return voices.size;})()'));
+
   console.log('---RESULTATS---');
   for (const [n, s, d] of results) console.log(s, n, d);
   ws.close();

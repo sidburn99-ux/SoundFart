@@ -127,3 +127,24 @@ de main.js exige smoke test-env >= 60 s avec verification du log.
 - Preuve RUNTIME ajoutee au registre pour les chemins couverts ;
   aucune entree CLOSE — revue independante du diff toujours requise.
 - Smoke session sa9fe21 stable, heap constant, pas de crash.
+
+## V2 — SF-REL-0612 P0 crash downloadFile + revues independantes (15/11/2026)
+
+- **P0 trouve par la validation runtime** : test/cdp-yt.js (ytEnsure sur
+  profil neuf) a fait Mourir le process main — `[fatal] uncaughtException:
+  TypeError: onProgress is not a function` main.js:554. Cause :
+  `downloadFile(sumsUrl, sumsTmp)` sans 3e argument -> undefined() dans
+  le handler data. Tout downloadVerified crashait a l'etape .sums :
+  yt:ensure, ffmpeg — aucun outil telechargeable installable sur profil
+  neuf. Bug present depuis l'introduction de downloadVerified.
+- Fix : `onProgress = () => {}` par defaut dans downloadFile ET runYt
+  (meme classe de crash). npm test 37/37, node --check OK, dist rebuild.
+- **Verification runtime du fix** : ytEnsure complet -> yt-dlp.exe
+  23,5 Mo, SHA-256 verifie, process vivant. Scenario du crash rejoue
+  avec succes.
+- **Revues independantes (subagent adverse)** : 4 commits recents
+  (54d77a6, ed5e042, 9093732, 3723fb2) tous VALIDÉS, aucune anomalie
+  bloquante, residus = ACCEPTED documentes.
+- SF-REL-0141 promue CLOSED : 9 conditions V2 remplies (premiere entree
+  fully conforme). Dashboard : 1 CLOSED / 89 FPV / 24 ACCEPTED / 1 INV.
+- Nouveau driver : test/cdp-drive.js (12 checks) + test/cdp-yt.js.

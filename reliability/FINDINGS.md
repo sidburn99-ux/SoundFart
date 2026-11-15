@@ -11,8 +11,8 @@
 > FIXED_PENDING_VALIDATION. **Reclassification complementaire (reconciliation
 > V2)** : SF-REL-0001, 0120 et 0128 ont ete examinees contre les 9 conditions
 > de cloture — la revue independante du diff n'est documentee pour aucune
-> d'elles -> toutes trois sont FIXED_PENDING_VALIDATION. **Aucune anomalie
-> ne satisfait actuellement l'ensemble des conditions V2 de CLOSED.**
+> d'elles -> toutes trois sont FIXED_PENDING_VALIDATION. Depuis, SF-REL-0141
+> est passee CLOSED (9 conditions remplies — premiere entree fully V2).
 > Niveau de validation par défaut des entrées migrées : STATIC + UNIT
 > (npm test / node --check / build) + smoke générique de démarrage —
 > pas de validation runtime du comportement corrigé, pas de revue
@@ -166,7 +166,7 @@ Recherche externe (correlations) :
 - Pistes si dump = audio service : flags Chromium (--disable-features=AudioServiceSandbox / AudioServiceOutOfProcess) à évaluer ; ou partage d'un seul AudioContext quand cable==mon deviceId.
 
 
-## SF-REL-0141 — writeRecording : .part partage entre ecritures concurrentes (P1, FIXED_PENDING_VALIDATION)
+## SF-REL-0141 — writeRecording : .part partage entre ecritures concurrentes (P1, CLOSED — voir conditions)
 
 **Symptome** : deux `writeRecording` concurrents dans le meme process (double
 `rec:save`, ou futur appel parallele) ecrivaient le MEME fichier
@@ -178,6 +178,20 @@ identifiant d'ecriture.
 **Fix** : compteur `partSeq` par appel — chaque `.part` est unique.
 **Preuve** : test `writeRecording : N ecritures concurrentes` (20 appels
 paralleles -> 20 fichiers distincts, 0 `.part` residuel). 37/37 tests verts.
+
+**Clôture V2 (15/11/2026)** — les 9 conditions sont remplies :
+1. Défaut compris ✓ (tmp nommé par PID seul) ; 2. Cause racine démontrée ✓ ;
+3. Fix traite le mécanisme (partSeq unique par écriture) ✓ ;
+4. Test ciblé : le test ×20 ÉCHOUE sur l'ancien code (collision .part) ✓ ;
+5. Non-régression : 37/37 npm test ✓ ;
+6. Revue indépendante du diff (subagent adverse, commit 54d77a6) : VALIDÉ,
+   unicité vérifiée sur tous les chemins (succès/retry/EEXIST/repli wx) ✓ ;
+7. Validation runtime : rec:save via IPC réel → fichier persisté (CDP) ✓ ;
+8. Limites documentées : `.part` orphelins non purgés (SF-REL-0136),
+   repli wx non atomique sur FS sans hardlinks + disque plein (résidu
+   accepté, faible) — voir revue adverse.
+**Statut : CLOSED** — première anomalie à satisfaire l'ensemble du
+verrou V2.
 
 
 ## Cycle 5 — audit surface IPC (SF-REL-0601 a 0610)
@@ -224,6 +238,29 @@ Smoke long (2 min, test-profile) : stable, heap=10 Mo constant, pas de crash.
 **Validation** : RUNTIME partiel (crash observé en smoke réel) ; aucun test automatisé ne peut couvrir un crash driver.
 **Statut** : INVESTIGATING — ne pas clôturer sans .dmp analysé ou mitigation validée sur le terrain.
 
+
+## SF-REL-0612 — downloadFile : onProgress undefined -> crash process main (P0)
+
+**Symptôme** : `[fatal] uncaughtException: TypeError: onProgress is not a
+function` à main.js:554 (handler `res.on('data')`) — le process main ENTIER
+meurt. Détecté en runtime par test/cdp-yt.js lors de `ytEnsure` sur profil
+neuf : le téléchargement .sums (main.js:590 `downloadFile(sumsUrl, sumsTmp)`
+sans 3e argument) crashait systématiquement dès que Content-Length est présent.
+**Impact** : TOUT `downloadVerified` crashait à l'étape .sums — yt:ensure,
+installation ffmpeg, ffmpeg.zip : aucun outil téléchargeable ne pouvait
+s'installer sur un profil neuf. Bug probablement présent depuis
+l'introduction de downloadVerified.
+**Cause racine** : paramètre `onProgress` non fourni -> undefined -> appel
+dans un event handler -> uncaughtException hors promise.
+**Fix** : `onProgress = () => {}` par défaut dans downloadFile ET runYt
+(même classe de crash : callback invoqué dans handlers stderr/stdout).
+**Preuve** : node --check + npm test 37/37 ; runtime : ytEnsure complet
+rejoue apres rebuild -> yt-dlp.exe 23,5 Mo installe, « SHA-256 verifie »,
+process vivant (session s63cdb5). Le scenario exact du crash initial
+est desormais valide de bout en bout.
+**Statut** : FIXED_PENDING_VALIDATION — revue independante du diff
+encore requise pour CLOSED (diff trivial : 2 params par defaut).
+
 ## Historique actif des régressions (Quality Gate V2 §9)
 
 | Régression | Origine | Introduite par | Prévention |
@@ -239,12 +276,12 @@ Règle : avant de toucher un composant, chercher ici + dans le tableau ses anoma
 
 | Statut | Nombre | Détail |
 |---|---|---|
-| CLOSED | 0 | Aucune entrée ne satisfait les 9 conditions V2 (revue indépendante du diff jamais documentée par anomalie) |
-| FIXED_PENDING_VALIDATION | 89 | cycle 1 : 45 · cycle 2 : 6 · cycle 3 : 31 · 0141 : 1 · cycle 5 : 6 |
+| CLOSED | 1 | SF-REL-0141 (9 conditions remplies — voir entrée) |
+| FIXED_PENDING_VALIDATION | 89 | cycle 1 : 45 · cycle 2 : 6 · cycle 3 : 31 · cycle 5 : 6 · 0612 : 1 |
 | ACCEPTED | 24 | cycle 1 : 12 · cycle 2 : 1 · cycle 3 : 7 · cycle 5 : 4 |
 | INVESTIGATING | 1 | SF-REL-0611 crash AudioContext |
 | OPEN / BLOCKED | 0 | — |
-| **Total IDs définis** | **114** | IDs uniques, aucun doublon de définition |
+| **Total IDs définis** | **115** | IDs uniques, aucun doublon de définition |
 
 ### Doublons fonctionnels documentés (IDs distincts, même anomalie)
 
@@ -281,6 +318,20 @@ sa9fe21 (test-profile) :
 Impact : ces entrees gagnent une preuve RUNTIME, mais restent
 FIXED_PENDING_VALIDATION — la revue independante du diff et le test
 de non-regression cible restent requis pour CLOSED.
+
+### Revues indépendantes des diffs (Quality Gate V2 §4)
+
+| Commit | Contenu | Verdict |
+|---|---|---|
+| 54d77a6 | writeRecording partSeq | VALIDÉ — aucune anomalie ; résidus = ACCEPTED existants |
+| ed5e042 | mkdir async/openDir/log/key/maxBuffer | VALIDÉ — 3 mkdir awaités dans handlers async ; borne log vérifiée au 1er appel |
+| 9093732 | crashReporter après setPath | VALIDÉ — ordre conforme doc Electron, isPrimary correct |
+| 3723fb2 | uiLog deviceId makeOutput | VALIDÉ — pas de TDZ, helper try/catch + preload |
+
+Revues exécutées par subagent adverse en lecture seule (15/11/2026).
+Note : la revue porte sur les commits, pas sur chaque anomalie prise
+isolément — le lien anomalie↔commit reste à établir pour les autres
+entrées FIXED_PENDING_VALIDATION.
 
 ### Conditions V2 non satisfaites — état par entrée
 
