@@ -694,9 +694,16 @@ internal static class AudioTap
                         {
                             Console.Error.WriteLine("AudioTap: render GetBuffer echoue hr=0x" + rgHr.ToString("X8"));
                             if (rgHr == unchecked((int)0x88890004)) { wantReconnect = true; break; } // AUDCLNT_E_DEVICE_INVALIDATED
+                            if (rgHr == AUDCLNT_E_BUFFER_TOO_LARGE)
+                            {
+                                // Endpoint partage : le padding a pu changer entre
+                                // GetCurrentPadding et GetBuffer (autre ecrivain).
+                                // Transitoire -> on saute ce tour, pas de mort.
+                                break;
+                            }
                             try { src.Stop(); dst.Stop(); } catch {}
                             try { if (pcmOut != null) { pcmOut.Flush(); pcmOut.Dispose(); } } catch {}
-                    timeEndPeriod(1); return 2;
+                            timeEndPeriod(1); return 2;
                         }
                         if (rgHr > 0) break; // code S_ : pas de buffer ce tour (symetrique au cote capture)
                         if (takeBytes == head.Length)

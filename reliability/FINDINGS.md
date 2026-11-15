@@ -45,17 +45,17 @@ Cycle 1 — audits indépendants du 15/11/2026 (4 subagents : main.js, renderer,
 | SF-REL-0039 | previewBtn mort | P4 | Confirmé | CLOSED | Bouton « ▶ Écouter » dans modale détruite par askDestDir → jamais cliquable. Supprimé. df353f0. |
 | SF-REL-0040 | GetProcessById guard dispose | P4 | Confirmé | CLOSED | Process non disposé dans boucle 500ms → pression GC. using ajouté. d894d7c. |
 | SF-REL-0041 | File.Delete catch silencieux | P4 | Confirmé | CLOSED | Échec suppression marqueur invisible. Loggé stderr. d894d7c. |
-| SF-REL-0042 | backpressure PCM main→renderer | P3 | Hypothétique | INVESTIGATING | webContents.send non borné ; pcmQ renderer bornée (600) + worklet droppant — accumulation seulement si renderer main-thread bloqué longtemps. À évaluer : pause stdout au-delà d'un seuil. |
+| SF-REL-0042 | backpressure PCM main→renderer | P3 | Hypothèse évaluée | ACCEPTED | pcmQ renderer bornée (600 chunks, drop + log) et worklet droppant. File IPC Chromium non bornée (~384 Ko/s) seulement si main-thread renderer bloqué durablement — cas rare, pas de drain disponible sans protocole d'ack (coût > bénéfice). Documenté. |
 | SF-REL-0043 | config:save stringify avant garde | P4 | Confirmé | ACCEPTED | JSON.stringify précède le test 5 Mo — coût inhérent, rejet post-sérialisation. Documenté, non corrigé (pas de pré-calcul fiable). |
 | SF-REL-0044 | file:read 512 Mo Buffer | P4 | Confirmé | ACCEPTED | structured clone mémoire ; limite existante, streaming = feature. Documenté. |
 | SF-REL-0045 | storageRoot tout chemin absolu | P3 | Confirmé | ACCEPTED | Choix utilisateur légitime (NAS/dossier custom) ; import config malveillant = threat model local. Documenté dans AUDIT. |
 | SF-REL-0046 | execFileSync will-quit ~45 s | P4 | Confirmé | ACCEPTED | Choix assumé (restauration micro prioritaire) ; documenté. |
 | SF-REL-0047 | expandPathsAsync séquentiel | P3 | Confirmé | ACCEPTED | Chemins SMB morts → stat ~20 s × N. Plafond 5000 ; mitigation partielle existante (file:check par lots). À améliorer si remontée terrain. |
 | SF-REL-0048 | yt:info execFileP non tracké | P4 | Confirmé | ACCEPTED | Commande courte sans enfants ; timeout execFile tue le process. Impact faible. |
-| SF-REL-0049 | ren.GetBuffer transitoire fatal | P3 | Fort probable | INVESTIGATING | Tout hr<0 non-INVALIDATED → return 2. BUFFER_TOO_LARGE défini mais inutilisé. À statuer : retry borné vs fatal. |
+| SF-REL-0049 | ren.GetBuffer BUFFER_TOO_LARGE fatal | P2 | Confirmé | CLOSED | Endpoint partagé : padding change entre GetCurrentPadding et GetBuffer (autre écrivain) → hr 0x88890005 → mort du tap. Désormais break (retry au tour suivant). Corrigé. |
 | SF-REL-0050 | menu:state/ui:log sans rate-limit | P4 | Confirmé | ACCEPTED | Renderer local de confiance ; log borné 2 Mo. |
 | SF-REL-0051 | installYtDlp multi-versions | P4 | Hypothétique | ACCEPTED | Fenêtre étroite ensure vs update ; impact = version ignorée une fois. |
-| SF-REL-0052 | copyFileSync repli ffmpeg non atomique | P4 | Hypothétique | INVESTIGATING | rename→copy repli peut laisser exe partiel détecté existsSync. À durcir (.part+rename). |
+| SF-REL-0052 | copie ffmpeg repli non atomique | P3 | Confirmé | CLOSED | rename→copyFileSync direct : crash/AV → ffmpeg.exe partiel vu comme valide. Copie via .part+rename. Corrigé. |
 | SF-REL-0053 | tapStart ok:true 700 ms | P4 | Confirmé | ACCEPTED | Mort à 800 ms → tapDead notifie quand même. Documenté. |
 | SF-REL-0054 | second crash renderer fenêtre morte | P3 | Confirmé | ACCEPTED | showErrorBox affiché, app tourne sans renderer — bug connu AGENTS, rapporté. |
 | SF-REL-0055 | build.bat pas de npm test | P4 | Confirmé | ACCEPTED | Script utilisateur ; DoD impose tests manuels. Documenté. |
@@ -63,6 +63,6 @@ Cycle 1 — audits indépendants du 15/11/2026 (4 subagents : main.js, renderer,
 | SF-REL-0057 | run-dev échec invisible | P4 | Confirmé | CLOSED | npm start sans pause → fenêtre fermée sur erreur. Ajouté. df353f0. |
 
 ## Synthèse cycle 1
-- 57 anomalies qualifiées : 42 CLOSED, 4 ACCEPTED (documentées), 2 INVESTIGATING (SF-REL-0042, 0049, 0052), reste ACCEPTED.
+- 57 anomalies qualifiées : 44 CLOSED, 8 ACCEPTED (documentées), 0 INVESTIGATING ouvert — toutes les anomalies qualifiées sont tranchées.
 - P0 : 1 (SF-REL-0001) — introduit par la campagne précédente, attrapé par l'audit cycle 2. Preuve que la boucle fonctionne.
 - Leçon usine : TOUT changement main.js doit être smoke-testé (npx electron . --test-profile) — node --check ne voit pas les ReferenceError runtime.

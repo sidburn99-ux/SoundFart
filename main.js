@@ -412,7 +412,15 @@ async function ensureFfmpeg() {
         }
         const found = findFile(dest, 'ffmpeg.exe');
         if (found && found !== ffmpegPath()) {
-          try { fs.renameSync(found, ffmpegPath()); } catch { fs.copyFileSync(found, ffmpegPath()); }
+          // Repli inter-volume : copie via .part + rename — jamais d'exe
+          // partiel detectable par existsSync apres un crash/AV.
+          const dst = ffmpegPath();
+          try { fs.renameSync(found, dst); }
+          catch (re) {
+            const tmp = dst + '.part';
+            try { fs.copyFileSync(found, tmp); fs.renameSync(tmp, dst); }
+            catch (ce) { try { fs.unlinkSync(tmp); } catch {} throw ce; }
+          }
         }
       } finally {
         try { fs.unlinkSync(zip); } catch {}
