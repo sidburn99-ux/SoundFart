@@ -510,3 +510,21 @@ il ne reste que 0611 (.dmp), VALIDATION.md materiel, endurance.
   cdp-drive 12/12 PASS sur nouveau build, smoke+stress relances.
 - Registre : 168 anomalies — 142 CLOSED, 2 FPV (0681/0682), 23 ACCEPTED,
   1 INVESTIGATING.
+
+## 15/11/2026 (suite 6) — revue 0681/0682 + reserve corrigee
+
+- Revue adverse : 0681 CORRECT ; 0682 CORRECT AVEC RESERVE — la liste
+  dupliquee de findShortcutOwner n'avait pas alt+f4 (capture a chaud
+  contourait la blocklist) et normAccel ne strippait pas les espaces
+  ('Alt + F4' passait).
+- Fix : RESERVED_SC hisse au niveau module (source unique normalizeCfg
+  + findShortcutOwner), normAccel retire les espaces.
+- Runtime CDP sur rebuild : normAccel('Alt + F4')='alt+f4',
+  findShortcutOwner bloque 'Alt+F4' ET 'Alt + F4' -> 'un raccourci
+  reserve du systeme', Ctrl+F toujours bloque, config intacte.
+- Observation pre-existante documentee (non corrigee) : autoSwitchMic
+  et watchdogMic ne sont pas independants cote main (watchdog exige
+  autoSwitchMic===true) — les deux checkboxes UI suggèrent
+  l'independance, ecart UX mineur.
+- 0681/0682 -> CLOSED. Registre : 168 anomalies — 144 CLOSED, 0 FPV,
+  23 ACCEPTED, 1 INVESTIGATING.

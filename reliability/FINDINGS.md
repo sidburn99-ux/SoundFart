@@ -795,8 +795,8 @@ Perte qualitative surrounds, pas corruption ; choix documente.
 | SF-REL-0678 | P3 | CLOSED | fmtTime : arrondi après split → « 1:60.0 » / « 59:60.0 ». Fix : arrondi à 0,1 s avant le split. |
 | SF-REL-0679 | P3 | CLOSED | parseTs : « 1:99 », « 0:0:90 » acceptés → timestamp silencieusement faux passé à yt-dlp/ffmpeg. Fix : parties non leaders < 60 exigées. |
 | SF-REL-0680 | P3 | CLOSED | expandPaths/Async : `paths` non-itérable → TypeError (atténué : `files:expand` valide Array). Fix : garde itérable. |
-| SF-REL-0681 | P3 | FIXED_PENDING_VALIDATION | watchdogMic : `settings` totalement absent de config.json → `st` undefined → watchdog désarmé alors que le renderer affiche les défauts actifs (autoSwitchMic/watchdogMic=true). Fix : `settings` non-objet → `{}` (défauts). Config éditée main/ancienne seulement. |
-| SF-REL-0682 | P3 | FIXED_PENDING_VALIDATION | RESERVED_SC sans `alt+f4` : un raccourci/stopShortcut `Alt+F4` importé ou saisi pouvait être enregistré en globalShortcut et bloquer la fermeture normale de la fenêtre. Fix : ajout à la blocklist (normAccel lowercase → 'alt+f4'). |
+| SF-REL-0681 | P3 | CLOSED | watchdogMic : `settings` totalement absent de config.json → `st` undefined → watchdog désarmé alors que le renderer affiche les défauts actifs (autoSwitchMic/watchdogMic=true). Fix : `settings` non-objet → `{}` (défauts). Config éditée main/ancienne seulement. |
+| SF-REL-0682 | P3 | CLOSED | RESERVED_SC sans `alt+f4` : un raccourci/stopShortcut `Alt+F4` importé ou saisi pouvait être enregistré en globalShortcut et bloquer la fermeture normale de la fenêtre. Fix : ajout à la blocklist (normAccel lowercase → 'alt+f4'). |
 
 Réévaluation ACCEPTED (audit 15/11) : 17 justifications reconduites inchangées,
 1 OBSOLÈTE (0048 → CLOSED via SF-REL-0127), 4 RECONSIDÉRER traitées →
@@ -843,8 +843,8 @@ VALIDATION.md.
 
 | Statut | Nombre | Détail |
 |---|---|---|
-| CLOSED | 142 | cycles 1-8 + 0048 (obsolète via 0127) + 11 revus (0054/0055/0059/0116/0674-0680) |
-| FIXED_PENDING_VALIDATION | 2 | 0681, 0682 |
+| CLOSED | 144 | cycles 1-8 + 0048 (obsolète via 0127) + 11 revus (0054/0055/0059/0116/0674-0680) |
+| FIXED_PENDING_VALIDATION | 0 | — |
 | ACCEPTED | 23 | cycles 1-7 + 0642 + 0656 + 0662/0663/0666/0667/0672/0673 |
 | INVESTIGATING | 1 | SF-REL-0611 crash AudioContext |
 | OPEN / BLOCKED | 0 | — |

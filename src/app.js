@@ -150,11 +150,6 @@ function normalizeCfg(saved) {
     // normAccel : 'CommandOrControl+X' et 'Ctrl+X' sont le meme raccourci
     // Windows — la dedupe brute les laissait passer toutes les deux.
     const stopSc = normAccel(c.settings.stopShortcut);
-    // Accesseurs reserves du menu applicatif : un import ne doit pas pouvoir
-    // capter Ctrl+F/Ctrl+O/F12 en global et entrer en conflit avec le menu.
-    // Alt+F4 = fermeture Windows geree par l'OS : qu'un raccourci global
-    // l'enregistre bloquerait la fermeture normale de la fenetre.
-    const RESERVED_SC = new Set(['ctrl+f', 'ctrl+o', 'f12', 'f11', 'ctrl+shift+i', 'alt+f4']);
     for (const s of c.sounds) {
       if (!s.shortcut) continue;
       const a = normAccel(s.shortcut);
@@ -810,8 +805,15 @@ function buildAccel(e) {
 // stopShortcut) et 'Ctrl+Alt+S' (buildAccel) designent le meme raccourci
 // Windows — sans ca, findShortcutOwner ne detectait pas le conflit et le
 // son s'enregistrait avant le STOP (ou l'inverse).
+// Accesseurs reserves : menu applicatif (Ctrl+F/O, F11/F12, Ctrl+Shift+I)
+// + Alt+F4 (fermeture Windows geree par l'OS — un globalShortcut dessus
+// bloquerait la fermeture normale). Source unique pour normalizeCfg
+// (import) et findShortcutOwner (capture a chaud) — les deux divergent
+// sinon (revue 0682).
+const RESERVED_SC = new Set(['ctrl+f', 'ctrl+o', 'f12', 'f11', 'ctrl+shift+i', 'alt+f4']);
+
 function normAccel(a) {
-  return (a || '').toLowerCase()
+  return (a || '').toLowerCase().replace(/\s+/g, '')
     .replace(/commandorcontrol|cmdorctrl/g, 'ctrl')
     .replace(/control/g, 'ctrl');
 }
@@ -822,7 +824,7 @@ function findShortcutOwner(acc, excludeSoundId) {
   if (normAccel(cfg.settings.stopShortcut) === a) return 'le raccourci STOP';
   // Accelerateurs du menu applicatif (fenetre focus) : un raccourci de son
   // identique produirait une double action (jouer + ouvrir la dialog).
-  if (['ctrl+f', 'ctrl+o', 'f12', 'f11', 'ctrl+shift+i'].includes(a)) return 'un raccourci du menu';
+  if (RESERVED_SC.has(a)) return 'un raccourci réservé du système';
   const s = cfg.sounds.find((x) => x.id !== excludeSoundId && normAccel(x.shortcut) === a);
   return s ? '« ' + s.name + ' »' : null;
 }
