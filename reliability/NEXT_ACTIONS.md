@@ -8,9 +8,11 @@
 
 ## État réel (vérifié 15/11/2026)
 
-- **Registre** : 166 anomalies — **142 CLOSED** · **0 FPV** ·
+- **Registre** : 168 anomalies — **144 CLOSED** · **0 FPV** ·
   23 ACCEPTED · 1 INVESTIGATING (SF-REL-0611). Toutes les zones de code
   sont auditées, y compris lib/audio-utils.js en entier et les deux .cs.
+- **Derniers ajouts** : 0681 (watchdog settings absent) + 0682 (Alt+F4
+  blocklist partagée) — revus, runtime CDP vérifié, CLOSED (d596743).
 - **Revue indépendante 73ed0a7** : 11/11 CORRECT → tous CLOSED.
   Réserves mineures documentées dans FINDINGS (cycle 8). Affinage
   post-revue : SF-REL-0059 `noRetry` + unlink fichier >512 Mo.
