@@ -129,11 +129,15 @@ function normalizeCfg(saved) {
   {
     const seenSc = new Set();
     const stopSc = (c.settings.stopShortcut || '').toLowerCase();
+    // Accesseurs reserves du menu applicatif : un import ne doit pas pouvoir
+    // capter Ctrl+F/Ctrl+O/F12 en global et entrer en conflit avec le menu.
+    const RESERVED_SC = new Set(['ctrl+f', 'cmdorctrl+f', 'ctrl+o', 'cmdorctrl+o', 'f12']);
     for (const s of c.sounds) {
       if (!s.shortcut) continue;
       const a = s.shortcut.toLowerCase();
-      if (seenSc.has(a) || a === stopSc) s.shortcut = null; else seenSc.add(a);
+      if (seenSc.has(a) || a === stopSc || RESERVED_SC.has(a)) s.shortcut = null; else seenSc.add(a);
     }
+    if (RESERVED_SC.has((c.settings.stopShortcut || '').toLowerCase())) c.settings.stopShortcut = defaults().settings.stopShortcut;
   }
   // ids de categories dupliques : garde le premier (catById serait ambigu)
   {
@@ -144,8 +148,12 @@ function normalizeCfg(saved) {
       seenCat.add(cat.id); return true;
     });
   }
-  c.categories.forEach((cat) => {
-    if (cat && cat.color != null && (typeof cat.color !== 'string' || !/^#[0-9a-fA-F]{3,8}$/.test(cat.color))) cat.color = null;
+  c.categories.forEach((cat, i) => {
+    // CSS hex valide : 3/4/6/8 chiffres seulement (5 et 7 sont invalides) ;
+    // une couleur cassee/importee null retombe sur la palette, jamais sur
+    // un --c invalide pour color-mix.
+    if (cat && (typeof cat.color !== 'string' || !/^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(cat.color)))
+      cat.color = PALETTE[i % PALETTE.length];
   });
   // settings : types invalides -> valeurs par defaut (master NaN cassait les deux sorties)
   const st = c.settings;
@@ -251,11 +259,15 @@ async function getBuffer(path) {
     const data = await window.sf.readFile(path);
     // Garde anti-OOM : le PCM decode tient ~22 Mo/min ; au-dela d'un fichier
     // tres lourd on refuse AVANT decodeAudioData (crash renderer connu).
-    if (data.byteLength > 150 * 1024 * 1024) throw new Error('Fichier trop volumineux pour être joué (' + Math.round(data.byteLength / 1048576) + ' Mo).');
+    // noFileErr : le fichier EXISTE mais ne peut pas etre joue — ne doit pas
+    // etre badge « introuvable » (fileErr = vrai manquant seulement).
+    if (data.byteLength > 150 * 1024 * 1024) { const e = new Error('Fichier trop volumineux pour être joué (' + Math.round(data.byteLength / 1048576) + ' Mo).'); e.noFileErr = true; throw e; }
     const ab = data instanceof ArrayBuffer ? data
       : data && data.buffer ? data.buffer.slice(data.byteOffset || 0, (data.byteOffset || 0) + data.byteLength)
       : new Uint8Array(data).buffer; // robustness : ArrayBuffer pur ou Uint8Array
-  const buf = await decoder.decodeAudioData(ab);
+  let buf;
+  try { buf = await decoder.decodeAudioData(ab); }
+  catch (de) { de.noFileErr = true; throw de; } // codec/format : fichier present mais indecodable
   const bytes = bufBytes(buf);
   // Forensique crash renderer (-1/143) : la taille PCM decodee est la donnee
   // qui manque pour distinguer OOM decode vs crash driver — on la journalise.
@@ -271,12 +283,17 @@ async function getBuffer(path) {
     longWarned.add(path);
     toast('Fichier long (> 10 min) : il occupera beaucoup de mémoire une fois joué.', 'warn');
   }
-  bufCache.set(path, { buf, bytes });
-  bufCacheBytes += bytes;
-  while (bufCacheBytes > BUF_CACHE_MAX && bufCache.size > 1) {
-    const k = bufCache.keys().next().value;
-    bufCacheBytes -= bufCache.get(k).bytes;
-    bufCache.delete(k);
+  // Orphelin de cache : si le son a ete retire/relocalise pendant le
+  // decodeAudioData, ne pas mettre en cache un buffer pour un path qui
+  // n'est plus reference (jusqu'a 256 Mo de residue).
+  if (cfg.sounds.some((x) => x.path === path)) {
+    bufCache.set(path, { buf, bytes });
+    bufCacheBytes += bytes;
+    while (bufCacheBytes > BUF_CACHE_MAX && bufCache.size > 1) {
+      const k = bufCache.keys().next().value;
+      bufCacheBytes -= bufCache.get(k).bytes;
+      bufCache.delete(k);
+    }
   }
     return buf;
   })();
@@ -389,7 +406,7 @@ async function applyAudioInner() {
         // Micro perdu sans devicechange (debranchement, BT qui coupe) : le
         // track meurt -> Discord n'entend plus la voix, sans aucun signal.
         stream.getTracks().forEach((t) => {
-          t.addEventListener('ended', () => { if (audio.micStream === stream) { toast('Micro perdu — voix coupée sur le câble.', 'warn'); audio.micStream = null; applyAudio(); } });
+          t.addEventListener('ended', () => { if (audio.micStream === stream) { toast('Micro perdu — voix coupée sur le câble.', 'warn'); audio.micStream = null; applyAudio().catch((e) => logErr('applyAudio', e)); } });
           t.addEventListener('mute', () => { if (audio.micStream === stream) toast('Micro muet par le système — voix coupée.', 'warn'); });
         });
         const src = audio.cable.ctx.createMediaStreamSource(stream);
@@ -440,7 +457,7 @@ async function refreshDevices(askPermission) {
   }
   // Sans permission audio, Chromium retourne des entrees generiques avec
   // deviceId='' — ce n'est PAS une liste vide : c'est une detection degradee.
-  const real = list.filter((d) => d.deviceId);
+  const real = window.SFUtils.realDevices(list);
   if (!real.length) {
     audio.devicesDegraded = true;
     warnPermOnce('enumerateDevices sans deviceId (permission audio absente)');
@@ -483,8 +500,12 @@ function cableScreen() {
   if (cableScreenEl) return cableScreenEl;
   const verify = el('button', { class: 'ghost', text: 'J\'ai installé, vérifier', onclick: async (e) => {
     e.target.disabled = true;
-    await refreshDevices(false); resolveDevices(); updateCableUi(); await applyAudio();
-    e.target.disabled = false;
+    try {
+      await refreshDevices(false); resolveDevices(); updateCableUi();
+      await applyAudio().catch((e2) => logErr('applyAudio', e2));
+    } finally {
+      e.target.disabled = false;
+    }
     if (cablePresent()) {
       window.sf.audioAutoSetup({ enabled: cfg.settings.autoSwitchMic, cableLabel: cfg.settings.cableLabel }).then((r) => {
         if (r && r.changed) toast('Entrée micro basculée sur ' + r.device + ' (restaurée à la fermeture).');
@@ -553,7 +574,7 @@ function play(sound, opts = {}) {
   const seenDev = new Set();
   const uniq = active.filter((o) => !seenDev.has(o.deviceId || o.ctx.destination) && seenDev.add(o.deviceId || o.ctx.destination));
   return getBuffer(sound.path)
-    .catch((e) => { fileErr = true; throw e; })
+    .catch((e) => { fileErr = !(e && e.noFileErr); throw e; })
     .then((buf) => {
     if (gen !== playGen) return null; // lecture percutee par un stop : ne pas demarrer la voix
     const vol = ((opts.volume ?? sound.volume) / 100) * (sound.norm ?? 1);
@@ -703,6 +724,10 @@ async function applyShortcuts() {
 }
 
 function logErr(tag, e) { console.error(tag, e); }
+// Helper uiLog : les appels nus `uiLog(...)` leveraient ReferenceError
+// (seul window.sf.uiLog existe via preload) — fichiers >3 min etats
+// 'interrupted'/'closed' etaient casses par ca.
+const uiLog = (m) => { try { window.sf.uiLog(m); } catch {} };
 
 // ================================================================ normalisation
 async function computeNorm(path) {
@@ -768,6 +793,9 @@ async function addPaths(rawPaths) {
 async function removeSound(s) {
   if (!(await confirmBox('Retirer ce son ?', `« ${s.name} » sera retiré de SoundFart. Le fichier audio d'origine n'est pas supprimé.`, 'Retirer'))) return;
   cfg.sounds = cfg.sounds.filter((x) => x.id !== s.id);
+  // Arreter les voix du son retire : sinon il continuait de jouer apres la
+  // suppression de sa carte (jusqu'a la fin du fichier).
+  for (const v of [...voices]) if (v.soundId === s.id) stopVoice(v, true);
   // Libere le buffer decode du son supprime (sinon jusqu'a 256 Mo d'orphelins).
   cacheDelete(s.path); // libere le buffer decode du son supprime
   longWarned.delete(s.path);
@@ -1022,6 +1050,21 @@ function editSound(s) {
   }
   const preview = () => startPreview();
   const reset = () => { ts = 0; te = dur; fiIn.value = 0; foIn.value = 0; sync(); draw(); };
+  // Applique les editions en cours au modele : partage entre « Enregistrer »
+  // et l'export MP3 (qui rouvre l'editeur — sans ca les edits etaient perdus).
+  const collectEdits = () => {
+    s.name = nameIn.value.trim() || s.name;
+    s.volume = +vol.value;
+    s.categoryId = catSel.value || null;
+    s.favorite = favChk.checked;
+    s.shortcut = sc || null;
+    s.norm = norm;
+    s.trimStart = outStart();
+    s.trimEnd = outEnd();
+    s.fadeIn = Math.max(0, +fiIn.value || 0);
+    s.fadeOut = Math.max(0, +foIn.value || 0);
+  };
+  let exportBusy = false; // anti double-clic : N mediaCut concurrents + N confirmBox
 
   const scClear = el('button', { class: 'ghost', text: 'Effacer', onclick: () => { sc = ''; scBtn.textContent = 'Aucun — cliquer pour définir'; scHint.textContent = ''; } });
   const times = el('div', { class: 'times' },
@@ -1045,14 +1088,17 @@ function editSound(s) {
     el('div', { class: 'row' },
       el('button', { text: '▶ Écouter (casque)', onclick: preview }),
       el('button', { text: 'MP3 de l\'extrait', title: 'Crée un petit fichier MP3 contenant uniquement l\'extrait choisi (ffmpeg est téléchargé au premier usage)', onclick: async () => {
+        if (exportBusy) return;
         if (!dur) { toast('Attend le chargement de l\'onde.', 'warn'); return; }
+        exportBusy = true;
         try {
           const out = await window.sf.mediaCut({ input: s.path, start: outStart(), end: outEnd() ?? dur, dir: cfg.settings.storageDir || '' });
           // confirmBox DETRUIT cette modale (slot unique) : on persiste les
-          // edits courants d'abord, puis on rouvre l'editeur apres la decision
+          // edits courants d'abord (collectEdits : les champs saisis, pas
+          // seulement trim/fades), puis on rouvre l'editeur apres la decision
           // — sinon les modifications non enregistrees etaient perdues sans
           // avertissement et le code continuait sur des elements detaches.
-          sync(); save();
+          collectEdits(); save();
           if (await confirmBox('Extrait MP3 créé', 'Fichier : ' + out + '\n\nL\'utiliser à la place du fichier actuel ? La découpe et les fondus seront réinitialisés (le MP3 contient déjà l\'extrait).', 'Utiliser')) {
             const oldPath = s.path;
             s.path = out;
@@ -1065,6 +1111,7 @@ function editSound(s) {
           }
           editSound(s); // rouvre l'editeur (la modale a ete detruite par confirmBox)
         } catch (e) { toast('Export impossible : ' + e.message, 'warn'); }
+        finally { exportBusy = false; }
       } }),
       el('button', { text: 'Tout réinitialiser', onclick: reset }),
       el('button', { text: 'Ouvrir l\'emplacement', onclick: () => window.sf.reveal(s.path).catch((e) => logErr('reveal', e)) })),
@@ -1072,16 +1119,7 @@ function editSound(s) {
   ], [
     { label: 'Annuler', onclick: (c) => c() },
     { label: 'Enregistrer', kind: 'primary', onclick: (c) => {
-      s.name = nameIn.value.trim() || s.name;
-      s.volume = +vol.value;
-      s.categoryId = catSel.value || null;
-      s.favorite = favChk.checked;
-      s.shortcut = sc || null;
-      s.norm = norm;
-      s.trimStart = outStart();
-      s.trimEnd = outEnd();
-      s.fadeIn = Math.max(0, +fiIn.value || 0);
-      s.fadeOut = Math.max(0, +foIn.value || 0);
+      collectEdits();
       save(); renderAll(); c();
       applyShortcuts();
     } },
@@ -1244,8 +1282,12 @@ function settingsModal() {
 
   const cableVerifyBtn = el('button', { class: 'ghost', text: 'Vérifier', onclick: async () => {
     cableVerifyBtn.disabled = true; cableVerifyBtn.textContent = 'Vérification…';
-    await refreshDevices(false); resolveDevices(); updateCableUi(); await applyAudio();
-    cableVerifyBtn.disabled = false; cableVerifyBtn.textContent = 'Vérifier';
+    try {
+      await refreshDevices(false); resolveDevices(); updateCableUi();
+      await applyAudio().catch((e) => logErr('applyAudio', e));
+    } finally {
+      cableVerifyBtn.disabled = false; cableVerifyBtn.textContent = 'Vérifier';
+    }
     if (!cablePresent()) toast('VB-CABLE toujours absent — si tu viens de l\'installer, redémarre Windows.', 'warn');
     else toast('VB-CABLE détecté — périphériques prêts.');
   } });
@@ -1290,7 +1332,7 @@ function settingsModal() {
       s.autoSwitchMic = autoMic.checked;
       s.watchdogMic = watchMic.checked;
       save(); c();
-      if (await applyAudio()) toast('Réglages audio appliqués.');
+      if (await applyAudio().catch((e) => { logErr('applyAudio', e); return false; })) toast('Réglages audio appliqués.');
       applyShortcuts();
       if (cablePresent()) window.sf.audioAutoSetup({ enabled: s.autoSwitchMic, cableLabel: s.cableLabel }).then((r) => {
         if (r && r.changed) toast('Entrée micro basculée sur ' + r.device + ' (restaurée à la fermeture).');
@@ -1530,7 +1572,6 @@ async function recorderModal() {
   const catSel = el('select', {},
     el('option', { value: '', text: 'Sans catégorie' }),
     sortedCategories().map((c) => el('option', { value: c.id, text: c.name })));
-  const previewBtn = el('button', { text: '▶ Écouter', disabled: true });
   const startBtn = el('button', { text: '● Enregistrer', class: 'primary' });
   const stopBtn = el('button', { text: '■ Arrêter', disabled: true });
 
@@ -1623,9 +1664,15 @@ async function recorderModal() {
     });
   };
 
-  previewBtn.addEventListener('click', () => {
-    if (recordedSound) play(recordedSound, { monitorOnly: true, preview: true });
-  });
+  // Source morte en cours d'enregistrement : le fichier serait
+  // silencieux sur cette source sans avertissement. Factorise : le repli
+  // systemStream l'oubliait (piste jamais surveillee).
+  const watchEnded = (st) => st.getTracks().forEach((t) => t.addEventListener('ended', () => {
+    if (!dead && rec && rec.state === 'recording') {
+      toast('Une source audio est morte — enregistrement arrêté.', 'warn');
+      try { rec.stop(); } catch {}
+    }
+  }));
 
   startBtn.addEventListener('click', async () => {
     startBtn.disabled = true; // desactive des le clic : evite le double demarrage
@@ -1658,14 +1705,7 @@ async function recorderModal() {
         try {
           const st = await fn();
           if (dead) { deadCleanup(st); return; }
-          // Source morte en cours d'enregistrement : le fichier serait
-          // silencieux sur cette source sans avertissement.
-          st.getTracks().forEach((t) => t.addEventListener('ended', () => {
-            if (!dead && rec && rec.state === 'recording') {
-              toast('Une source audio est morte — enregistrement arrêté.', 'warn');
-              try { rec.stop(); } catch {}
-            }
-          }));
+          watchEnded(st);
           streams.push(st);
         }
         catch (e) { window.sf.uiLog('recorder src ' + label + ': ' + (e && e.name) + ' ' + (e && e.message)); streams.forEach((st) => st.getTracks().forEach((t) => t.stop())); streams = []; throw new Error(label + ' : ' + e.message); }
@@ -1700,6 +1740,7 @@ async function recorderModal() {
           try {
             const st = await systemStream();
             if (dead) { deadCleanup(st); return; }
+            watchEnded(st);
             streams.push(st);
             actx.createMediaStreamSource(st).connect(comp);
           } catch (e2) { window.sf.uiLog('recorder src audio du PC (repli): ' + (e2 && e2.message)); }
@@ -1765,15 +1806,25 @@ async function recorderModal() {
         window.sf.audioTapStop().catch(() => {});
         if (actx) { actx.close().catch(() => {}); actx = null; }
         rec = null;
-        previewBtn.disabled = false; // « ▶ Écouter » devient utilisable
         startBtn.disabled = false; stopBtn.disabled = true;
         micSel.disabled = micOn.disabled = pcOn.disabled = cableOn.disabled = false;
       };
       // modal ferme pendant la preparation : ne pas demarrer l'enregistrement
       if (dead) { deadCleanup(); if (actx) { actx.close().catch(() => {}); actx = null; } return; }
       // Le tap est mort entre tapStart et maintenant : demarrer produirait un
-      // fichier silencieux — on refuse avec un message clair.
-      if (tapOn && tapLost) throw new Error('audio du PC : flux AudioTap interrompu avant le démarrage');
+      // fichier silencieux — on refuse avec un message clair. Uniquement si le
+      // worklet PCM est la source retenue : si le repli systemStream a pris le
+      // relais, tapLost est sans objet.
+      if (tapNode && tapLost) throw new Error('audio du PC : flux AudioTap interrompu avant le démarrage');
+      if (tapNode && !pcmSeen) {
+        // audioTapStart a repondu ok mais aucun chunk PCM n'est arrive :
+        // demarrer enregistrerait du silence indetectable. Attente bornee
+        // (~2 s) des premiers frames — le loopback emet toujours des frames.
+        for (let i = 0; i < 40 && !pcmSeen; i++) await new Promise((r) => setTimeout(r, 50));
+        if (!pcmSeen) throw new Error('audio du PC : aucun flux PCM reçu d\'AudioTap');
+      }
+      // L'attente PCM a pu chevaucher une fermeture de modale.
+      if (dead) { deadCleanup(); if (actx) { actx.close().catch(() => {}); actx = null; } return; }
       if (tapNode) {
         // Flush du ring buffer : le PCM arrive des l'audioTapStart, avant les
         // getUserMedia -> sans ca le debut du fichier contiendrait de l'audio
@@ -1782,7 +1833,6 @@ async function recorderModal() {
         tapNode.connect(comp);
       }
       rec.start(250);
-      previewBtn.disabled = true; // l'ecoute porte sur l'enregistrement precedent
       recStart = Date.now();
       recTimer = setInterval(() => { status.textContent = '● Enregistrement… ' + fmtTime((Date.now() - recStart) / 1000); }, 250);
       status.textContent = '● Enregistrement…';
@@ -1856,7 +1906,7 @@ function youtubeModal() {
   const bar = el('div', { class: 'ytbar' }, el('i'));
   const barFill = bar.firstChild;
 
-  let info = null, dl = null, offProg = null, busy = false;
+  let info = null, dl = null, offProg = null, busy = false, ytModalAlive = true;
   const setProg = (p) => {
     if (p === -1 || p == null) { prog.textContent = 'Téléchargement…'; barFill.style.width = '100%'; barFill.style.opacity = '.4'; }
     else { prog.textContent = 'Téléchargement… ' + p + ' %'; barFill.style.opacity = '1'; barFill.style.width = p + '%'; }
@@ -1905,7 +1955,10 @@ function youtubeModal() {
     prog.textContent = 'Préparation…';
     barFill.style.width = '0%'; barFill.style.opacity = '1';
     try {
-      offProg = offProg || window.sf.onYtProgress(setProg);
+      // askDestDir DETRUIT cette modale : ytModalAlive=false, ne PAS se
+      // reabonner — le listener fuirait (onClose ne rejouera pas) et des
+      // nodes detaches recevraient la progression.
+      offProg = offProg || (ytModalAlive ? window.sf.onYtProgress(setProg) : null);
       const r = await window.sf.ytDownload({ url: urlIn.value.trim(), start: hasTimeline ? start : 0, end: hasTimeline ? end : 0, dir: dest || cfg.settings.storageDir || '', full: !hasTimeline });
       dl = { path: r.path, sectioned: r.sectioned, start: hasTimeline ? start : 0, end: hasTimeline ? end : null };
       // askDestDir a detruit la modale YouTube : sans modale de resultat, le
@@ -1944,6 +1997,7 @@ function youtubeModal() {
       prog.textContent = 'Téléchargement impossible : ' + e.message + ' — vérifie le lien, ta connexion, et réessaie.';
     } finally {
       busy = false;
+      if (offProg) { offProg(); offProg = null; } // ne jamais laisser fuir l'ecouteur ytprogress
     }
   } });
 
@@ -1989,7 +2043,7 @@ function youtubeModal() {
       save(); renderAll(); c();
       toast('Son YouTube ajouté : ' + dl.path);
     } },
-  ], { onClose: () => { if (offProg) { offProg(); offProg = null; } } });
+  ], { onClose: () => { ytModalAlive = false; if (offProg) { offProg(); offProg = null; } } });
 }
 
 // ================================================================ demarrage
@@ -2068,13 +2122,14 @@ async function init() {
   });
   document.addEventListener('click', () => $('#ctxmenu').classList.remove('on'));
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') $('#ctxmenu').classList.remove('on'); });
-  window.addEventListener('focus', checkMissing);
+  window.addEventListener('focus', () => checkMissing().catch((e) => logErr('checkMissing', e)));
   $('#cableBannerBtn').addEventListener('click', () => showCableScreen());
   // devicechange peut spammer (casque, bluetooth...) : debounce puis re-resolution des peripheriques
   let devTimer = null;
   navigator.mediaDevices.addEventListener('devicechange', () => {
     clearTimeout(devTimer);
     devTimer = setTimeout(async () => {
+      try {
       const s = cfg.settings;
       const prev = { cable: s.cableId, mon: s.monId, mic: s.micId };
       const hadCable = cablePresent();
@@ -2082,14 +2137,15 @@ async function init() {
       resolveDevices();
       updateCableUi();
       // ne reconstruit les sorties que si un peripherique configure a disparu
-      if (s.cableId !== prev.cable || s.monId !== prev.mon || s.micId !== prev.mic) await applyAudio();
+      if (s.cableId !== prev.cable || s.monId !== prev.mon || s.micId !== prev.mic) await applyAudio().catch((e) => logErr('applyAudio', e));
       // Cable branche/installé a chaud : diffusion + bascule micro sans relancer l'app
       if (!hadCable && cablePresent()) {
-        await applyAudio();
+        await applyAudio().catch((e) => logErr('applyAudio', e));
         window.sf.audioAutoSetup({ enabled: s.autoSwitchMic, cableLabel: s.cableLabel }).then((r) => {
           if (r && r.changed) toast('Entrée micro basculée sur ' + r.device + ' (restaurée à la fermeture).');
         }).catch((e) => logErr('audioAutoSetup', e));
       }
+      } catch (e) { logErr('devicechange', e); }
     }, 500);
   });
 
@@ -2153,4 +2209,7 @@ async function init() {
   }
 }
 
-init();
+init().catch((e) => {
+  logErr('init', e);
+  try { toast('Initialisation incomplète : ' + (e && e.message), 'warn'); } catch {}
+});

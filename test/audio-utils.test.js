@@ -48,6 +48,40 @@ test('findCableCapture : pas de capture -> null', () => {
   assert.equal(U.findCableCapture([{ flow: 'render', id: 'r', name: 'CABLE Input' }], 'CABLE Input'), null);
 });
 
+test('parseEndpoints : lignes malformees ne produisent pas de name undefined', () => {
+  const eps = U.parseEndpoints('capture|{x}\n|\ntexte-sans-separateur\nrender|{r}|OK');
+  for (const e of eps) {
+    assert.equal(typeof e.flow, 'string');
+    assert.equal(typeof e.id, 'string');
+    assert.equal(typeof e.name, 'string'); // findCableCapture fait name.toLowerCase()
+  }
+  // Une sortie AudioEndpoint polluee ne doit pas faire planter findCableCapture.
+  assert.doesNotThrow(() => U.findCableCapture(eps, 'CABLE'));
+});
+
+test('realDevices : placeholders deviceId vide filtres', () => {
+  const placeholders = [
+    { kind: 'audioinput', deviceId: '', label: '' },
+    { kind: 'audiooutput', deviceId: '', label: '' },
+  ];
+  assert.equal(U.realDevices(placeholders).length, 0); // => detection degradee
+  const complete = [
+    { kind: 'audioinput', deviceId: 'abc', label: 'Micro G930' },
+    { kind: 'audiooutput', deviceId: 'def', label: 'CABLE Input' },
+  ];
+  assert.equal(U.realDevices(complete).length, 2);
+  assert.deepEqual(U.realDevices(null), []);
+});
+
+test('safeName : noms reserves Windows prefixes', () => {
+  assert.equal(U.safeName('CON'), '_CON');
+  assert.equal(U.safeName('nul.txt'), '_nul.txt');
+  assert.equal(U.safeName('com1'), '_com1');
+  assert.equal(U.safeName('LPT9.mp3'), '_LPT9.mp3');
+  assert.equal(U.safeName('normal.mp3'), 'normal.mp3');
+  assert.equal(U.safeName('console.mp3'), 'console.mp3'); // pas un nom reserve
+});
+
 test('hasVirtualCable : specifique VB-CABLE, pas Voicemeeter', () => {
   assert.equal(U.hasVirtualCable([{ flow: 'render', id: '1', name: 'CABLE Input' }]), true);
   assert.equal(U.hasVirtualCable([{ flow: 'render', id: '1', name: 'Voicemeeter Input' }]), false);
@@ -126,9 +160,6 @@ test('expandPaths : audio seulement, profondeur, dossiers', () => {
     fs.writeFileSync(path.join(dir, 'b.txt'), 'x');
     fs.writeFileSync(path.join(dir, 'sub', 'c.wav'), 'x');
     fs.mkdirSync(path.join(dir, 'sub', 'deep', 'deeper'), { recursive: true });
-    fs.writeFileSync(path.join(dir, 'a.mp3'), 'x');
-    fs.writeFileSync(path.join(dir, 'b.txt'), 'x');
-    fs.writeFileSync(path.join(dir, 'sub', 'c.wav'), 'x');
     fs.writeFileSync(path.join(dir, 'sub', 'deep', 'd.flac'), 'x');
     fs.writeFileSync(path.join(dir, 'sub', 'deep', 'e.mp3'), 'x');
     fs.writeFileSync(path.join(dir, 'sub', 'deep', 'deeper', 'f.mp3'), 'x'); // trop profond -> exclu

@@ -49,21 +49,6 @@ test('decision retourne toujours {allow, reason}', () => {
   }
 });
 
-// Cotes renderer (degrades) : la logique vit dans app.js (non importable
-// en node:test) — verifiee manuellement via VALIDATION.md §permission.
-// Ici on verrouille le contrat que refreshDevices/resolveDevices dependent :
-// un enumerateDevices placeholder-only = deviceId vide => detection degradee.
-test('placeholders enumerateDevices : deviceId vide detecte comme degrade', () => {
-  // Simule le filtre de refreshDevices : seules les entrees avec deviceId comptent.
-  const placeholders = [
-    { kind: 'audioinput', deviceId: '', label: '' },
-    { kind: 'audiooutput', deviceId: '', label: '' },
-  ];
-  const real = placeholders.filter((d) => d.deviceId);
-  assert.equal(real.length, 0); // => devicesDegraded = true, ids conserves
-  const complete = [
-    { kind: 'audioinput', deviceId: 'abc', label: 'Micro G930' },
-    { kind: 'audiooutput', deviceId: 'def', label: 'CABLE Input' },
-  ];
-  assert.equal(complete.filter((d) => d.deviceId).length, 2);
-});
+// Cotes renderer : la logique « vrais peripheriques » vit desormais dans
+// lib/audio-utils.js (SFUtils.realDevices) — testee dans audio-utils.test.js.
+// Ici on verifie le contrat indirect : decideMediaPermission reste pur.
