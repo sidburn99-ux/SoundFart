@@ -308,3 +308,11 @@ sans piege focus ni file d'attente (P2), PCM decode non borne (P2),
 checkMissing sans debounce/timeout (P2), renderGrid par frappe (P2),
 polyphonie illimitée (P3).
 npm test 39/39, dist rebuild, smoke + cdp-drive 12/12 PASS.
+
+## V2 — SF-REL-0636 corrige (15/11/2026)
+
+- inert #app pendant modales ; closedDuringRec pour l'enregistreur ;
+  garde modalClose pour le resultat YouTube (ytModalAlive cable).
+- npm test 39/39, dist rebuild, smoke + cdp-drive 12/12 PASS.
+- Reste documente : PCM decode non borne, checkMissing sans debounce,
+  renderGrid par frappe, polyphonie illimitee.

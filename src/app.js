@@ -189,8 +189,13 @@ function toast(msg, kind = '') {
 }
 
 let modalClose = null;
+let modalSeq = 0; // jeton de possession : les flux async verifient que LEUR modale est encore affichee
 function modal(title, body, buttons, opts = {}) {
   const root = $('#modal-root');
+  // inerte l'UI derriere : Tab/Entree/Espace ne peuvent plus agir sur les
+  // boutons de la bibliotheque pendant qu'une modale est ouverte (SF-REL-0636).
+  const appEl = document.getElementById('app');
+  if (appEl) appEl.inert = true;
   // Une nouvelle modale remplace l'ancienne : fermer proprement la precedente
   // pour declencher son onClose (ex. cleanup de l'enregistreur).
   if (modalClose) { try { modalClose(); } catch {} }
@@ -200,6 +205,8 @@ function modal(title, body, buttons, opts = {}) {
     closed = true;
     root.replaceChildren();
     document.removeEventListener('keydown', onKey);
+    const appEl = document.getElementById('app');
+    if (appEl) appEl.inert = false;
     if (modalClose === close) modalClose = null;
     if (opts.onClose) opts.onClose();
     // FERMETURE PAR ECHAP/ BACKDROP : les promesses des dialogues
@@ -216,9 +223,15 @@ function modal(title, body, buttons, opts = {}) {
     el('div', { class: 'modal-actions' },
       buttons.map((b) => el('button', { class: b.kind || '', text: b.label, onclick: () => b.onclick(close) }))));
   root.replaceChildren(el('div', { class: 'backdrop', onmousedown: (e) => { if (e.target === e.currentTarget) close(); } }, box));
+  close.token = ++modalSeq;
   modalClose = close;
   return close;
 }
+
+// true si la modale qui portait ce token est toujours celle affichee —
+// un flux async (yt-dlp, enregistrement) ne doit pas detruire une modale
+// ouverte entre-temps par l'utilisateur.
+function modalAlive(token) { return !!(modalClose && modalClose.token === token); }
 
 const field = (label, node, hint) =>
   el('div', { class: 'field' }, el('label', { text: label }), node, hint ? el('div', { class: 'hint', text: hint }) : null);
@@ -1612,6 +1625,7 @@ async function recorderModal() {
   let streams = [], actx = null, rec = null, chunks = [];
   let recordedSound = null, recTimer = null, recStart = 0, looseTracks = [];
   let dead = false; // passe a true a la fermeture : avorte les startBtn encore en vol
+  let closedDuringRec = false; // modale fermee PENDANT une prise : pas de modale resultat (elle detruirait une modale ouverte entre-temps)
   let tapNode = null, pcmQ = [], pcmSeen = false, tapLost = false, pcmDrops = 0;
   const killTapNode = () => { if (tapNode) { try { tapNode.disconnect(); } catch {} tapNode = null; } pcmQ = []; };
   const offTapDead = window.sf.onTapDead ? window.sf.onTapDead(() => {
@@ -1693,6 +1707,7 @@ async function recorderModal() {
     // Si rec.stop() echoue (ou rec inactif sans onstop a venir), on nettoie
     // quand meme : micro/tap/contexte ne doivent pas rester allumes.
     if (rec && rec.state !== 'inactive') {
+      closedDuringRec = true;
       try { rec.stop(); return; } catch { /* onstop ne viendra pas : nettoyage ci-dessous */ }
     }
     streams.forEach((st) => st.getTracks().forEach((t) => t.stop()));
@@ -1885,6 +1900,12 @@ async function recorderModal() {
             categoryId: null, favorite: false, norm: 1, shortcut: null,
             trimStart: 0, trimEnd: null, fadeIn: 0, fadeOut: 0,
           };
+          // Modale fermee pendant la prise : l'utilisateur a peut-etre ouvert
+          // une autre modale entre-temps — ne pas la detruire. Le fichier est
+          // sauvegarde ; on donne le chemin pour l'ajouter plus tard.
+          if (closedDuringRec) {
+            toast('Enregistrement sauvegardé : ' + path + ' (ajoute-le via « + » si besoin).', 'info');
+          } else {
           // askDestDir a remplace la modale enregistreur (slot unique) : sans
           // modale de resultat, recordedSound mourait dans une closure et le
           // fichier restait orphelin dans recordings/ — plus jamais ajoutable.
@@ -1906,6 +1927,7 @@ async function recorderModal() {
               setTimeout(() => editSound(added), 60);
             } },
           ]);
+          }
           }
         } catch (e) {
           // Si l'echec precede le cleanup deplace (arrayBuffer), les sources
@@ -2087,6 +2109,10 @@ function youtubeModal() {
       offProg = window.sf.onYtProgress(setProg);
       const r = await window.sf.ytDownload({ url: urlIn.value.trim(), start: hasTimeline ? start : 0, end: hasTimeline ? end : 0, dir: destDir, full: !hasTimeline });
       dl = { path: r.path, sectioned: r.sectioned, start: hasTimeline ? start : 0, end: hasTimeline ? end : null };
+      // Une AUTRE modale est ouverte (pas la notre ni un residu askDestDir
+      // deja ferme -> modalClose null) : ne pas la detruire. Le fichier est
+      // dans imports/ — on donne le chemin.
+      if (modalClose && modalClose !== ytModalClose) { toast('Téléchargement terminé : ' + r.path, 'info'); return; }
       // askDestDir a detruit la modale YouTube : sans modale de resultat, le
       // fichier reste orphelin dans imports/ et « Ajouter » est inaccessible.
       modal('Téléchargement terminé', [
@@ -2139,7 +2165,7 @@ function youtubeModal() {
     }, { monitorOnly: true, preview: true });
   };
 
-  modal('Importer depuis YouTube', [
+  const ytModalClose = modal('Importer depuis YouTube', [
     field('Lien YouTube', el('div', { class: 'row' }, urlIn, analyzeBtn)),
     infoBox,
     field('Extrait (secondes ou hh:mm:ss)', el('div', { class: 'row' },

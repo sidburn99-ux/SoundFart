@@ -503,8 +503,14 @@ control -> ctrl) dans findShortcutOwner et dedupe normalizeCfg.
 agir sur l'UI derriere (re-ouvrir modale = edits perdus) ; flux async
 (ytDownload termine, enregistrement) peuvent detruire une modale sans
 rapport ; ytModalAlive ecrit jamais lu.
-**Statut** : OPEN — correctif propose : inert sur #app + jeton de
-possession modale.
+**Fix** : `inert` sur #app pendant toute modale (Tab/Entree ne sortent
+plus vers l'UI) ; `closedDuringRec` : modale fermee pendant une prise ->
+toast chemin au lieu de modale resultat ; YouTube : modale resultat
+sautee si une AUTRE modale est ouverte (modalClose compare au close
+de la modale YouTube — ytModalAlive existait mais n'etait jamais lu).
+**Preuve** : node --check, npm test 39/39, dist rebuild, smoke +
+cdp-drive 12/12. Modales non testees interactivement (UI).
+**Statut** : FIXED_PENDING_VALIDATION.
 
 ## Historique actif des régressions (Quality Gate V2 §9)
 
