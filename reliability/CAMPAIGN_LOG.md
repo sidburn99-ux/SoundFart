@@ -359,3 +359,11 @@ bornee, import config borne 8 Mo.
 Constats : 0640 REJETE (invariant modal single-slot deja protecteur),
 0641/0643/0644 corriges, 0642 ACCEPTED (surface file:read documentee).
 Verifs : node --check, npm test 39/39, dist, smoke + cdp-drive.
+
+## V2 — revue f320368 : 0641/0643/0644 CLOSED (15/11/2026)
+
+Revue independante : 4 correctifs CORRECTS sans reserve ; rejet 0640
+confirme justifie (confirmBox ferme deja settings en amont de onDone).
+Remarques conservees : id '' possible (pre-existant, basse), toast
+saveConfig une seule fois a vie (choix assume). 0639 reste FPV : sa
+borne de file decode n'a pas encore sa propre revue.

@@ -578,7 +578,7 @@ catch logErr seul -> config jamais persistee sans aucun signal.
 crees par truncature) ; toast une fois par session sur echec
 saveConfig.
 **Preuve** : node --check, npm test 39/39, dist, smoke + cdp-drive.
-**Statut** : FIXED_PENDING_VALIDATION.
+**Statut** : CLOSED — revue independante (CORRECT sans reserve) + npm test 39/39 + dist + smoke + cdp-drive PASS. Limites documentees par entree.
 
 ## SF-REL-0642 — file:read : chemins absolus medias arbitraires (P3, ACCEPTED)
 
@@ -598,7 +598,7 @@ Ctrl+Alt+S vs CommandOrControl+Alt+S = rejet « deja attribue » bien que
 normAccel les considere identiques (message trompeur, impact nul).
 **Fix** : comparaison via normAccel des deux cotes.
 **Preuve** : node --check, npm test 39/39, dist, smoke + cdp-drive.
-**Statut** : FIXED_PENDING_VALIDATION.
+**Statut** : CLOSED — revue independante (CORRECT sans reserve) + npm test 39/39 + dist + smoke + cdp-drive PASS. Limites documentees par entree.
 
 ## SF-REL-0644 — storageDir/lastDestDir relatifs acceptes (P3)
 
@@ -607,7 +607,7 @@ retombe sur userData en silence alors que l'UI affiche le dossier.
 **Fix** : normalizeCfg exige un chemin absolu (lettre:\, UNC, /) pour
 les deux champs, sinon reinitialisation.
 **Preuve** : node --check, npm test 39/39, dist, smoke + cdp-drive.
-**Statut** : FIXED_PENDING_VALIDATION.
+**Statut** : CLOSED — revue independante (CORRECT sans reserve) + npm test 39/39 + dist + smoke + cdp-drive PASS. Limites documentees par entree.
 
 ## Historique actif des régressions (Quality Gate V2 §9)
 
@@ -624,8 +624,8 @@ Règle : avant de toucher un composant, chercher ici + dans le tableau ses anoma
 
 | Statut | Nombre | Détail |
 |---|---|---|
-| CLOSED | 29 | 0141 + 0612-0619 + 0620-0630 + 0631-0638 + 0640 (non-anomalie) |
-| FIXED_PENDING_VALIDATION | 86 | cycles 1-5 historiques + 0639 + 0641/0643/0644 |
+| CLOSED | 32 | 0141 + 0612-0619 + 0620-0630 + 0631-0638 + 0640 (non-anomalie) + 0641/0643/0644 |
+| FIXED_PENDING_VALIDATION | 83 | cycles 1-5 historiques + 0639 (borne file en revue) |
 | ACCEPTED | 21 | cycles 1-5 + 0642 |
 | INVESTIGATING | 1 | SF-REL-0611 crash AudioContext |
 | OPEN / BLOCKED | 0 | — |
