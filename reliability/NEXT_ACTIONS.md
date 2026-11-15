@@ -10,7 +10,7 @@
 
 - **Registre** : 145 IDs — 32 CLOSED · 90 FIXED_PENDING_VALIDATION ·
   22 ACCEPTED · 1 INVESTIGATING (SF-REL-0611).
-- **Branche** : `hardening/v2`, HEAD = `b007d19`, poussé sur GitHub SSH.
+- **Branche** : `hardening/v2`, HEAD ≈ `52b5b66`+docs, poussé sur GitHub SSH.
 - **Build** : `dist\SoundFart.exe` à jour (npm run dist après chaque
   changement fonctionnel). Smoke endurance actif en `--test-profile`,
   aucun `.dmp` Crashpad à ce jour.
@@ -20,15 +20,12 @@
 
 ## Prochaine action exacte (ordre chronologique)
 
-1. **Revue indépendante groupée** des diffs non encore revus :
-   - `e99d0b1` — SF-REL-0639 (borne file decodeQueue)
-   - `b007d19` — SF-REL-0650 à 0655 + 0657 (log trim, rate-limit,
-     powerMonitor, watchdog ensureAudioTool, gardes quitting, purge
-     dumps, borne migrate)
-   → CLOSED potentiel pour les anomalies validées sans réserve.
-2. **Revue par lots des FPV historiques** (cycles 1-5, ~80 IDs) :
-   grouper par sous-système (audio-utils, IPC main, renderer), un
-   subagent adverse par lot, promouvoir les diffs validés.
+1. **Revue indépendante du diff de résidus `52b5b66`** (6 résidus de la
+   revue 0639/0650-0654) → CLOSED potentiel pour ce lot.
+2. **Revue par lots des FPV historiques** (~83 IDs, cycles 1-5) :
+   grouper par sous-système (lib/audio-utils, IPC main, renderer,
+   main.js audio), un subagent adverse par lot, promouvoir les diffs
+   validés. Commencer par les P0/P1 restants.
 3. **SF-REL-0611** (crash renderer -1/143) : INVESTIGATING —
    vérifier `find $TEMP/SoundFart-test -name '*.dmp'` ; si un dump
    apparaît, l'analyser (module/processus fautif) ; sinon maintenir
