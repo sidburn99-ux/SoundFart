@@ -423,10 +423,15 @@ async function ensureFfmpeg() {
         });
         const dest = ffmpegDir();
         fs.mkdirSync(dest, { recursive: true });
+        // bsdtar de System32 lit le zip nativement ; le tar GNU de Git
+        // present dans le PATH ne lit PAS zip -> « not a tar archive »
+        // (SF-REL-0613). On privilegie System32\\tar.exe, repli sur PATH.
+        const sysTar = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe');
+        const tarBin = fs.existsSync(sysTar) ? sysTar : 'tar';
         try {
-          await execFileTracked('tar', ['-xf', zip, '-C', dest, '*ffmpeg.exe'], { timeout: 180000 });
+          await execFileTracked(tarBin, ['-xf', zip, '-C', dest, '*ffmpeg.exe'], { timeout: 180000 });
         } catch {
-          await execFileTracked('tar', ['-xf', zip, '-C', dest], { timeout: 300000 });
+          await execFileTracked(tarBin, ['-xf', zip, '-C', dest], { timeout: 300000 });
         }
         const found = findFile(dest, 'ffmpeg.exe');
         if (found && found !== ffmpegPath()) {
