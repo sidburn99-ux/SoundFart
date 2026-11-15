@@ -32,3 +32,6 @@
    toast erreurs) et demandent un test UI reel.
 4. Bug connu : crash AudioContext -1/143 sporadique — 2 occurrences
    smoke (11:18, 11:35, 11:38). Enquete forensique si possible.
+- [ ] Analyser le prochain .dmp Crashpad (userData/Crashpad/reports) du
+      crash -1/143 : identifier le module/processus fautif (renderer audio
+      vs driver VB-CABLE). Smoke long en cours en test-profile.

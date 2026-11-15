@@ -57,3 +57,22 @@
 - Smoke 12:00 : adoption marqueur validee en reel (owner mort -> adopte,
   guard respawne). Crash AudioContext -1 observe 11:38 = bug connu.
 - Plus aucune anomalie INVESTIGATING ouverte. ~95 anomalies qualifiees.
+
+## Cycle 5 — fuzz lib + audit IPC + forensique crash (suite)
+
+- Tests de proprietes ajoutes (writeRecording concurrence x20, safeName
+  fuzz, parseEndpoints fuzz, chooseRestoreIds sans-nom, parseTs bornes)
+  -> 37/37 verts. Le fuzz a trouve SF-REL-0141 (P1) : .part partage entre
+  ecritures concurrentes -> corrige (partSeq).
+- Audit surface IPC complet (subagent) : 23 handlers, 0 canal mort, garde
+  fromApp uniforme. 10 findings : 5 corriges (mkdir async UNC, openDir
+  stat async, autoSetup coercion, throttle log 1/min, key cap 128,
+  maxBuffer mort retire), 4 ACCEPTED documentes (dir d'ecriture arbitraire
+  = feature legitime, file:read media, stringify config, catch sondes).
+- Forensique crash -1/143 : crash aussi ~3 min apres creation (pas
+  seulement a la creation) ; device dc79ff = CABLE Input VB-Audio =
+  suspect n°1. crashReporter.start deplace APRES setPath(userData) —
+  les dumps partaient dans %APPDATA% au lieu du bon profil (bug
+  d'instrumentation corrige). Smoke long en cours pour capturer un .dmp.
+- A/B cableId vide impossible : pick() re-assigne auto CABLE Input par
+  design (le sonboard cible Discord via cable).
