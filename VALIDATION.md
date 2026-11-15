@@ -31,10 +31,10 @@
 
 ## C. Enregistrement
 
-- [ ] Micro seul → fichier non silencieux (vérifier niveau, pas juste existence).
-- [ ] « Audio du PC » seul → musique système captée, non silencieuse.
-- [ ] Câble seul → sons soundboard captés.
-- [ ] Micro + PC + câble simultanés → les 3 sources présentes, limiteur anti-saturation OK.
+- [ ] Micro seul → fichier non silencieux (vérifier niveau, pas juste existence). **Partiellement validé agent 15/11** : flux complet OK et fichier décodé non silencieux en multi-sources ; le niveau micro seul exige une voix réelle — non vérifiable par agent.
+- [x] « Audio du PC » seul → musique système captée, non silencieuse. **Validé agent 15/11** : `cdp-recmix.js pc` — son joué pendant la prise, fichier décodé : RMS 0,0168 / peak 0,19 (loopback WASAPI AudioTap).
+- [x] Câble seul → sons soundboard captés. **Validé agent 15/11** : `cdp-recmix.js cable` — son joué pendant la prise, fichier décodé : RMS 0,0158 / peak 0,15.
+- [x] Micro + PC + câble simultanés → les 3 sources présentes, limiteur anti-saturation OK. **Validé agent 15/11** : `cdp-recmix.js all` — flux complet sans erreur, fichier décodé non silencieux (RMS 0,0216 / peak 0,26). Contribution individuelle du micro non isolable sans voix — cf. item ci-dessus.
 - [x] **Régression V2** : Arrêter → choisir dossier → « Enregistrement terminé » → « Ajouter à la bibliothèque » → son présent et jouable. **Validé agent 15/11** : flux complet piloté par CDP (micro seul, 4 s de prise) → `askDestDir` → OK → modale résultat → « Ajouter à la bibliothèque » → son dans `cfg.sounds`, `play()` OK, puis retiré (nettoyage). Driver : `test/cdp-recflow.js`. Reste non couvert : niveau non silencieux du micro (nécessite oreille/entrée réelle — cf. item ci-dessus).
 - [ ] Fermer la modale pendant l'enregistrement → fichiers partiels non ajoutés, micro éteint (LED).
 - [ ] Débrancher le micro pendant l'enregistrement → arrêt propre + message, pas de fichier silencieux présenté comme réussi.

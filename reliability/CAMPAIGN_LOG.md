@@ -588,3 +588,13 @@ il ne reste que 0611 (.dmp), VALIDATION.md materiel, endurance.
   play() OK. Nettoyage : son retire (retour 29 sons).
 - Reste non couvert sur cet item : niveau non silencieux du micro
   (necessite oreille/entree reelle).
+
+## 15/11/2026 (suite 14) — VALIDATION.md C sources enregistrement validees
+
+- Nouveau driver test/cdp-recmix.js : enregistrement avec sources
+  selectionnables (mic|pc|cable|all), son joue pendant la prise, puis
+  decodeAudioData du fichier sauvegarde -> RMS/peak/nonzeroPct mesures.
+- cable seul : RMS 0,0158 / peak 0,15 — sortie soundboard capturee.
+- pc seul : RMS 0,0168 / peak 0,19 — loopback systeme capture le son.
+- all : RMS 0,0216 / peak 0,26 — mix 3 sources sans erreur.
+- Micro seul : flux OK mais niveau non prouvable sans voix reelle.
