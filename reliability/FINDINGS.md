@@ -135,6 +135,20 @@ Observations smoke (test-profile, vraie machine) :
 - Mitigations en place : statechange → toast + retry applyAudio borné (3×) ; render-process-gone → 1 reload puis dialog ; crashReporter.start ajouté (minidumps locaux dans userData/Crashpad, sans télémétrie) ; uiLog du deviceId dans makeOutput.
 - Reste : corréler un .dmp Crashpad avec la prochaine occurrence ; si récurrent, tester désactivation de l'économie d'énergie des endpoints USB/audio ou flag Chromium.
 
+
+## SF-REL-0141 — writeRecording : .part partage entre ecritures concurrentes (P1, CORRIGE)
+
+**Symptome** : deux `writeRecording` concurrents dans le meme process (double
+`rec:save`, ou futur appel parallele) ecrivaient le MEME fichier
+`cand.pid.part` : le `unlink` de l'un faisait echouer `link()` de l'autre
+(ENOENT) ou corrompait le contenu. Detecte par le test de concurrence ajoute
+au cycle 5 (fuzz/proprietes sur lib/audio-utils).
+**Cause racine** : le nom du temporaire n'incluait que le PID, pas un
+identifiant d'ecriture.
+**Fix** : compteur `partSeq` par appel — chaque `.part` est unique.
+**Preuve** : test `writeRecording : N ecritures concurrentes` (20 appels
+paralleles -> 20 fichiers distincts, 0 `.part` residuel). 37/37 tests verts.
+
 ## Synthèse cycle 1
 - 57 anomalies qualifiées : 44 CLOSED, 8 ACCEPTED (documentées), 0 INVESTIGATING ouvert — toutes les anomalies qualifiées sont tranchées.
 - P0 : 1 (SF-REL-0001) — introduit par la campagne précédente, attrapé par l'audit cycle 2. Preuve que la boucle fonctionne.

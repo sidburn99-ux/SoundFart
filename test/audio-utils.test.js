@@ -205,3 +205,63 @@ test('writeRecording : nom libre, collision -> suffixe, ext invalide -> .webm', 
     assert.ok(path.basename(b4).length > 4);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+// ---------- tests de proprietes / concurrence ----------
+test('writeRecording : N ecritures concurrentes meme nom -> N fichiers distincts', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-recpar-'));
+  try {
+    const N = 20;
+    const paths = await Promise.all(Array.from({ length: N }, (_, i) =>
+      U.writeRecording(dir, 'prise', '.webm', Buffer.from('data' + i))));
+    assert.equal(new Set(paths.map((p) => p.toLowerCase())).size, N, 'aucun ecrasement');
+    // Tous les fichiers existent et sont non vides
+    for (const p of paths) assert.ok(fs.statSync(p).size > 0);
+    // Aucun .part residuel
+    assert.deepEqual(fs.readdirSync(dir).filter((f) => f.endsWith('.part')), []);
+  } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
+});
+
+test('safeName : jamais de nom Windows invalide, jamais vide', () => {
+  const bad = ['CON', 'con.mp3', 'PRN', 'AUX', 'NUL', 'COM1', 'LPT9', '...', '   ', 'a/b\c:d*e?f"g<h>i|j', 'x'.repeat(200), '', null, undefined];
+  for (const n of bad) {
+    const s = U.safeName(n);
+    assert.ok(s && s.length > 0 && s.length <= 80, 'safeName(' + JSON.stringify(n) + ') -> ' + JSON.stringify(s));
+    assert.ok(!/[\/:*?"<>|]/.test(s.split('.')[0] === s ? s : s), 'chars invalides: ' + s);
+  }
+  // Extreemement long -> tronque a 80
+  assert.ok(U.safeName('y'.repeat(300)).length <= 80);
+});
+
+test('parseEndpoints : fuzz — jamais de crash, champs toujours des chaines', () => {
+  const inputs = ['', '\n', '|', '|||', 'a|b', 'render|{1}|Name With | Pipe', 'capture|{2}|', '\r\n\r\n', 'x'.repeat(10000), 'flow|id|nom\x00ctl'];
+  for (const inp of inputs) {
+    const out = U.parseEndpoints(inp);
+    for (const e of out) {
+      assert.equal(typeof e.flow, 'string');
+      assert.equal(typeof e.id, 'string');
+      assert.equal(typeof e.name, 'string');
+    }
+  }
+});
+
+test('chooseRestoreIds : endpoint sans nom jamais choisi comme fallback', () => {
+  // Regression SF-REL-0140 : name='' passait VIRTUAL_RE.test('') ->
+  // un endpoint virtuel sans nom etait traite « non virtuel ».
+  const eps = [
+    { flow: 'capture', id: '{noname}', name: '' },
+    { flow: 'capture', id: '{virt}', name: 'CABLE Output (VB-Audio Virtual Cable)' },
+    { flow: 'capture', id: '{real}', name: 'Micro Realtek' },
+  ];
+  const r = U.chooseRestoreIds(eps, { console: '', comm: '', multi: '' }, { console: '', comm: '', multi: '' });
+  // Le fallback doit etre le vrai micro nomme, pas {noname} ni le cable.
+  const all = [r.consoleId, r.commId, r.multiId, r.fallbackId].filter(Boolean);
+  assert.ok(!all.includes('{noname}'), 'endpoint sans nom choisi');
+  assert.ok(all.includes('{real}'), 'le vrai micro doit etre candidat');
+});
+
+test('parseTs : fuzz bornes et formats', () => {
+  const good = [['90', 90], ['1:30', 90], ['1:02:03', 3723], ['0', 0], ['  45.5 ', 45.5], ['', 0], [null, 0]];
+  for (const [v, exp] of good) assert.equal(U.parseTs(v), exp, v);
+  const bad = ['abc', '1:2:3:4', '-5', '1,5', {}, 'NaN', '1:2:3:4:5'];
+  for (const v of bad) assert.ok(Number.isNaN(U.parseTs(v)), JSON.stringify(v));
+});
