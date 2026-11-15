@@ -908,8 +908,13 @@ H('yt:download', async (_e, o) => {
     const newest = pool.sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)[0];
     // Plafond coherent avec file:read (512 Mo) : un audio plus lourd serait
     // de toute facon illisible par l'app — autant echouer ici, proprement.
+    // noRetry : une mise a jour yt-dlp ne changera pas la taille ; et on
+    // supprime le fichier pour ne pas laisser un import mort sur le disque.
     if (fs.statSync(newest).size > 512 * 1024 * 1024) {
-      throw new Error('Le fichier téléchargé dépasse 512 Mo — trop lourd pour SoundFart.');
+      try { fs.unlinkSync(newest); } catch {}
+      const err = new Error('Le fichier téléchargé dépasse 512 Mo — trop lourd pour SoundFart.');
+      err.noRetry = true;
+      throw err;
     }
     ytProgress(-1);
     return { path: newest, sectioned };
@@ -918,7 +923,9 @@ H('yt:download', async (_e, o) => {
     return await tryDownload();
   } catch (e) {
     // YouTube casse souvent les vieilles versions : une mise a jour forcee puis un seul retry.
-    if (await maybeUpdateYtDlp(true)) return await tryDownload();
+    if (!e || !e.noRetry) {
+      if (await maybeUpdateYtDlp(true)) return await tryDownload();
+    }
     throw e;
   }
   } finally { ytDownloadBusy = false; }

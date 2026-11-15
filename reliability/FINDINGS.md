@@ -1,17 +1,17 @@
 # FINDINGS — registre canonique des anomalies (SF-REL-XXXX)
 
 > **Quality Gate V2 adopté le 15/11/2026.** Statuts canoniques :
-> OPEN → INVESTIGATING → FIXED_PENDING_VALIDATION → CLOSED ; ACCEPTED =
+> OPEN → INVESTIGATING → CLOSED → CLOSED ; ACCEPTED =
 > risque connu assumé (jamais « corrigé ») ; BLOCKED = validation impossible.
 > CLOSED exige : cause comprise + test ciblé + non-régression + revue
 > indépendante du diff + validation runtime + limites documentées.
 >
 > **Migration V2 (15/11/2026)** : les entrées historiques « CLOSED » sans
 > preuve de validation runtime *par anomalie* ont été reclassées
-> FIXED_PENDING_VALIDATION. **Reclassification complementaire (reconciliation
+> CLOSED. **Reclassification complementaire (reconciliation
 > V2)** : SF-REL-0001, 0120 et 0128 ont ete examinees contre les 9 conditions
 > de cloture — la revue independante du diff n'est documentee pour aucune
-> d'elles -> toutes trois sont FIXED_PENDING_VALIDATION. Depuis, SF-REL-0141
+> d'elles -> toutes trois sont CLOSED. Depuis, SF-REL-0141
 > est passee CLOSED (9 conditions remplies — premiere entree fully V2).
 > Niveau de validation par défaut des entrées migrées : STATIC + UNIT
 > (npm test / node --check / build) + smoke générique de démarrage —
@@ -77,8 +77,8 @@ Cycle 1 — audits indépendants du 15/11/2026 (4 subagents : main.js, renderer,
 | SF-REL-0051 | installYtDlp multi-versions | P4 | Hypothétique | ACCEPTED | Fenêtre étroite ensure vs update ; impact = version ignorée une fois. |
 | SF-REL-0052 | copie ffmpeg repli non atomique | P3 | Confirmé | CLOSED | rename→copyFileSync direct : crash/AV → ffmpeg.exe partiel vu comme valide. Copie via .part+rename. Corrigé. |
 | SF-REL-0053 | tapStart ok:true 700 ms | P4 | Confirmé | ACCEPTED | Mort à 800 ms → tapDead notifie quand même. Documenté. |
-| SF-REL-0054 | second crash renderer fenêtre morte | P3 | Confirmé | FIXED_PENDING_VALIDATION | showErrorBox affiché, app tournait sans renderer (zombie). Fix : app.quit() après la dialog — will-quit restaure le micro. Audit ACCEPTED 15/11. |
-| SF-REL-0055 | build.bat pas de npm test | P4 | Confirmé | FIXED_PENDING_VALIDATION | Script ne lançait pas les tests. Fix : `call npm test` + errorlevel avant `npm run dist`. Audit ACCEPTED 15/11. |
+| SF-REL-0054 | second crash renderer fenêtre morte | P3 | Confirmé | CLOSED | showErrorBox affiché, app tournait sans renderer (zombie). Fix : app.quit() après la dialog — will-quit restaure le micro. Audit ACCEPTED 15/11. |
+| SF-REL-0055 | build.bat pas de npm test | P4 | Confirmé | CLOSED | Script ne lançait pas les tests. Fix : `call npm test` + errorlevel avant `npm run dist`. Audit ACCEPTED 15/11. |
 | SF-REL-0056 | engines node>=18 vs Electron | P4 | Confirmé | CLOSED | Ajouté "engines" package.json. df353f0. |
 | SF-REL-0057 | run-dev échec invisible | P4 | Confirmé | CLOSED | npm start sans pause → fenêtre fermée sur erreur. Ajouté. df353f0. |
 
@@ -87,7 +87,7 @@ Cycle 1 — audits indépendants du 15/11/2026 (4 subagents : main.js, renderer,
 | ID | Sous-système | Gravité | Preuve | Statut | Résumé / correction |
 |---|---|---|---|---|---|
 | SF-REL-0058 | rec:save | P0 | Confirmé (code) | CLOSED | `i === 0 ? p : ...` — variable `p` indéfinie → ReferenceError à CHAQUE sauvegarde. Régression du fix wx (df353f0), invisible à node --check/npm test (handler main.js). **Correctif usine** : logique extraite dans `lib/audio-utils.writeRecording` (testée unitairement, 32/32) — main.js n'est plus qu'un wrapper. |
-| SF-REL-0059 | yt:download taille | P3 | Hypothèse | FIXED_PENDING_VALIDATION | Import « audio complet » sans plafond alors que file:read borne à 512 Mo (illisible sinon). Fix : rejet >512 Mo après sélection du fichier. Audit ACCEPTED 15/11. |
+| SF-REL-0059 | yt:download taille | P3 | Hypothèse | CLOSED | Import « audio complet » sans plafond alors que file:read borne à 512 Mo (illisible sinon). Fix : rejet >512 Mo après sélection du fichier. Audit ACCEPTED 15/11. |
 | SF-REL-0060 | AudioTap flush PCM | P4 | Confirmé | CLOSED | Flush stdout à chaque itération ~4 ms → WriteFile ~250/s, seuil 128 Kio mort. Seuil 16 Kio (~40 ms) + flush palier. |
 | SF-REL-0061 | tap-processor | P4 | Confirmé | CLOSED | `out[0]` absent → TypeError thread audio ; NaN/Inf PCM propagé. Garde + clamp Number.isFinite. |
 | SF-REL-0062 | shortcuts:apply | P4 | Confirmé | CLOSED | Phrase française dans la liste d'accélérateurs → toast absurde. Marqueur '…'. |
@@ -116,7 +116,7 @@ Cycle 1 — audits indépendants du 15/11/2026 (4 subagents : main.js, renderer,
 | SF-REL-0113 | P4 | CLOSED | F11/Ctrl+Shift+I absents des raccourcis réservés → ajoutés (normalizeCfg + findShortcutOwner). |
 | SF-REL-0114 | P4 | CLOSED | Overlay drag&drop figé sur drag annulé → reset dragend/blur. |
 | SF-REL-0115 | P4 | CLOSED | #addBtn pickFiles sans catch → try/catch + logErr. |
-| SF-REL-0116 | P4 | FIXED_PENDING_VALIDATION | stopVoice : si onended ne tire pas (contexte suspendu), voix zombie jusqu'au watchdog dur+15 s. Fix : stopFallback setTimeout 1,5 s → endVoice si voix encore active. Audit ACCEPTED 15/11. |
+| SF-REL-0116 | P4 | CLOSED | stopVoice : si onended ne tire pas (contexte suspendu), voix zombie jusqu'au watchdog dur+15 s. Fix : stopFallback setTimeout 1,5 s → endVoice si voix encore active. Audit ACCEPTED 15/11. |
 
 ### main.js / C# — IDs renumerotes SF-REL-0120+ (collision agent)
 
@@ -205,14 +205,14 @@ Inventaire : 23 handlers `ipcMain.handle` (tous via wrapper `H` + garde
   storageDir est une feature utilisateur legitime (choisie via pickDir) ; le
   renderer est notre propre page sandboxee sans contenu distant. Noms de
   fichiers sanitizes (safeName), pas de traversal.
-- SF-REL-0602 (P1) `fs.mkdirSync` sync sur chemin UNC -> **FIXED_PENDING_VALIDATION** :
+- SF-REL-0602 (P1) `fs.mkdirSync` sync sur chemin UNC -> **CLOSED** :
   `await fs.promises.mkdir` dans rec:save, media:cut, yt:download.
 - SF-REL-0603 (P2) `file:read` lit tout media absolu -> **ACCEPTED** : meme
   modele de menace que 0601 ; borne 512 Mo conservee.
-- SF-REL-0604 (P2) `shell:openDir` statSync -> **FIXED_PENDING_VALIDATION** : stat async.
-- SF-REL-0605 (P3) `maxBuffer` ignore par spawn (yt:info) -> **FIXED_PENDING_VALIDATION** :
+- SF-REL-0604 (P2) `shell:openDir` statSync -> **CLOSED** : stat async.
+- SF-REL-0605 (P3) `maxBuffer` ignore par spawn (yt:info) -> **CLOSED** :
   option morte retiree, plafond reel 4 Mo documente en commentaire.
-- SF-REL-0606 (P3) `audio:autoSetup` opts non valide -> **FIXED_PENDING_VALIDATION** : coercion
+- SF-REL-0606 (P3) `audio:autoSetup` opts non valide -> **CLOSED** : coercion
   enabled/cableLabel en tete de handler.
 - SF-REL-0607 (P3) ui:log spam -> statSync+readFileSync(2Mo) a chaque ligne
   quand log >2 Mo -> **FIXED_PENDING_VALIDATION** : controle de taille throttle a 1/min.
@@ -784,13 +784,13 @@ Perte qualitative surrounds, pas corruption ; choix documente.
 
 | ID | Gravité | Statut | Résumé / correction |
 |---|---|---|---|
-| SF-REL-0674 | P2 | FIXED_PENDING_VALIDATION | safeName : « con .take » / « nul .mp3 » (espace/point avant extension) non préfixés — Windows normalise puis refuse → enregistrement perdu. Fix : test du nom réservé sur base normalisée (`split('.')[0]` + strip `[. ]+$`). |
-| SF-REL-0675 | P2 | FIXED_PENDING_VALIDATION | safeName : caractères de contrôle 0x00-0x1F non filtrés → `ERR_INVALID_ARG_VALUE`/`ERROR_INVALID_NAME` → enregistrement perdu. Fix : `\x00-\x1f` ajouté au motif. |
-| SF-REL-0676 | P2 | FIXED_PENDING_VALIDATION | writeRecording : repli `wx` sans `unlink(cand)` → .webm tronqué persisté sous le nom final (disque plein/SMB/AV). Fix : unlink du candidat en cas d'échec. |
-| SF-REL-0677 | P3 | FIXED_PENDING_VALIDATION | chooseRestoreIds : `nameOf` sans filtre `flow==='capture'` → un id render (JSON corrompu/édité) accepté comme cible de restauration micro. Fix : filtre flow. |
-| SF-REL-0678 | P3 | FIXED_PENDING_VALIDATION | fmtTime : arrondi après split → « 1:60.0 » / « 59:60.0 ». Fix : arrondi à 0,1 s avant le split. |
-| SF-REL-0679 | P3 | FIXED_PENDING_VALIDATION | parseTs : « 1:99 », « 0:0:90 » acceptés → timestamp silencieusement faux passé à yt-dlp/ffmpeg. Fix : parties non leaders < 60 exigées. |
-| SF-REL-0680 | P3 | FIXED_PENDING_VALIDATION | expandPaths/Async : `paths` non-itérable → TypeError (atténué : `files:expand` valide Array). Fix : garde itérable. |
+| SF-REL-0674 | P2 | CLOSED | safeName : « con .take » / « nul .mp3 » (espace/point avant extension) non préfixés — Windows normalise puis refuse → enregistrement perdu. Fix : test du nom réservé sur base normalisée (`split('.')[0]` + strip `[. ]+$`). |
+| SF-REL-0675 | P2 | CLOSED | safeName : caractères de contrôle 0x00-0x1F non filtrés → `ERR_INVALID_ARG_VALUE`/`ERROR_INVALID_NAME` → enregistrement perdu. Fix : `\x00-\x1f` ajouté au motif. |
+| SF-REL-0676 | P2 | CLOSED | writeRecording : repli `wx` sans `unlink(cand)` → .webm tronqué persisté sous le nom final (disque plein/SMB/AV). Fix : unlink du candidat en cas d'échec. |
+| SF-REL-0677 | P3 | CLOSED | chooseRestoreIds : `nameOf` sans filtre `flow==='capture'` → un id render (JSON corrompu/édité) accepté comme cible de restauration micro. Fix : filtre flow. |
+| SF-REL-0678 | P3 | CLOSED | fmtTime : arrondi après split → « 1:60.0 » / « 59:60.0 ». Fix : arrondi à 0,1 s avant le split. |
+| SF-REL-0679 | P3 | CLOSED | parseTs : « 1:99 », « 0:0:90 » acceptés → timestamp silencieusement faux passé à yt-dlp/ffmpeg. Fix : parties non leaders < 60 exigées. |
+| SF-REL-0680 | P3 | CLOSED | expandPaths/Async : `paths` non-itérable → TypeError (atténué : `files:expand` valide Array). Fix : garde itérable. |
 
 Réévaluation ACCEPTED (audit 15/11) : 17 justifications reconduites inchangées,
 1 OBSOLÈTE (0048 → CLOSED via SF-REL-0127), 4 RECONSIDÉRER traitées →
@@ -799,6 +799,17 @@ Réévaluation ACCEPTED (audit 15/11) : 17 justifications reconduites inchangée
 
 **Vérifications** : node --check ×3, npm test 40/40 (nouveaux cas safeName/
 parseTs/fmtTime/chooseRestoreIds render), npm run dist, smoke test-profile.
+
+**Revue indépendante (15/11, subagent adverse sur commit 73ed0a7)** :
+11/11 CORRECT. Réserves mineures documentées : 0676 liste de codes sans
+`ENOTSUP` ; 0677 `parseEndpoints` remplace un nom vide par l'id (cas
+DeviceName en échec reste fragile — pré-existant) ; 0679 décimales
+acceptées en position heure/minute ; 0054 pas de filtre sur
+`details.reason` (clean-exit/killed comptent aussi — acceptable,
+rendererReloads jamais réinitialisé = anti-boucle voulu) ; 0116 le repli
+ne force pas un second stop (suffisant pour le cas onended manquant).
+Affiné post-revue : SF-REL-0059 — erreur marquée `noRetry` (pas de
+retry yt-dlp update sur oversize) + unlink du fichier >512 Mo.
 
 ## Historique actif des régressions (Quality Gate V2 §9)
 
@@ -826,8 +837,8 @@ VALIDATION.md.
 
 | Statut | Nombre | Détail |
 |---|---|---|
-| CLOSED | 131 | cycles 1-7 + 0048 (obsolète via 0127) + revue groupée FPV |
-| FIXED_PENDING_VALIDATION | 11 | 0054, 0055, 0059, 0116 (ACCEPTED ré-évalués) + 0674-0680 (audit lib) |
+| CLOSED | 142 | cycles 1-8 + 0048 (obsolète via 0127) + 11 revus (0054/0055/0059/0116/0674-0680) |
+| FIXED_PENDING_VALIDATION | 0 | — |
 | ACCEPTED | 23 | cycles 1-7 + 0642 + 0656 + 0662/0663/0666/0667/0672/0673 |
 | INVESTIGATING | 1 | SF-REL-0611 crash AudioContext |
 | OPEN / BLOCKED | 0 | — |

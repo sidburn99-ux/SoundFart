@@ -8,32 +8,23 @@
 
 ## État réel (vérifié 15/11/2026)
 
-- **Registre** : 166 anomalies — **131 CLOSED** · **11 FPV** ·
+- **Registre** : 166 anomalies — **142 CLOSED** · **0 FPV** ·
   23 ACCEPTED · 1 INVESTIGATING (SF-REL-0611). Toutes les zones de code
   sont auditées, y compris lib/audio-utils.js en entier et les deux .cs.
-- **FPV en attente de revue indépendante** (diff de la session
-  lib/ACCEPTED, à relire puis promouvoir) :
-  - SF-REL-0054 — `app.quit()` après 2e crash renderer (main.js)
-  - SF-REL-0055 — `call npm test` + errorlevel dans build.bat
-  - SF-REL-0059 — rejet yt:download >512 Mo (main.js)
-  - SF-REL-0116 — `stopFallback` 1,5 s dans stopVoice (app.js)
-  - SF-REL-0674/0675/0676/0677/0678/0679/0680 — safeName (noms réservés
-    Windows avec espace/point, ctrl chars), writeRecording unlink wx,
-    chooseRestoreIds filtre flow, fmtTime arrondi, parseTs bornes,
-    expandPaths garde itérable (lib/audio-utils.js)
+- **Revue indépendante 73ed0a7** : 11/11 CORRECT → tous CLOSED.
+  Réserves mineures documentées dans FINDINGS (cycle 8). Affinage
+  post-revue : SF-REL-0059 `noRetry` + unlink fichier >512 Mo.
 - **Branche** : `hardening/v2`, poussé sur GitHub SSH après chaque commit.
-- **Build** : `dist\SoundFart.exe` à jour (npm run dist après chaque
-  changement fonctionnel). Smoke `--test-profile` relancé sur le nouveau
-  build ; aucun `.dmp` Crashpad à ce jour.
+- **Build** : `dist\SoundFart.exe` à jour. Smoke `--test-profile` actif ;
+  aucun `.dmp` Crashpad à ce jour.
 - **Couverture runtime** : voir TEST_MATRIX.md — YouTube complet,
   micro/MediaRecorder, boucle VB-CABLE, AudioTap, rec:save, media:cut
   tous validés avec niveaux non nuls mesurés.
 
 ## Prochaine action exacte (ordre chronologique)
 
-1. **Revue indépendante du diff session** (lib/audio-utils.js +
-   main.js 0054/0059 + app.js 0116 + build.bat 0055) → promouvoir les 11
-   FPV en CLOSED si corrects. Commits concernés : voir `git log` récent.
+1. ~~Revue indépendante du diff session~~ — **FAIT** : 11/11 CORRECT →
+   CLOSED (réserves documentées, 0059 affiné noRetry+unlink).
 2. **SF-REL-0611** (crash renderer -1/143) : INVESTIGATING —
    vérifier `find $TEMP/SoundFart-test -name '*.dmp'` ; si un dump
    apparaît, l'analyser (module/processus fautif) ; sinon maintenir

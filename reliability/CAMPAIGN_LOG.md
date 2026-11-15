@@ -462,3 +462,17 @@ il ne reste que 0611 (.dmp), VALIDATION.md materiel, endurance.
   smoke test-profile relance sur le nouveau build.
 - Registre : 166 anomalies — 131 CLOSED, 11 FPV, 23 ACCEPTED,
   1 INVESTIGATING (0611). Toutes les zones de code auditees.
+
+## 15/11/2026 (suite 2) — revue diff 73ed0a7 + promotion CLOSED
+
+- Revue independante adverse (subagent) du commit 73ed0a7 : 11/11
+  CORRECT. Reserves mineures documentees dans FINDINGS cycle 8
+  (ENOTSUP absent de la liste de repli, parseEndpoints nom vide->id,
+  decimales parseTs, pas de filtre reason sur render-process-gone,
+  stopFallback sans second stop).
+- Affinage post-revue SF-REL-0059 : erreur marquee noRetry (evite un
+  retry yt-dlp update inutile sur oversize) + unlink du fichier >512 Mo.
+- Les 11 FPV (0054, 0055, 0059, 0116, 0674-0680) promus CLOSED.
+  npm test 40/40 apres l'affinage.
+- Registre : 166 anomalies — 142 CLOSED, 0 FPV, 23 ACCEPTED,
+  1 INVESTIGATING (0611).
