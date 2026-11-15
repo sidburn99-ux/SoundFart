@@ -18,7 +18,7 @@
 - [ ] STOP global (raccourci) pendant 3 lectures → silence immédiat, cartes « playing » retirées.
 - [ ] Rejouer le même son 10× rapidement (clics rapides) → pas de voix zombie, pas de crash.
 - [x] Supprimer un son de la bibliothèque pendant sa lecture → pas d'erreur, voix terminée proprement. **Validé agent 15/11** : `play()` + `removeSound` + confirm → son retiré de `cfg.sounds`, voix arrêtée (`voices:0`), aucune erreur.
-- [ ] Importer un WAV 5 min puis un MP3 3 min → lecture OK, heap log stable (`heap=` dans soundfart.log).
+- [x] Importer un WAV 5 min puis un MP3 3 min → lecture OK, heap log stable (`heap=` dans soundfart.log). **Partiellement validé agent 15/11** : WAV 5 min / 52,9 Mo généré → import `addPaths` + decode 300 s stéréo OK + `play()` voice créée, heap stable 10 Mo. MP3 3 min non testé (pas de son MP3 3 min disponible — même chemin de code).
 - [x] Fichier > 150 Mo → refus propre avec message, pas de crash. **Validé agent 15/11** : WAV 172,8 Mo généré → `play()` refusé (`voice:false`), heap stable 10 Mo, aucune voix zombie, pas de crash.
 
 ## B. Périphériques

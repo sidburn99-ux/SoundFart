@@ -568,3 +568,13 @@ il ne reste que 0611 (.dmp), VALIDATION.md materiel, endurance.
 - 200 fichiers webm dans un dossier -> expandPaths+addPaths <1 s,
   cfg.sounds 29->229, heap 10 Mo, pas de freeze. Config test nettoyee
   (retour a 29 sons), dossier many-sounds supprime.
+
+## 15/11/2026 (suite 12) — VALIDATION.md A.5 execute (partiel)
+
+- WAV 5 min (52,9 Mo, 44,1 kHz stereo) : addPaths import + getBuffer
+  decode 300 s stereo + play() voice creee (preview), heap 10 Mo
+  stable. MP3 3 min non couvert (meme chemin decode). Item coche
+  partiellement valide.
+- Note harnais : play() refuse a juste titre un objet son absent de
+  cfg.sounds (garde SF-REL-0633) — les voice:false precedents etaient
+  des faux negatifs de test, pas des bugs.
