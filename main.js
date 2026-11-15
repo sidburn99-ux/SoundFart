@@ -37,7 +37,7 @@ function execFileTracked(file, args, opts = {}) {
     });
   });
 }
-const { AUDIO_EXT, VIRTUAL_RE: VIRTUAL_RE_MAIN, parseEndpoints, parseGet, findCableCapture, chooseRestoreIds, safeName, expandPaths, expandPathsAsync } = require('./lib/audio-utils');
+const { AUDIO_EXT, VIRTUAL_RE: VIRTUAL_RE_MAIN, parseEndpoints, parseGet, findCableCapture, chooseRestoreIds, safeName, expandPaths, expandPathsAsync, writeRecording } = require('./lib/audio-utils');
 let win = null;
 
 // ---------- journal d'erreurs : SoundFart-data\soundfart.log ----------
@@ -352,24 +352,13 @@ H('rec:save', async (_e, opts) => {
   if (data == null) throw new Error('données audio manquantes');
   const rdir = path.join(storageRoot(dir), 'recordings');
   fs.mkdirSync(rdir, { recursive: true });
-  const base = safeName(name);
-  const extOk = ['.webm', '.m4a', '.mp4', '.ogg', '.wav', '.opus'].includes(ext) ? ext : '.webm';
   const len = data instanceof ArrayBuffer ? data.byteLength : (data.byteLength != null ? data.byteLength : (data.length || 0));
   if (len > 512 * 1024 * 1024) throw new Error('enregistrement trop volumineux (> 512 Mo)');
   const buf = data instanceof ArrayBuffer ? Buffer.from(new Uint8Array(data)) : Buffer.from(data);
-  // Reservation atomique du nom ('wx' = echec si existe) : la boucle
-  // existsSync+writeFile laissait une fenetre ou deux rec:save concurrents
-  // choisissaient le meme chemin et le second ecrasait le premier.
-  for (let i = 0; ; i++) {
-    const cand = i === 0 ? path.join(rdir, `${base}${extOk}`) : path.join(rdir, `${base}-${i}${extOk}`);
-    try {
-      await fs.promises.writeFile(cand, buf, { flag: 'wx' });
-      return cand;
-    } catch (we) {
-      if (we && we.code === 'EEXIST') continue;
-      throw we;
-    }
-  }
+  // Nom+ecriture atomique delegues a lib/audio-utils.writeRecording —
+  // testable via node:test (SF-REL-0058 : la boucle etait dans le handler,
+  // invisible aux tests, et referencait une variable inexistante).
+  return writeRecording(rdir, name, ext, buf);
 });
 
 // ---------- ffmpeg : coupe physique des extraits (MP3) ----------

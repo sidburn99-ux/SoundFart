@@ -21,3 +21,9 @@
   gardes destructure media:cut/yt:download, marqueur troncature shortcuts.
 - Nouveau test/tap-processor.test.js (6 tests, stubs AudioWorklet) -> 31/31.
 - npm run dist OK + smoke exe reel OK (11:35, permissions ALLOW, pas de crash).
+- Amelioration usine : writeRecording extrait dans lib/ (testé) —
+  la classe de bug « ReferenceError dans handler main.js » est desormais
+  detectable par node:test. Lecon : tout handler a logique non triviale
+  doit deleguer a lib/.
+- Smoke 11:38 OK ; crash AudioContext exitCode -1 observe 11:35 sur run
+  precedent = bug connu non resolu (AGENTS), rapporte honnetement.

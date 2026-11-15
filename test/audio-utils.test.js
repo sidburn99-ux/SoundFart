@@ -186,3 +186,22 @@ test('expandPathsAsync : memes resultats que la version synchrone', async () => 
     assert.deepEqual(await U.expandPathsAsync([path.join(dir, 'nope')]), []);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+// ---------- writeRecording (extrait de rec:save, SF-REL-0058) ----------
+test('writeRecording : nom libre, collision -> suffixe, ext invalide -> .webm', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-rec-'));
+  try {
+    const b1 = await U.writeRecording(dir, 'Mon Prise#1', '.webm', Buffer.from('aaa'));
+    assert.equal(path.basename(b1), 'Mon Prise#1.webm'); // safeName : espaces gardes, # autorise
+    assert.equal(fs.readFileSync(b1, 'utf8'), 'aaa');
+    // Collision : meme nom -> -1
+    const b2 = await U.writeRecording(dir, 'Mon Prise#1', '.webm', Buffer.from('bbb'));
+    assert.equal(path.basename(b2), 'Mon Prise#1-1.webm');
+    // Ext non whitelist -> .webm
+    const b3 = await U.writeRecording(dir, 'x', '.exe', Buffer.from('c'));
+    assert.ok(b3.endsWith('.webm'));
+    // Nom vide -> safeName produit un nom non vide
+    const b4 = await U.writeRecording(dir, '   ', '.wav', Buffer.from('d'));
+    assert.ok(path.basename(b4).length > 4);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});

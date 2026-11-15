@@ -66,7 +66,7 @@ Cycle 1 — audits indépendants du 15/11/2026 (4 subagents : main.js, renderer,
 
 | ID | Sous-système | Gravité | Preuve | Statut | Résumé / correction |
 |---|---|---|---|---|---|
-| SF-REL-0058 | rec:save | P0 | Confirmé (code) | CLOSED | `i === 0 ? p : ...` — variable `p` indéfinie → ReferenceError à CHAQUE sauvegarde d'enregistrement. Régression du fix wx (df353f0). Corrigé : `base${extOk}`. |
+| SF-REL-0058 | rec:save | P0 | Confirmé (code) | CLOSED | `i === 0 ? p : ...` — variable `p` indéfinie → ReferenceError à CHAQUE sauvegarde. Régression du fix wx (df353f0), invisible à node --check/npm test (handler main.js). **Correctif usine** : logique extraite dans `lib/audio-utils.writeRecording` (testée unitairement, 32/32) — main.js n'est plus qu'un wrapper. |
 | SF-REL-0059 | yt:download taille | P3 | Hypothèse | ACCEPTED | Pas de plafond sur import « audio complet » ; choix utilisateur, disque = risque assumé. Documenté. |
 | SF-REL-0060 | AudioTap flush PCM | P4 | Confirmé | CLOSED | Flush stdout à chaque itération ~4 ms → WriteFile ~250/s, seuil 128 Kio mort. Seuil 16 Kio (~40 ms) + flush palier. |
 | SF-REL-0061 | tap-processor | P4 | Confirmé | CLOSED | `out[0]` absent → TypeError thread audio ; NaN/Inf PCM propagé. Garde + clamp Number.isFinite. |
