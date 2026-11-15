@@ -82,6 +82,14 @@ function normalizeCfg(saved) {
     return Object.assign(base, s);
   };
   c.settings = mergeSub(defaults().settings, c.settings);
+  // Types stricts sur les reglages : une config importee peut contenir
+  // 'false' (string truthy) ou des nombres invalides -> comportement
+  // incoherent (micMix active, volumes aberrants).
+  for (const k of ['micMix', 'autoSwitchMic', 'watchdogMic', 'groupByCat']) c.settings[k] = c.settings[k] === true;
+  if (!Number.isFinite(+c.settings.master)) c.settings.master = 80; else c.settings.master = Math.min(200, Math.max(0, +c.settings.master));
+  if (typeof c.settings.stopShortcut !== 'string' || c.settings.stopShortcut.length > 64) c.settings.stopShortcut = defaults().settings.stopShortcut;
+  if (typeof c.settings.sort !== 'string') c.settings.sort = 'added-desc';
+  if (typeof c.settings.catSort !== 'string') c.settings.catSort = 'manual';
   c.ui = mergeSub(defaults().ui, c.ui);
   if (!Array.isArray(c.sounds)) c.sounds = [];
   if (!Array.isArray(c.categories)) c.categories = [];
@@ -174,6 +182,11 @@ function modal(title, body, buttons, opts = {}) {
     document.removeEventListener('keydown', onKey);
     if (modalClose === close) modalClose = null;
     if (opts.onClose) opts.onClose();
+    // FERMETURE PAR ECHAP/ BACKDROP : les promesses des dialogues
+    // (askText/confirmBox/askDestDir) doivent etre resolues — sinon un
+    // await reste pendu a jamais (ex. enregistrement perdu en silence
+    // si l'utilisateur annule le choix de dossier avec Echap).
+    if (opts.resolve) opts.resolve(opts.resolveValue);
   };
   const onKey = (e) => { if (e.key === 'Escape') close(); };
   document.addEventListener('keydown', onKey);
@@ -193,11 +206,12 @@ const field = (label, node, hint) =>
 function askText(title, label, initial, okLabel) {
   return new Promise((resolve) => {
     const input = el('input', { type: 'text', value: initial || '', maxlength: 80 });
-    const done = (close, v) => { close(); resolve(v); };
+    // resolve AVANT close : la valeur explicite prime sur resolveValue (null).
+    const done = (close, v) => { resolve(v); close(); };
     const close = modal(title, [field(label, input)], [
       { label: 'Annuler', onclick: (c) => done(c, null) },
       { label: okLabel || 'OK', kind: 'primary', onclick: (c) => done(c, input.value.trim() || null) },
-    ]);
+    ], { resolve, resolveValue: null });
     input.addEventListener('keydown', (e) => { if (e.key === 'Enter') done(close, input.value.trim() || null); });
     setTimeout(() => { input.focus(); input.select(); }, 30);
   });
@@ -206,9 +220,9 @@ function askText(title, label, initial, okLabel) {
 function confirmBox(title, msg, okLabel) {
   return new Promise((resolve) => {
     modal(title, [el('div', { text: msg })], [
-      { label: 'Annuler', onclick: (c) => { c(); resolve(false); } },
-      { label: okLabel || 'Confirmer', kind: 'primary', onclick: (c) => { c(); resolve(true); } },
-    ]);
+      { label: 'Annuler', onclick: (c) => { resolve(false); c(); } },
+      { label: okLabel || 'Confirmer', kind: 'primary', onclick: (c) => { resolve(true); c(); } },
+    ], { resolve, resolveValue: false });
   });
 }
 
@@ -221,6 +235,7 @@ const bufBytes = (b) => b.length * b.numberOfChannels * 4; // float32
 const longWarned = new Set();
 const voices = new Set();
 let playGen = 0; // generation audio : stopAll/teardownAudio l'incrementent pour avorter les play() en vol
+let interruptedRetries = 0; // retry borne sur etat 'interrupted' (reset sur 'running')
 let bufCacheBytes = 0;
 
 const bufInflight = new Map(); // path -> Promise<buf> : evite le double decodage concurrent
@@ -237,7 +252,9 @@ async function getBuffer(path) {
     // Garde anti-OOM : le PCM decode tient ~22 Mo/min ; au-dela d'un fichier
     // tres lourd on refuse AVANT decodeAudioData (crash renderer connu).
     if (data.byteLength > 150 * 1024 * 1024) throw new Error('Fichier trop volumineux pour être joué (' + Math.round(data.byteLength / 1048576) + ' Mo).');
-    const ab = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+    const ab = data instanceof ArrayBuffer ? data
+      : data && data.buffer ? data.buffer.slice(data.byteOffset || 0, (data.byteOffset || 0) + data.byteLength)
+      : new Uint8Array(data).buffer; // robustness : ArrayBuffer pur ou Uint8Array
   const buf = await decoder.decodeAudioData(ab);
   const bytes = bufBytes(buf);
   // Forensique crash renderer (-1/143) : la taille PCM decodee est la donnee
@@ -267,6 +284,16 @@ async function getBuffer(path) {
   try { return await p; } finally { bufInflight.delete(path); }
 }
 
+// Supprime une entree du cache EN coherance avec le compteur d'octets :
+// sans ca bufCacheBytes derivait a la hausse a chaque suppression et le
+// cache 256 Mo s'auto-videait progressivement (eviction prematuree).
+function cacheDelete(path) {
+  const e = bufCache.get(path);
+  if (!e) return;
+  bufCache.delete(path);
+  bufCacheBytes = Math.max(0, bufCacheBytes - e.bytes);
+}
+
 async function makeOutput(deviceId) {
   const ctx = new AudioContext({ sampleRate: SR, latencyHint: 'interactive' });
   try {
@@ -278,10 +305,20 @@ async function makeOutput(deviceId) {
   // Etat 'interrupted' (session Windows coupee sans devicechange) : sans
   // ecoute, les voix restent zombies et le silence est indetectable.
   ctx.addEventListener('statechange', () => {
+    if (ctx.state === 'running') interruptedRetries = 0;
     if (ctx.state === 'suspended') { uiLog('sortie audio suspendue (device=' + (deviceId || 'defaut') + ')'); return; }
     if (ctx.state === 'interrupted' || ctx.state === 'closed') {
       uiLog('sortie audio ' + ctx.state + ' (device=' + (deviceId || 'defaut') + ')');
-      if (ctx.state === 'interrupted') toast('Sortie audio interrompue — réessaie de jouer un son.', 'warn');
+      if (ctx.state === 'interrupted') {
+        toast('Sortie audio interrompue — réessaie de jouer un son.', 'warn');
+        // Session Windows coupee sans devicechange : on retente UNE
+        // reconstruction bornee (applyAudio recree les sorties) au lieu de
+        // laisser une sortie morte jusqu'au prochain changement de peripherique.
+        if (interruptedRetries < 3) {
+          interruptedRetries++;
+          setTimeout(() => { applyAudio().catch((e) => logErr('applyAudio retry', e)); }, 1500);
+        }
+      }
     }
   });
   const bus = ctx.createGain();
@@ -436,7 +473,10 @@ function resolveDevices() {
 // VB-CABLE n'est ni embarque ni installe par SoundFart (licence VB-Audio) :
 // l'utilisateur l'installe depuis vb-audio.com/Cable. On detecte les
 // peripheriques « CABLE Input/Output » via enumerateDevices/devicechange.
-const cablePresent = () => audio.devices.out.some((d) => /cable/i.test(d.label));
+// devicesDegraded : enumeration incomplete (permission refusee/transitoire)
+// — on NE affiche PAS l'ecran d'install VB-CABLE a tort : on pretend present
+// le temps que la prochaine enumeration reussie tranche.
+const cablePresent = () => audio.devicesDegraded || audio.devices.out.some((d) => /cable/i.test(d.label));
 let cableScreenEl = null;
 
 function cableScreen() {
@@ -448,7 +488,8 @@ function cableScreen() {
     if (cablePresent()) {
       window.sf.audioAutoSetup({ enabled: cfg.settings.autoSwitchMic, cableLabel: cfg.settings.cableLabel }).then((r) => {
         if (r && r.changed) toast('Entrée micro basculée sur ' + r.device + ' (restaurée à la fermeture).');
-      });
+        else if (r && !r.ok) toast('Bascule micro auto impossible : ' + r.err, 'warn');
+      }).catch((e) => logErr('audioAutoSetup', e));
     } else {
       toast('Toujours absent — si tu viens d\'installer VB-CABLE, redémarre Windows : les périphériques n\'apparaissent qu\'après.', 'warn');
     }
@@ -728,7 +769,8 @@ async function removeSound(s) {
   if (!(await confirmBox('Retirer ce son ?', `« ${s.name} » sera retiré de SoundFart. Le fichier audio d'origine n'est pas supprimé.`, 'Retirer'))) return;
   cfg.sounds = cfg.sounds.filter((x) => x.id !== s.id);
   // Libere le buffer decode du son supprime (sinon jusqu'a 256 Mo d'orphelins).
-  try { bufCache.delete(s.path); longWarned.delete(s.path); } catch {}
+  cacheDelete(s.path); // libere le buffer decode du son supprime
+  longWarned.delete(s.path);
   save(); renderAll();
   applyShortcuts(); // desenregistre le raccourci global du son supprime
 }
@@ -1006,20 +1048,26 @@ function editSound(s) {
         if (!dur) { toast('Attend le chargement de l\'onde.', 'warn'); return; }
         try {
           const out = await window.sf.mediaCut({ input: s.path, start: outStart(), end: outEnd() ?? dur, dir: cfg.settings.storageDir || '' });
+          // confirmBox DETRUIT cette modale (slot unique) : on persiste les
+          // edits courants d'abord, puis on rouvre l'editeur apres la decision
+          // — sinon les modifications non enregistrees etaient perdues sans
+          // avertissement et le code continuait sur des elements detaches.
+          sync(); save();
           if (await confirmBox('Extrait MP3 créé', 'Fichier : ' + out + '\n\nL\'utiliser à la place du fichier actuel ? La découpe et les fondus seront réinitialisés (le MP3 contient déjà l\'extrait).', 'Utiliser')) {
+            const oldPath = s.path;
             s.path = out;
+            cacheDelete(oldPath);
             s.trimStart = 0; s.trimEnd = null; s.fadeIn = 0; s.fadeOut = 0;
-            ts = 0; te = 0; dur = 0; peaks = null; pvPos = null;
-            stopPreview();
-            sync(); draw(); loadWave(); save(); renderAll();
+            save(); renderAll();
             toast('Fichier remplacé par l\'extrait MP3.');
           } else {
             toast('MP3 créé : ' + out);
           }
+          editSound(s); // rouvre l'editeur (la modale a ete detruite par confirmBox)
         } catch (e) { toast('Export impossible : ' + e.message, 'warn'); }
       } }),
       el('button', { text: 'Tout réinitialiser', onclick: reset }),
-      el('button', { text: 'Ouvrir l\'emplacement', onclick: () => window.sf.reveal(s.path) })),
+      el('button', { text: 'Ouvrir l\'emplacement', onclick: () => window.sf.reveal(s.path).catch((e) => logErr('reveal', e)) })),
     field('Fichier', el('div', { class: 'path hint', text: s.path })),
   ], [
     { label: 'Annuler', onclick: (c) => c() },
@@ -1063,15 +1111,15 @@ function askDestDir() {
       el('div', { class: 'hint', text: 'Le fichier sera enregistré dans ce dossier (sous-dossier imports/ ou recordings/ selon la source). Laisse vide pour le dossier SoundFart par défaut.' }),
       inp,
     ], [
-      { label: 'Annuler', onclick: (c) => { c(); resolve(null); } },
-      { label: 'Choisir…', onclick: async () => { const d = await window.sf.pickDir(); if (d) inp.value = d; } },
+      { label: 'Annuler', onclick: (c) => { resolve(null); c(); } },
+      { label: 'Choisir…', onclick: async () => { try { const d = await window.sf.pickDir(); if (d) inp.value = d; } catch (e) { logErr('pickDir', e); } } },
       { label: 'OK', kind: 'primary', onclick: (c) => {
         const d = inp.value.trim();
         if (d) { cfg.settings.lastDestDir = d; } else { delete cfg.settings.lastDestDir; }
         save();
-        c(); resolve(d || '');
+        resolve(d || ''); c();
       } },
-    ]);
+    ], { resolve, resolveValue: null });
   });
 }
 
@@ -1181,8 +1229,10 @@ function settingsModal() {
   const dirLbl = el('div', { class: 'hint path', text: (s.storageDir || 'Dossier de données par défaut') + ' — les fichiers vont dans imports/, recordings/, cuts/ à l\'intérieur' });
   const openDirBtn = el('button', { class: 'ghost', text: 'Ouvrir', title: 'Ouvre le dossier de stockage dans l\'Explorateur', onclick: () => window.sf.openDir(s.storageDir || '') });
   const pickDirBtn = el('button', { text: 'Choisir…', title: 'Choisit le dossier racine où SoundFart range ses fichiers (imports/, recordings/, cuts/).', onclick: async () => {
-    const d = await window.sf.pickDir();
-    if (d) { s.storageDir = d; dirLbl.textContent = d; }
+    try {
+      const d = await window.sf.pickDir();
+      if (d) { s.storageDir = d; dirLbl.textContent = d; }
+    } catch (e) { logErr('pickDir', e); }
   } });
   const resetDirBtn = el('button', { class: 'ghost', text: 'Réinitialiser', onclick: () => { s.storageDir = ''; dirLbl.textContent = 'Dossier SoundFart par défaut (SoundFart-data) — les fichiers vont dans imports/, recordings/, cuts/ à l\'intérieur'; } });
   const autoMic = el('input', { type: 'checkbox', checked: !!s.autoSwitchMic, title: 'Au lancement, l\'entrée micro Windows bascule sur « CABLE Output » (pour que Discord capte ta voix via le câble), puis revient à ton vrai micro à la fermeture ou en cas de crash.' });
@@ -1245,7 +1295,7 @@ function settingsModal() {
       if (cablePresent()) window.sf.audioAutoSetup({ enabled: s.autoSwitchMic, cableLabel: s.cableLabel }).then((r) => {
         if (r && r.changed) toast('Entrée micro basculée sur ' + r.device + ' (restaurée à la fermeture).');
         else if (r && !r.ok) toast('Bascule micro auto impossible : ' + r.err, 'warn');
-      });
+      }).catch((e) => logErr('audioAutoSetup', e));
     } },
   ], { onClose: () => stopCleanup() });
 }
@@ -1398,7 +1448,7 @@ function showCtx(e, s) {
   m.replaceChildren(
     item('Modifier (nom, volume, catégorie, raccourci)…', () => editSound(s)),
     item(s.favorite ? '★ Retirer des favoris' : '☆ Ajouter aux favoris', () => { s.favorite = !s.favorite; save(); renderAll(); }),
-    item('Ouvrir l\'emplacement du fichier', () => window.sf.reveal(s.path)),
+    item('Ouvrir l\'emplacement du fichier', () => window.sf.reveal(s.path).catch((e) => logErr('reveal', e))),
     item('Retrouver le fichier…', () => relocateSound(s)),
     item('Retirer de la liste', () => removeSound(s), 'danger'));
   m.style.left = Math.min(e.clientX, innerWidth - 240) + 'px';
@@ -1407,10 +1457,13 @@ function showCtx(e, s) {
 }
 
 async function relocateSound(s) {
-  const paths = await window.sf.pickFiles();
+  let paths;
+  try { paths = await window.sf.pickFiles(); } catch (e) { logErr('pickFiles', e); return; }
   const p = paths[0];
   if (!p) return;
+  const oldPath = s.path;
   s.path = p;
+  cacheDelete(oldPath); // l'ancien buffer devient orphelin sinon
   missing.delete(s.id);
   save(); renderAll();
   toast('Fichier retrouvé : ' + p);
@@ -1440,7 +1493,8 @@ async function recorderModal() {
   }) : null;
   const offTapPcm = window.sf.onTapPcm ? window.sf.onTapPcm((ab) => {
     if (!pcmSeen) { pcmSeen = true; window.sf.uiLog('tapPcm: premier flux recu (' + ab.byteLength + 'o)'); }
-    if (tapNode) { try { tapNode.port.postMessage(ab); } catch {} }
+    // transfer [ab] : evite le clone structure de chaque chunk PCM (frequence elevee)
+    if (tapNode) { try { tapNode.port.postMessage(ab, [ab]); } catch {} }
     else if (pcmQ.length < 600) pcmQ.push(ab);
     else if (!pcmDrops) { pcmDrops = 1; window.sf.uiLog('pcmQ saturee : chunks AudioTap jetes (renderer occupe)'); }
   }) : null;
@@ -1462,7 +1516,12 @@ async function recorderModal() {
     o.dataset.label = d.label || d.deviceId;
     return o;
   }));
-  if (!micSel.value && devs.length) micSel.value = devs[0].deviceId;
+  if (!micSel.value && devs.length) {
+    // Priorite a un peripherique non virtuel : devs[0] peut etre CABLE Output
+    // -> le « micro » enregistrerait la soundboard au lieu de la voix.
+    const firstReal = devs.find((d) => !VIRTUAL_RE.test(d.label || '')) || devs[0];
+    micSel.value = firstReal.deviceId;
+  }
   const micOn = el('input', { type: 'checkbox', checked: true, title: 'Enregistre la voix via ton micro (avec réduction d\'écho et de bruit).' });
   const pcOn = el('input', { type: 'checkbox', checked: false, title: 'Enregistre tout ce que tu entends sur le PC (vidéo, jeu, musique) — capturé directement à la sortie, sans repasser par le câble.' });
   const cableOn = el('input', { type: 'checkbox', checked: false, title: 'Enregistre ce que SoundFart envoie vers Discord (les sons de la soundboard).' });
@@ -1614,6 +1673,11 @@ async function recorderModal() {
       if (dead) { deadCleanup(); return; }
       const mime = mimePick();
       actx = new AudioContext({ sampleRate: SR });
+      // Contexte cree hors geste utilisateur peut etre 'suspended' (politique
+      // autoplay, veille) : sans resume, le MediaRecorder produit un fichier
+      // silencieux sans erreur.
+      try { await actx.resume(); } catch (e) { window.sf.uiLog('recorder actx.resume: ' + (e && e.message)); }
+      if (actx.state !== 'running') window.sf.uiLog('recorder actx.state=' + actx.state + ' (risque de fichier silencieux)');
       const dest = actx.createMediaStreamDestination();
       const comp = actx.createDynamicsCompressor(); // evite l'ecrêtage quand plusieurs sources sont mixees
       comp.threshold.value = -12; comp.knee.value = 20; comp.ratio.value = 8;
@@ -1625,11 +1689,14 @@ async function recorderModal() {
           // outputChannelCount [2] : sans ca la sortie du worklet peut etre mono
           // (seul le canal gauche serait enregistre). numberOfInputs 0 : inutilise.
           tapNode = new AudioWorkletNode(actx, 'tap-processor', { numberOfInputs: 0, outputChannelCount: [2] });
-          pcmQ.forEach((ab) => tapNode.port.postMessage(ab));
+          pcmQ.forEach((ab) => tapNode.port.postMessage(ab, [ab]));
           pcmQ = [];
         } catch (e) {
           window.sf.uiLog('tap worklet: ' + (e && e.message));
           killTapNode();
+          // Sans cet arret, AudioTap continue de capturer le loopback
+          // systeme pendant tout l'enregistrement (CPU + capture inutile).
+          window.sf.audioTapStop().catch(() => {});
           try {
             const st = await systemStream();
             if (dead) { deadCleanup(st); return; }
@@ -1643,7 +1710,9 @@ async function recorderModal() {
       rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
       // MediaRecorder peut errerurer sans jamais tirer onstop : sans ce filet,
       // micro/tap/contexte resteraient allumes et l'enregistrement serait perdu.
+      let recFailed = false;
       rec.onerror = () => {
+        recFailed = true; // onstop sauvegardera le partiel, avec un statut honnete
         window.sf.uiLog('recorder onerror state=' + (rec ? rec.state : '?'));
         try { if (rec && rec.state !== 'inactive') rec.stop(); } catch {}
       };
@@ -1669,7 +1738,7 @@ async function recorderModal() {
           // modale de resultat, recordedSound mourait dans une closure et le
           // fichier restait orphelin dans recordings/ — plus jamais ajoutable.
           modal('Enregistrement terminé', [
-            el('div', { class: 'hint', text: 'Durée ' + fmtTime((Date.now() - recStart) / 1000) + ' — ' + path }),
+            el('div', { class: 'hint', text: 'Durée ' + fmtTime((Date.now() - recStart) / 1000) + ' — ' + path + (recFailed ? ' — ENREGISTREMENT INTERROMPU PAR UNE ERREUR (fichier partiel)' : '') }),
             field('Nom', nameIn),
             field('Catégorie', catSel),
           ], [
@@ -1696,6 +1765,7 @@ async function recorderModal() {
         window.sf.audioTapStop().catch(() => {});
         if (actx) { actx.close().catch(() => {}); actx = null; }
         rec = null;
+        previewBtn.disabled = false; // « ▶ Écouter » devient utilisable
         startBtn.disabled = false; stopBtn.disabled = true;
         micSel.disabled = micOn.disabled = pcOn.disabled = cableOn.disabled = false;
       };
@@ -1712,6 +1782,7 @@ async function recorderModal() {
         tapNode.connect(comp);
       }
       rec.start(250);
+      previewBtn.disabled = true; // l'ecoute porte sur l'enregistrement precedent
       recStart = Date.now();
       recTimer = setInterval(() => { status.textContent = '● Enregistrement… ' + fmtTime((Date.now() - recStart) / 1000); }, 250);
       status.textContent = '● Enregistrement…';
@@ -1918,7 +1989,7 @@ function youtubeModal() {
       save(); renderAll(); c();
       toast('Son YouTube ajouté : ' + dl.path);
     } },
-  ], { onClose: () => { if (offProg) offProg(); } });
+  ], { onClose: () => { if (offProg) { offProg(); offProg = null; } } });
 }
 
 // ================================================================ demarrage
@@ -1947,7 +2018,7 @@ async function init() {
   groupCat.checked = !!cfg.settings.groupByCat;
   groupCat.addEventListener('change', () => { cfg.settings.groupByCat = groupCat.checked; save(); renderAll(); });
   $('#search').addEventListener('input', renderGrid);
-  $('#addBtn').addEventListener('click', async () => { const p = await window.sf.pickFiles(); if (p.length) addPaths(p); });
+  $('#addBtn').addEventListener('click', async () => { const p = await window.sf.pickFiles(); if (p.length) addPaths(p).catch((e) => logErr('addPaths', e)); });
   $('#ytBtn').addEventListener('click', youtubeModal);
   $('#recBtn').addEventListener('click', () => recorderModal().catch((e) => toast('Enregistreur : ' + e.message, 'warn')));
   $('#addCat').addEventListener('click', newCategory);
@@ -1957,7 +2028,7 @@ async function init() {
   // menu application (F11)
   window.sf.onMenuAction(async (a) => {
     try {
-      if (a === 'add') { const p = await window.sf.pickFiles(); if (p.length) addPaths(p); }
+      if (a === 'add') { const p = await window.sf.pickFiles(); if (p.length) addPaths(p).catch((e) => logErr('addPaths', e)); }
       else if (a === 'youtube') youtubeModal();
       else if (a === 'recorder') await recorderModal();
       else if (a === 'export') exportConfig();
@@ -2017,7 +2088,7 @@ async function init() {
         await applyAudio();
         window.sf.audioAutoSetup({ enabled: s.autoSwitchMic, cableLabel: s.cableLabel }).then((r) => {
           if (r && r.changed) toast('Entrée micro basculée sur ' + r.device + ' (restaurée à la fermeture).');
-        });
+        }).catch((e) => logErr('audioAutoSetup', e));
       }
     }, 500);
   });
@@ -2065,7 +2136,7 @@ async function init() {
   if (cablePresent()) window.sf.audioAutoSetup({ enabled: cfg.settings.autoSwitchMic, cableLabel: cfg.settings.cableLabel }).then((r) => {
     if (r && r.changed) toast('Entrée micro basculée sur ' + r.device + ' (restaurée à la fermeture).');
     else if (r && !r.ok) console.warn('bascule micro auto :', r.err);
-  });
+  }).catch((e) => logErr('audioAutoSetup', e));
   window.sf.onMicWatchOff && window.sf.onMicWatchOff(() => {
     toast('Entrée micro modifiée pendant la session — surveillance auto suspendue (réglages → surveillance micro).', 'warn');
   });
