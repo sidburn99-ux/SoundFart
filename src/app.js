@@ -433,10 +433,12 @@ async function teardownAudio() {
   stopAll(true);
   playGen++;
   for (const v of [...voices]) endVoice(v); // purge les voix zombies restees bloquees
+  const closedCtx = new Set(); // cable et mon peuvent partager le meme ctx
   for (const k of ['cable', 'mon']) {
     // Null AVANT close() : un play() dans la fenetre de fermeture ne doit
     // pas attraper un contexte mourant (InvalidStateError parasite).
-    if (audio[k]) { const a = audio[k]; audio[k] = null; try { await a.ctx.close(); } catch {} }
+    const a = audio[k]; audio[k] = null;
+    if (a && !closedCtx.has(a.ctx)) { closedCtx.add(a.ctx); try { await a.ctx.close(); } catch {} }
   }
   if (audio.micStream) { audio.micStream.getTracks().forEach((t) => t.stop()); audio.micStream = null; }
 }
@@ -460,8 +462,14 @@ async function applyAudioInner() {
   } catch (e) {
     warns.push('Sortie Discord : ' + e.message);
   }
+  // Meme peripherique pour cable et ecoute : PARTAGER le contexte au lieu
+  // d'en creer un second — chaque AudioContext est une surface d'exposition
+  // au crash audio -1/143 (SF-REL-0611), et le doublon ne change rien a
+  // l'audio (meeme destination). Si cable a echoue, on tente quand meme
+  // mon : l'erreur sera rapportee pour les deux sorties.
+  const sameOut = s.cableId && s.monId && s.cableId === s.monId && audio.cable;
   try {
-    if (s.monId) audio.mon = await makeOutput(s.monId);
+    if (s.monId) audio.mon = sameOut ? audio.cable : await makeOutput(s.monId);
   } catch (e) {
     warns.push('Écoute locale : ' + e.message);
   }

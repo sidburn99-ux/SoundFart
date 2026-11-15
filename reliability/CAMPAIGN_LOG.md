@@ -485,3 +485,17 @@ il ne reste que 0611 (.dmp), VALIDATION.md materiel, endurance.
   0 .dmp. Preuve negative pour 0611 — ne ferme PAS l'anomalie
   (investigation maintenue, exposition smoke continue).
 - Registre inchange : 142 CLOSED, 0 FPV, 23 ACCEPTED, 1 INVESTIGATING.
+
+## 15/11/2026 (suite 4) — mitigation 0611 : AudioContext partage
+
+- applyAudioInner creait 2 AudioContext meme quand cableId===monId
+  (cas frequent : ecoute locale = meme peripherique). Chaque contexte
+  est une surface d'exposition au crash audio utility Chromium.
+- Fix : audio.mon partage audio.cable quand les deviceId sont egaux ;
+  teardownAudio deduplique la fermeture par ctx (closedCtx Set) ;
+  play() dedup existant par deviceId deja compatible ; updateMaster
+  idempotent.
+- Verifie runtime CDP : forced cableId=monId -> audio.cable===audio.mon
+  (shared:true), teardown null les deux, restore monId=default ->
+  contextes distincts a nouveau. cdp-drive 12/12 PASS, npm test 40/40.
+- 0611 reste INVESTIGATING : mitigation de surface, pas preuve de cause.
