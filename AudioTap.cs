@@ -491,7 +491,8 @@ internal static class AudioTap
             finally { Marshal.FreeCoTaskMem(dstFmtPtr); dstFmtPtr = IntPtr.Zero; }
             Console.Error.WriteLine("AudioTap: init cable hr=0x" + hr.ToString("X8"));
             if (hr != 0) throw new Exception("init cable echoue (0x" + hr.ToString("X8") + ")");
-            dst.GetBufferSize(out dstBufFrames);
+            int dstSizeHr = dst.GetBufferSize(out dstBufFrames);
+            if (dstSizeHr != 0) throw new Exception("GetBufferSize cable echoue (0x" + dstSizeHr.ToString("X8") + ")");
             Console.Error.WriteLine("AudioTap: dstBuf=" + dstBufFrames);
         }
 
@@ -586,6 +587,7 @@ internal static class AudioTap
             // 1) aspirer les paquets disponibles
             bool wantReconnect = false;
             int sStreak = 0; // codes S_ consecutifs : borne le spin interne
+            int zeroFrames = 0; // GetBuffer S_OK avec 0 frame : borne le spin interne
             while (true)
             {
                 uint packet;
@@ -615,7 +617,10 @@ internal static class AudioTap
                 }
                 if (gbHr > 0) { if (++sStreak > 500) break; if (sStreak == 100) Thread.Sleep(1); continue; } // code S_ : pas de donnees a consommer ce tour
                 sStreak = 0;
-                if (frames == 0) { cap.ReleaseBuffer(0); continue; }
+                // frames==0 persistant = driver etat transitoire : sans borne,
+                // la boucle tournait a 100% CPU hors de portee du check parent.
+                if (frames == 0) { cap.ReleaseBuffer(0); if (++zeroFrames > 200) break; continue; }
+                zeroFrames = 0;
                 int bytes = (int)(frames * sf.frameBytes);
                 bool silent = (flags & 0x2) != 0;
                 byte[] buf = new byte[bytes];
@@ -761,8 +766,14 @@ internal static class AudioTap
                     try { if (pcmOut != null) { pcmOut.Flush(); pcmOut.Dispose(); } } catch {}
                     timeEndPeriod(1); return 2;
                 }
+                // Libere les anciens clients COM explicitement : sinon les
+                // sessions WASAPI fantomes persistent jusqu'au GC (device
+                // « encore utilise » transitoirement apres reconnexion).
+                foreach (var old in new object[] { src, dst, cap, ren })
+                    try { if (old != null) Marshal.ReleaseComObject(old); } catch {}
                 src = t2.src; dst = t2.dst; cap = t2.cap; ren = t2.ren;
                 sf = t2.sf; df = t2.df; convert = t2.convert; dstBufFrames = t2.dstBufFrames;
+                maxQueued = (long)(df.bytesPerSec * 0.5); // le format a pu changer (44.1 -> 96 kHz)
                 queue.Clear(); queuedBytes = 0; // buffers de l'ancien format : invalides
                 Console.Error.WriteLine("AudioTap: reconnecte -> " + sf.channels + "ch " + sf.rate + "Hz " + sf.bits + "b -> "
                     + df.channels + "ch " + df.rate + "Hz " + df.bits + "b" + (convert ? " (conversion)" : " (copie)"));
@@ -788,11 +799,15 @@ internal static class AudioTap
             Console.OutputEncoding = new System.Text.UTF8Encoding(false);
             string cable = args.Length > 0 ? args[0] : "CABLE Input";
             int parentPid = 0;
-            if (args.Length > 1) int.TryParse(args[1], out parentPid); // non numerique -> 0 = check desactive
+            if (args.Length > 1)
+            {
+                if (!int.TryParse(args[1], out parentPid))
+                    Console.Error.WriteLine("AudioTap: parentPid non numerique (« " + args[1] + " ») — anti-orphelin desactive");
+            } // non numerique -> 0 = check desactive (mais journalise)
             double seconds = 0;
             if (args.Length > 2 && (!double.TryParse(args[2], System.Globalization.NumberStyles.Float,
                 System.Globalization.CultureInfo.InvariantCulture, out seconds)
-                || double.IsNaN(seconds) || double.IsInfinity(seconds)))
+                || double.IsNaN(seconds) || double.IsInfinity(seconds) || seconds < 0))
                 throw new Exception("argument « secondes » invalide : " + args[2]);
             string srcName = args.Length > 3 && args[3].Length > 0 ? args[3] : null;
             bool pcmMode = args.Length > 4 && args[4] == "pcm";

@@ -421,3 +421,16 @@ REGISTRE FINAL : 145 IDs — 122 CLOSED, 22 ACCEPTED, 1 INVESTIGATING
 Reste : .dmp Crashpad 0611, validation materielle VALIDATION.md,
 endurance. Prochaine etape : maintenance + surveillance, ou ACCEPTED
 a reevaluer si terrain.
+
+## V2 — audit complet C# AudioEndpoint+AudioTap (15/11/2026)
+
+Subagent lecture integrale : 14 constats. Corriges : 0660 (nom vide
+accepte non-virtuel — parite JS), 0661 (guard retry 5x backoff),
+0664 (frames==0 boucle infinie -> zeroFrames>200 break), 0665
+(maxQueued recalcule), 0668 (ReleaseComObject reconnect), 0669 (hr
+GetBufferSize), 0670 (warning pid), 0671 (seconds<0 rejete).
+Acceptes documentes : 0662 guards accumules, 0663/0666 fenetres PID,
+0667 write bloquant, 0672 GC, 0673 channel mask.
+Preuves : csc compile OK x2, AudioEndpoint list/get reels, cdp-tap
+runtime 73 chunks RMS 0,285 (AudioTap modifie recompile + execute).
+npm test 39/39, dist rebuild, smoke + cdp-drive.

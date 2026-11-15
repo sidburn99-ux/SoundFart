@@ -695,6 +695,91 @@ documentee, a reevaluer si terrain.
 **Preuve** : node --check, npm test 39/39, dist, smoke + cdp-drive.
 **Statut** : CLOSED — revue independante des correctifs + residus (52b5b66) : tout CORRECT + npm test 39/39 + dist + smoke + cdp-drive PASS. Limites documentees par entree.
 
+
+## SF-REL-0660 — restauration guard : device sans nom accepte « non virtuel » (P2)
+
+**Symptome** : NonVirtual()/fb dans AudioEndpoint.cs acceptaient un
+endpoint dont DeviceName avait echoue ("") — levirtuel pouvait etre
+choisi comme repli, exactement le cas durci cote JS (chooseRestoreIds).
+**Fix** : nom non vide exige dans NonVirtual ET dans la selection fb.
+**Preuve** : csc compile OK, AudioEndpoint list/get reels OK.
+**Statut** : FIXED_PENDING_VALIDATION.
+
+## SF-REL-0661 — guard restauration one-shot : echec transitoire = micro coince (P3)
+
+**Fix** : RestoreFromFile boucle 5 tentatives backoff 2s->10s tant que
+le marqueur existe et que rc!=0.
+**Preuve** : csc compile OK. **Statut** : FIXED_PENDING_VALIDATION.
+
+## SF-REL-0662 — guards AudioEndpoint dormants accumules (P3, ACCEPTED)
+
+Owner=pid identique -> N bascules = N guards endormis. Plafonne en
+pratique (peu de toggles), borner par mutex/lock = complexite non
+justifiee. **Statut** : ACCEPTED.
+
+## SF-REL-0663 — fenetre PID reutilise/mort precoce -> restauration sautee (P3, ACCEPTED)
+
+GetProcessById initial throw -> return 0 ; PID reutilise <500 ms ->
+StartTime different -> return 0. Fenetre etroite, stderr ignore de
+toute facon. Documente. **Statut** : ACCEPTED.
+
+## SF-REL-0664 — AudioTap : frames==0 = boucle interne infinie non bornee (P2)
+
+**Symptome** : GetBuffer S_OK + 0 frame -> ReleaseBuffer+continue sans
+borne ni check parent -> 100% CPU possible sur driver buggé.
+**Fix** : zeroFrames>200 -> break (sortie vers boucle externe bornee).
+**Preuve** : csc compile OK + cdp-tap runtime (73 chunks, RMS 0,285).
+**Statut** : FIXED_PENDING_VALIDATION.
+
+## SF-REL-0665 — maxQueued fige apres reconnexion (P3)
+
+**Fix** : maxQueued recalcule depuis df.bytesPerSec apres InitTap
+reconnect (format peut changer 44.1->96 kHz). Mode non-pcm.
+**Statut** : FIXED_PENDING_VALIDATION.
+
+## SF-REL-0666 — parentStart adopte sur PID reutilise (P3, ACCEPTED)
+
+Initial GetProcessById echoue + PID reutilise au 1er tick -> mauvaise
+StartTime -> orphelin possible (seconds=0). Fenetre minime ; Node
+passe toujours un pid vivant. Documente. **Statut** : ACCEPTED.
+
+## SF-REL-0667 — pcmOut.Write bloquant hors check parent (P3, ACCEPTED)
+
+Pipe plein + parent gele = AudioTap suspendu. Atténue : Node draine
+toujours ('data' handler), EPIPE -> IOException -> sortie. Documente.
+**Statut** : ACCEPTED.
+
+## SF-REL-0668 — clients COM non liberes au reconnect (P3)
+
+**Fix** : Marshal.ReleaseComObject sur src/dst/cap/ren avant
+reassignation t2 — sessions WASAPI fantomes evitees.
+**Statut** : FIXED_PENDING_VALIDATION.
+
+## SF-REL-0669 — dst.GetBufferSize hr ignore -> silence mode reinjection (P3)
+
+**Fix** : hr verifie + throw (mode non-pcm inutilise mais code sain).
+**Statut** : FIXED_PENDING_VALIDATION.
+
+## SF-REL-0670 — parentPid non numerique -> anti-orphelin muet (P3)
+
+**Fix** : warning stderr au lieu d'un no-op silencieux.
+**Statut** : FIXED_PENDING_VALIDATION.
+
+## SF-REL-0671 — seconds negatif = duree infinie (P3)
+
+**Fix** : seconds<0 rejete avec NaN/Infinity.
+**Statut** : FIXED_PENDING_VALIDATION.
+
+## SF-REL-0672 — allocations par paquet ~3 MB/s GC (P3, ACCEPTED)
+
+Pression GC continue mais fonctionnel correct ; pooling = optimisation
+non requise en campagne fiabilite. **Statut** : ACCEPTED.
+
+## SF-REL-0673 — channel mask WAVEFORMATEXTENSIBLE ignore / downmix (P3, ACCEPTED)
+
+Perte qualitative surrounds, pas corruption ; choix documente.
+**Statut** : ACCEPTED.
+
 ## Historique actif des régressions (Quality Gate V2 §9)
 
 | Régression | Origine | Introduite par | Prévention |
@@ -726,7 +811,7 @@ VALIDATION.md.
 | ACCEPTED | 22 | cycles 1-5 + 0642 + 0656 |
 | INVESTIGATING | 1 | SF-REL-0611 crash AudioContext |
 | OPEN / BLOCKED | 0 | — |
-| **Total IDs définis** | **145** | IDs uniques ; trous de numerotation 0065-0099 et 0117-0119 (jamais attribues) |
+| **Total IDs définis** | **159** | IDs uniques ; trous de numerotation 0065-0099 et 0117-0119 (jamais attribues) |
 
 ### Doublons fonctionnels documentés (IDs distincts, même anomalie)
 

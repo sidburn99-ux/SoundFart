@@ -193,7 +193,7 @@ internal static class AudioEndpoint
     private static bool NonVirtual(string id, System.Collections.Generic.List<KeyValuePair<string, string>> caps)
     {
         if (string.IsNullOrEmpty(id)) return false;
-        foreach (var kv in caps) if (kv.Key == id) return !VIRTUAL_RE.IsMatch(kv.Value ?? "");
+        foreach (var kv in caps) if (kv.Key == id) return !string.IsNullOrEmpty(kv.Value) && !VIRTUAL_RE.IsMatch(kv.Value);
         return false;
     }
 
@@ -232,7 +232,10 @@ internal static class AudioEndpoint
             string prevC = RegexVal(json, "console"), prevM = RegexVal(json, "comm"), prevX = RegexVal(json, "multi");
             string defId = NonVirtual(g[1], caps) ? g[1] : ""; // role multimedia = defaut Windows fiable
             string fb = "";
-            foreach (var kv in caps) if (!VIRTUAL_RE.IsMatch(kv.Value ?? "")) { fb = kv.Key; break; }
+            // Nom non vide exige : un DeviceName illisible renvoyait "" qui
+            // passait VIRTUAL_RE — le virtuel aurait ete choisi comme repli
+            // (parite avec chooseRestoreIds cote JS, SF-REL-0660).
+            foreach (var kv in caps) if (!string.IsNullOrEmpty(kv.Value) && !VIRTUAL_RE.IsMatch(kv.Value)) { fb = kv.Key; break; }
             string cId = defId != "" ? defId : (NonVirtual(prevC, caps) ? prevC : "") ;
             if (cId == "") cId = fb;
             string mId = defId != "" ? defId : (NonVirtual(prevM, caps) ? prevM : "");
@@ -304,7 +307,16 @@ internal static class AudioEndpoint
             if (mOwner.Success && mOwner.Groups[1].Value != pid.ToString()) return 0;
         }
         catch { return 0; }
-        return RestoreFromFile(en, restorePath, pid.ToString());
+        // Retry borne : un echec transitoire de SetDefaultEndpoint (service
+        // audio occupe, endpoint en renegociation) tuait le guard one-shot
+        // et laissait le micro coince sans recours jusqu'au prochain lancement.
+        for (int attempt = 0; attempt < 5; attempt++)
+        {
+            int rc = RestoreFromFile(en, restorePath, pid.ToString());
+            if (rc == 0 || !System.IO.File.Exists(restorePath)) return rc;
+            System.Threading.Thread.Sleep(2000 * (attempt + 1)); // backoff 2s -> 10s
+        }
+        return 1;
     }
 
     private static string RegexVal(string json, string key)
