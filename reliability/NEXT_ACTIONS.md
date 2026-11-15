@@ -77,3 +77,17 @@ Prochaine action exacte :
 3. .dmp Crashpad SF-REL-0611 si le smoke tourne encore.
 4. MediaRecorder micro/loopback + Discord routing : validation matérielle
    (VALIDATION.md) — nécessite intervention ou scénario réel.
+
+## Point de reprise (15/11/2026, cycle 3 V2)
+
+Termine depuis la derniere note : yt:download sectionne+complet, media:cut,
+MediaRecorder micro, boucle VB-CABLE (RMS 0.28), rec:save audio reel,
+AudioTap loopback (RMS 0.285), revue complete callbacks -> 0612-0615 CLOSED.
+
+Prochaine action exacte :
+1. Revue independante des zones audio critiques restantes (watchdogMic,
+   audioTap lifecycle, chooseRestoreIds) — lancer audit adverse.
+2. Endurance : smoke en cours depuis ~13:13, surveiller heap + Crashpad.
+3. .dmp Crashpad SF-REL-0611 si apparition.
+4. VALIDATION.md : Discord routing, sleep/wake, restoration micro reelle —
+   necessite intervention utilisateur.
