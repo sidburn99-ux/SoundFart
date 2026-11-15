@@ -1017,6 +1017,7 @@ H('audio:autoSetup', (e, opts) => {
   return run;
 });
 async function autoSetupImpl({ enabled, cableLabel }) {
+  micSwitching = true;
   try {
     const tool = await ensureAudioTool();
     if (!tool) return { ok: false, err: 'composant audio natif indisponible : ' + (lastToolErr || 'compilation impossible') };
@@ -1058,8 +1059,7 @@ async function autoSetupImpl({ enabled, cableLabel }) {
       return { ok: true, changed: false, device: target.name };
     }
     // Pas encore sur le cable : recuperer un eventuel etat incoherent puis memoriser le vrai peripherique
-    micSwitching = true;
-    try {
+    {
       if (fs.existsSync(restoreFile())) {
         await restoreMicNowP(tool);
         cur = parseGet(await audioExecP(tool, ['get', 'capture']));
@@ -1069,12 +1069,15 @@ async function autoSetupImpl({ enabled, cableLabel }) {
       }
       if (quitting) return { ok: false, err: 'quitte' };
       await audioExecP(tool, ['set', 'capture', target.id, target.id, target.id]);
+      // Si will-quit est passe pendant l'exec, la restauration synchrone a
+      // pu preceder ce set : on retente pour ne pas laisser le micro coince.
+      if (quitting) { try { await restoreMicNowP(tool); } catch {} }
       if (!quitting) spawnMicGuard(tool);
       return { ok: true, changed: true, device: target.name };
-    } finally { micSwitching = false; }
+    }
   } catch (e) {
     return { ok: false, err: e.message };
-  }
+  } finally { micSwitching = false; }
 }
 
 // Restauration manuelle du micro (bouton reglages + beforeunload). Si
@@ -1090,6 +1093,7 @@ ipcMain.on('audio:restore', (e) => {
   autoSetupChain = run.catch(() => {});
 });
 async function audioRestoreImpl() {
+  micSwitching = true;
   try {
     const tool = await ensureAudioTool();
     if (!tool) { log('[mic-restore] outil audio indisponible : ' + (lastToolErr || 'inconnu'), 'warn'); return; }
@@ -1118,6 +1122,7 @@ async function audioRestoreImpl() {
       log('[mic-restore] micro force hors peripherique virtuel -> ' + fb.name);
     }
   } catch (err) { log('[mic-restore] ' + (err && err.message), 'warn'); }
+  finally { micSwitching = false; }
 }
 
 H('shell:openDir', async (_e, d) => {
@@ -1271,7 +1276,7 @@ async function watchdogMic() {
     const target = findCableCapture(eps, st.cableLabel);
     if (!target) return;
     const cur = parseGet(await audioExecP(tool, ['get', 'capture']));
-    if (cur.console !== target.id || cur.comm !== target.id || cur.multi !== target.id) {
+    if ((cur.console !== target.id || cur.comm !== target.id || cur.multi !== target.id) && !micSwitching) {
       micWatchSuspended = true;
       log('[mic-watchdog] entree modifiee hors SoundFart -> surveillance suspendue pour la session', 'warn');
       if (win && !win.isDestroyed()) { try { win.webContents.send('sf:micWatchOff', target.name); } catch (e) { log('[mic-watchdog] send micWatchOff: ' + (e && e.message), 'warn'); } }

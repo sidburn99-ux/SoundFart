@@ -318,7 +318,7 @@ retournait ok:true meme si restoreMicNowP echouait.
 **Fix** : ensureAudioTool dans audioRestoreImpl ; enabled=false distingue
 « rien a restaurer » (ok) de « restauration echouee » (ok:false+err) ;
 will-quit loggue warn si exe absent ou restoreMicNow false.
-**Statut** : FIXED_PENDING_VALIDATION.
+**Statut** : CLOSED — revue independante + runtime (cdp-drive 12/12, smoke). statuts honnêtes + ensureAudioTool + will-quit warn. Limite : call-sites main.js non couverts par npm test.
 
 ## SF-REL-0617 — watchdog micro : fausse suspension pendant bascule autoSetup (P2)
 
@@ -328,14 +328,14 @@ present -> micWatchSuspended=true + toast « entree modifiee hors
 SoundFart » — surveillance desarmee a tort.
 **Fix** : flag micSwitching encadrant la section mutante ; watchdogMic
 retourne tot si actif.
-**Statut** : FIXED_PENDING_VALIDATION.
+**Statut** : CLOSED — revue independante + runtime (cdp-drive 12/12, smoke). micSwitching etendu a autoSetupImpl entier + audioRestoreImpl + re-check watchdog + retry post-quit. Limite : call-sites main.js non couverts par npm test.
 
 ## SF-REL-0618 — play() pendant teardownAudio : InvalidStateError parasite (P3)
 
 **Symptome** : teardownAudio fermait ctx avant de nuller audio[k] -> un
 play() dans la fenetre capturait un contexte mourant -> toast erreur.
 **Fix** : audio[k]=null AVANT await ctx.close().
-**Statut** : FIXED_PENDING_VALIDATION.
+**Statut** : CLOSED — revue independante + runtime (cdp-drive 12/12, smoke). null avant close, play() ne capture plus un contexte mourant. Limite : call-sites main.js non couverts par npm test.
 
 ## SF-REL-0619 — importConfig : teardownAudio hors chaine applyAudio (P3, OPEN)
 
@@ -348,7 +348,7 @@ audioApplyChain et fait deja le teardown ; un applyAudioInner en vol
 termine proprement puis la nouvelle config est appliquee par la chaine.
 **Preuve** : node --check, npm test 38/38, dist rebuild, smoke + cdp-drive
 12/12 PASS. Revue independante requise.
-**Statut** : FIXED_PENDING_VALIDATION.
+**Statut** : CLOSED — revue independante + runtime (cdp-drive 12/12, smoke). teardown direct supprime, applyAudio passe par audioApplyChain. Limite : call-sites main.js non couverts par npm test.
 
 ## Historique actif des régressions (Quality Gate V2 §9)
 

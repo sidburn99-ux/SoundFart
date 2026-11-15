@@ -247,3 +247,15 @@ pendant bascule), 0618 (play sur contexte mourant). Restent ouvertes
 micro non relance si tue — ACCEPTED probabiliste).
 Verifications : node --check x2, npm test 38/38, dist rebuild, smoke
 OK, cdp-drive 12/12 PASS (cycle teardownAudio/applyAudio valide).
+
+## V2 — 0616-0619 CLOSED (15/11/2026)
+
+- Revue independante des diffs lifecycle audio : 0618/0619 valides ;
+  0616/0617 valides avec residus de couverture micSwitching.
+- Residus corriges : flag des l'entree d'autoSetupImpl (couvre compile
+  + execs + enabled=false), audioRestoreImpl encadre, re-check
+  micSwitching avant suspension watchdog, retry restoreMicNowP si
+  will-quit a precede un set capture en vol.
+- npm test 38/38, dist rebuild, smoke + cdp-drive 12/12 PASS.
+- 0616-0619 -> CLOSED (limite documentee : call-sites main.js hors
+  npm test).
