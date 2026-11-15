@@ -464,7 +464,7 @@ choix dossier avec micro getUserMedia live, AudioTap.exe capturant, et
 AudioContext ouvert (plus personne ne stoppait).
 **Fix** : cleanup (streams/tapNode/audioTapStop/actx/boutons) deplace
 juste apres chunks=[] avant askDestDir + doublon idempotent dans catch.
-**Statut** : FIXED_PENDING_VALIDATION.
+**Statut** : CLOSED — revue independante (VALIDÉ sans reserve) + npm test 39/39 + dist + smoke + cdp-drive PASS. Limite : UI non testee interactivement.
 
 ## SF-REL-0632 — micSel : repli « premier non virtuel » mort (P2)
 
@@ -472,21 +472,21 @@ juste apres chunks=[] avant askDestDir + doublon idempotent dans catch.
 micSel.value truthy -> firstReal jamais applique -> « micro » pouvait
 enregistrer CABLE Output.
 **Fix** : flag micMatched a la creation des options.
-**Statut** : FIXED_PENDING_VALIDATION.
+**Statut** : CLOSED — revue independante (VALIDÉ sans reserve) + npm test 39/39 + dist + smoke + cdp-drive PASS. Limite : UI non testee interactivement.
 
 ## SF-REL-0633 — previewSound : lecture jamais produite (P2)
 
 **Symptome** : play() exigeait l'appartenance a cfg.sounds ; l'aperçu
 YouTube passait un id ephemere -> decode puis null silencieux.
 **Fix** : opts.preview exempte du check.
-**Statut** : FIXED_PENDING_VALIDATION.
+**Statut** : CLOSED — revue independante (VALIDÉ sans reserve) + npm test 39/39 + dist + smoke + cdp-drive PASS. Limite : UI non testee interactivement.
 
 ## SF-REL-0634 — plafond 5000 sons contourne par ajouts runtime (P2)
 
 **Symptome** : enregistrement/YouTube/seed poussaient sans borne ->
 file:check refusait le batch (badges geles) et config:save >5 Mo.
 **Fix** : pushSound() borne + toast ; seed borne aussi.
-**Statut** : FIXED_PENDING_VALIDATION.
+**Statut** : CLOSED — revue independante (VALIDÉ sans reserve) + npm test 39/39 + dist + smoke + cdp-drive PASS. Limite : UI non testee interactivement.
 
 ## SF-REL-0635 — raccourcis : STOP affame + alias non normalises (P2)
 
@@ -495,7 +495,7 @@ file:check refusait le batch (badges geles) et config:save >5 Mo.
 comme conflits (dedupe normalizeCfg + findShortcutOwner).
 **Fix** : __stop__ en premier ; normAccel() (commandorcontrol/cmdorctrl/
 control -> ctrl) dans findShortcutOwner et dedupe normalizeCfg.
-**Statut** : FIXED_PENDING_VALIDATION.
+**Statut** : CLOSED — revue independante (VALIDÉ sans reserve) + npm test 39/39 + dist + smoke + cdp-drive PASS. Limite : UI non testee interactivement.
 
 ## SF-REL-0636 — modales : pas de piege focus / file d'attente (P2, OPEN)
 
@@ -510,7 +510,7 @@ sautee si une AUTRE modale est ouverte (modalClose compare au close
 de la modale YouTube — ytModalAlive existait mais n'etait jamais lu).
 **Preuve** : node --check, npm test 39/39, dist rebuild, smoke +
 cdp-drive 12/12. Modales non testees interactivement (UI).
-**Statut** : FIXED_PENDING_VALIDATION.
+**Statut** : FIXED_PENDING_VALIDATION — revue independante a trouve un residue corrige dans 44d00b9 (inert ordre / semaphore decode dead code) ; le diff de ce residu attend sa propre revue.
 
 
 ## SF-REL-0637 — decode PCM non borne + decodes/voix illimitees (P2)
@@ -523,7 +523,7 @@ N clics = N decodeAudioData paralleles ; polyphonie sans plafond.
 **Preuve** : node --check, npm test 39/39, dist rebuild, smoke +
 cdp-drive 12/12. Limite : le PCM peak pendant decodeAudioData reste
 non borne (impossible a connaitre avant decode).
-**Statut** : FIXED_PENDING_VALIDATION.
+**Statut** : FIXED_PENDING_VALIDATION — revue independante a trouve un residue corrige dans 44d00b9 (inert ordre / semaphore decode dead code) ; le diff de ce residu attend sa propre revue.
 
 
 ## SF-REL-0638 — checkMissing : scans concurrents desordonnes + pas de debounce (P2)
@@ -539,7 +539,7 @@ erreur checkFiles remontee a logErr au lieu de rejet silencieux.
 cdp-drive 12/12. Limite : file:check cote main n'a toujours pas de
 timeout par chemin (partage mort = batch lent, async donc pas de
 blocage main).
-**Statut** : FIXED_PENDING_VALIDATION.
+**Statut** : CLOSED — revue independante (VALIDÉ sans reserve) + npm test 39/39 + dist + smoke + cdp-drive PASS. Limite : UI non testee interactivement.
 
 ## Historique actif des régressions (Quality Gate V2 §9)
 
@@ -556,12 +556,12 @@ Règle : avant de toucher un composant, chercher ici + dans le tableau ses anoma
 
 | Statut | Nombre | Détail |
 |---|---|---|
-| CLOSED | 1 | SF-REL-0141 (9 conditions remplies — voir entrée) |
-| FIXED_PENDING_VALIDATION | 90 | cycle 1 : 45 · cycle 2 : 6 · cycle 3 : 31 · cycle 5 : 6 · 0612-0613 : 2 |
-| ACCEPTED | 24 | cycle 1 : 12 · cycle 2 : 1 · cycle 3 : 7 · cycle 5 : 4 |
+| CLOSED | 26 | 0141 + 0612-0619 + 0620-0630 + 0631-0635 + 0638 |
+| FIXED_PENDING_VALIDATION | 84 | cycles 1-5 historiques + 0636-0637 (residus en revue) |
+| ACCEPTED | 20 | cycles 1-5 |
 | INVESTIGATING | 1 | SF-REL-0611 crash AudioContext |
 | OPEN / BLOCKED | 0 | — |
-| **Total IDs définis** | **141** | IDs uniques, aucun doublon de définition |
+| **Total IDs définis** | **131** | IDs uniques ; trous de numerotation 0065-0099 et 0117-0119 (jamais attribues) |
 
 ### Doublons fonctionnels documentés (IDs distincts, même anomalie)
 
