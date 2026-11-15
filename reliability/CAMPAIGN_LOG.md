@@ -179,3 +179,11 @@ de main.js exige smoke test-env >= 60 s avec verification du log.
   sectioned:true}. Toute la chaine YouTube import fonctionne.
 - Reste non couvert : yt:download audio COMPLET (gros), MediaRecorder
   micro/loopback, Discord routing, sleep/wake, endurance, .dmp 0611.
+
+## V2 — SF-REL-0614/0615 corriges (15/11/2026)
+
+- Normalisation typeof des callbacks progression (downloadFile,
+  downloadVerified, runYt) + try/catch sur webContents.send des
+  callbacks ytprogress x3 et tapDead.
+- node --check OK, npm test 37/37, npm run dist OK, smoke runtime OK.
+- Statut : FIXED_PENDING_VALIDATION (revue independante requise).

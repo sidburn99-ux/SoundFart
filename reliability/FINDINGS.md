@@ -290,8 +290,12 @@ TypeError 0612 ; un callback truthy non-fonction passe tel quel et
 crash dans le handler 'data' (main.js:559). Aucun appelant actuel ne
 fait ça — protection fragile pour futurs appelants.
 **Revue** : indépendante (agent adverse), sévérité faible.
-**Fix proposé** : `typeof cb === 'function' ? cb : () => {}` aux 3 sites.
-**Statut** : OPEN.
+**Fix** : normalisation `typeof cb === 'function'` en tete de
+downloadFile/runYt/downloadVerified ; `webContents.send` des callbacks
+ytprogress (x3) + tapDead enveloppes de try/catch (main.js).
+**Preuve** : node --check, npm test 37/37, dist rebuild, smoke runtime
+OK (fenetre + contextes audio crees). Revue independante requise.
+**Statut** : FIXED_PENDING_VALIDATION.
 
 ## SF-REL-0615 — webContents.send dans callback progression : race destruction (P2)
 
@@ -301,7 +305,8 @@ webContents meurt entre check et send, exception dans handler 'data'
 -> uncaughtException -> mort du main. Fenêtre de course étroite.
 Même classe : sf:tapDead (1201) non wrappé.
 **Revue** : indépendante, sévérité faible-moyenne.
-**Statut** : OPEN.
+**Fix** : idem 0614 — try/catch autour des sends restants.
+**Statut** : FIXED_PENDING_VALIDATION (regroupe avec 0614).
 
 ## Historique actif des régressions (Quality Gate V2 §9)
 

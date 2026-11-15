@@ -419,7 +419,7 @@ async function ensureFfmpeg() {
       try {
         await downloadVerified({
           url: FFMPEG_URL, dest: zip, sumsUrl: FFMPEG_SUMS_URL, match: 'ffmpeg-' + FFMPEG_VERSION + '-essentials_build.zip',
-          onProgress: (f) => { if (win && !win.isDestroyed()) win.webContents.send('sf:ytprogress', Math.round(f * 100)); },
+          onProgress: (f) => { if (win && !win.isDestroyed()) { try { win.webContents.send('sf:ytprogress', Math.round(f * 100)); } catch {} } },
         });
         const dest = ffmpegDir();
         fs.mkdirSync(dest, { recursive: true });
@@ -533,7 +533,8 @@ const validHttpUrl = (u) => {
   try { const x = new URL(String(u)); return x.protocol === 'https:'; } catch { return false; }
 };
 
-function downloadFile(url, dest, onProgress = () => {}) {
+function downloadFile(url, dest, onProgress) {
+  if (typeof onProgress !== 'function') onProgress = () => {};
   return new Promise((resolve, reject) => {
     const get = (u, n) => {
       // Les redirections ne doivent jamais sortir du HTTPS (anti-downgrade MITM).
@@ -587,7 +588,7 @@ function sha256File(p) {
 // mismatch ou d'indisponibilite des sommes : le fichier est supprime et on refuse
 // de l'utiliser — jamais d'execution d'un binaire non verifie.
 async function downloadVerified({ url, dest, sumsUrl, match, onProgress }) {
-  await downloadFile(url, dest, onProgress || (() => {}));
+  await downloadFile(url, dest, onProgress);
   try {
     const sumsTmp = dest + '.sums';
     let sums;
@@ -648,7 +649,7 @@ async function doInstallYtDlp(version) {
   try {
     await downloadVerified({
       url: YTDLP_URL(version), dest: tmp, sumsUrl: YTDLP_SUMS_URL(version), match: 'yt-dlp.exe',
-      onProgress: (f) => { if (win && !win.isDestroyed()) win.webContents.send('sf:ytprogress', Math.round(f * 100)); },
+      onProgress: (f) => { if (win && !win.isDestroyed()) { try { win.webContents.send('sf:ytprogress', Math.round(f * 100)); } catch {} } },
     });
     fs.renameSync(tmp, ytdlpPath());
     fs.writeFileSync(ytdlpMetaFile(), JSON.stringify({ version, at: Date.now() }));
@@ -708,7 +709,8 @@ async function ensureYtDlp() {
   return ytdlpPromise;
 }
 
-function runYt(args, onProgress = () => {}) {
+function runYt(args, onProgress) {
+  if (typeof onProgress !== 'function') onProgress = () => {};
   return new Promise((resolve, reject) => {
     const p = trackChild(spawn(ytdlpPath(), args, { windowsHide: true }));
     let err = '', done = false;
@@ -744,7 +746,7 @@ function runYt(args, onProgress = () => {}) {
 const ytProgress = (f) => {
   if (!win || win.isDestroyed()) return;
   const p = (typeof f === 'number' && f === -1) ? -1 : Math.round(+f || 0);
-  win.webContents.send('sf:ytprogress', p);
+  try { win.webContents.send('sf:ytprogress', p); } catch {}
 };
 
 H('yt:ensure', async () => { await ensureYtDlp(); ytProgress(-1); return true; });
@@ -1198,7 +1200,7 @@ H('audio:tapStart', async () => {
       audioTapProc = null;
       tapPcmRem = Buffer.alloc(0);
       // Mort non volontaire (crash AudioTap / peripherique disparu) : on previent le renderer
-      if (!wasKilled && win && !win.isDestroyed()) win.webContents.send('sf:tapDead', true);
+      if (!wasKilled && win && !win.isDestroyed()) { try { win.webContents.send('sf:tapDead', true); } catch {} }
     });
     proc.on('error', () => {
       if (audioTapProc !== proc) return;
