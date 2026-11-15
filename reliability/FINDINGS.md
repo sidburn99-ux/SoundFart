@@ -525,6 +525,22 @@ cdp-drive 12/12. Limite : le PCM peak pendant decodeAudioData reste
 non borne (impossible a connaitre avant decode).
 **Statut** : FIXED_PENDING_VALIDATION.
 
+
+## SF-REL-0638 — checkMissing : scans concurrents desordonnes + pas de debounce (P2)
+
+**Symptome** : chaque focus relancait un scan complet (jusqu'a 5000
+chemins, lots de 200 sequentiels, pas de timeout) ; des appels
+concurrents (focus, import, ajout) pouvaient ecrire un 'missing'
+perime dans le desordre -> badges introuvable faux.
+**Fix** : jeton de generation checkSeq (seul le scan le plus recent
+applique son resultat) + debounce 400 ms sur le listener focus +
+erreur checkFiles remontee a logErr au lieu de rejet silencieux.
+**Preuve** : node --check, npm test 39/39, dist rebuild, smoke +
+cdp-drive 12/12. Limite : file:check cote main n'a toujours pas de
+timeout par chemin (partage mort = batch lent, async donc pas de
+blocage main).
+**Statut** : FIXED_PENDING_VALIDATION.
+
 ## Historique actif des régressions (Quality Gate V2 §9)
 
 | Régression | Origine | Introduite par | Prévention |
@@ -545,7 +561,7 @@ Règle : avant de toucher un composant, chercher ici + dans le tableau ses anoma
 | ACCEPTED | 24 | cycle 1 : 12 · cycle 2 : 1 · cycle 3 : 7 · cycle 5 : 4 |
 | INVESTIGATING | 1 | SF-REL-0611 crash AudioContext |
 | OPEN / BLOCKED | 0 | — |
-| **Total IDs définis** | **140** | IDs uniques, aucun doublon de définition |
+| **Total IDs définis** | **141** | IDs uniques, aucun doublon de définition |
 
 ### Doublons fonctionnels documentés (IDs distincts, même anomalie)
 

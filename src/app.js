@@ -1624,8 +1624,14 @@ async function relocateSound(s) {
   toast('Fichier retrouvé : ' + p);
 }
 
+let checkSeq = 0; // jeton de generation : des scans concurrents (focus,
+// import, ajout) ne doivent pas ecrire un 'missing' perime dans le desordre.
 async function checkMissing() {
-  const miss = new Set(await window.sf.checkFiles(cfg.sounds.map((s) => s.path)));
+  const seq = ++checkSeq;
+  let miss;
+  try { miss = new Set(await window.sf.checkFiles(cfg.sounds.map((s) => s.path))); }
+  catch (e) { logErr('checkMissing', e); return; } // erreur remontee, badges inchanges
+  if (seq !== checkSeq) return; // un scan plus recent a ete lance entre-temps
   const next = new Set(cfg.sounds.filter((s) => miss.has(s.path)).map((s) => s.id));
   const changed = next.size !== missing.size || [...next].some((i) => !missing.has(i));
   missing = next;
@@ -2288,7 +2294,14 @@ async function init() {
   });
   document.addEventListener('click', () => $('#ctxmenu').classList.remove('on'));
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') $('#ctxmenu').classList.remove('on'); });
-  window.addEventListener('focus', () => checkMissing().catch((e) => logErr('checkMissing', e)));
+  // Debounce : chaque focus relancait un scan complet de tous les chemins
+  // (jusqu'a 5000, par lots de 200 sequentiels) — un partage reseau
+  // injoignable gelait les badges sans timeout.
+  let checkTimer = null;
+  window.addEventListener('focus', () => {
+    clearTimeout(checkTimer);
+    checkTimer = setTimeout(() => checkMissing().catch((e) => logErr('checkMissing', e)), 400);
+  });
   $('#cableBannerBtn').addEventListener('click', () => showCableScreen());
   // devicechange peut spammer (casque, bluetooth...) : debounce puis re-resolution des peripheriques
   let devTimer = null;

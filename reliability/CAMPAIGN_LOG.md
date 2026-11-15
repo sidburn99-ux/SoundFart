@@ -316,3 +316,11 @@ npm test 39/39, dist rebuild, smoke + cdp-drive 12/12 PASS.
 - npm test 39/39, dist rebuild, smoke + cdp-drive 12/12 PASS.
 - Reste documente : PCM decode non borne, checkMissing sans debounce,
   renderGrid par frappe, polyphonie illimitee.
+
+## V2 — SF-REL-0638 checkMissing + etat campagne (15/11/2026)
+
+- checkSeq generation token + debounce focus 400 ms + erreur visible.
+- npm test 39/39, dist rebuild, smoke + cdp-drive 12/12 PASS.
+- FPV en attente de revue : 0631-0638 (8 anomalies renderer/config/
+  IPC). P2/P3 residuels documentes : renderGrid par frappe,
+  expandPaths sync quasi-mort, settings absent -> watchdog desarme.
