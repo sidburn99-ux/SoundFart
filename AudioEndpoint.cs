@@ -281,6 +281,18 @@ internal static class AudioEndpoint
             }
             catch (ArgumentException) { break; } // processus inexistant : parent mort
             catch { /* acces refuse/integrite : on continue a sonder, jamais restaurer sur un doute */ }
+            // Sortie anticipee : si le marqueur a ete consomme (restauration
+            // manuelle / will-quit) ou adopte par une autre instance pendant
+            // que le parent vit, ce guard n'a plus de role — sans ce test, N
+            // bascules accumulaient N guards jusqu'a la mort du parent.
+            try
+            {
+                if (!System.IO.File.Exists(restorePath)) return 0;
+                string j = System.IO.File.ReadAllText(restorePath);
+                var mo = System.Text.RegularExpressions.Regex.Match(j, "\"owner\"\\s*:\\s*(\\d+)");
+                if (mo.Success && mo.Groups[1].Value != pid.ToString()) return 0;
+            }
+            catch { /* lecture transitoire (rename .tmp->json en cours) : on continue */ }
             System.Threading.Thread.Sleep(500);
         }
         // owner : le guard ne restaure que si c'est bien SA bascule qui est enregistree

@@ -74,6 +74,57 @@ Cycle 1 — audits indépendants du 15/11/2026 (4 subagents : main.js, renderer,
 | SF-REL-0063 | CSP object-src | P4 | Confirmé | CLOSED | `object-src 'none'` ajouté. |
 | SF-REL-0064 | media:cut/yt:download destructure | P4 | Confirmé | CLOSED | Destructuration sans garde → TypeError brut sur null. Garde « options invalides ». |
 
+## Cycle 3 — audits renderer + main.js restants (2 subagents)
+
+### Renderer (src/app.js) — IDs renumerotes SF-REL-0100+ (collision agent)
+
+| ID | Gravité | Statut | Résumé |
+|---|---|---|---|
+| SF-REL-0100 | P0 | CLOSED | previewBtn undefined dans recorderModal → ReferenceError, enregistreur inaccessible (régression SF-REL-0039). Supprimé de la modale ; préécoute déplacée dans la modale résultat YouTube. |
+| SF-REL-0101 | P1 | CLOSED | settings.sort='__proto__' → sorts[__proto__] non callable → renderGrid crash (import/config éditée). Whitelist SORTS/CAT_SORTS + coercions favorite/categoryId. |
+| SF-REL-0102 | P1 | CLOSED | askDestDir détruisait la modale YouTube → annulation = perte état, échec téléchargement invisible. pickDir natif + dossier affiché ; modale survit, progression visible. |
+| SF-REL-0103 | P1 | CLOSED | Échec rec:save → status sur nœud détaché, prise perdue en silence. toast + uiLog. |
+| SF-REL-0104 | P2 | CLOSED | Source « audio du PC » silencieuse si worklet ET repli systemStream échouent → pcConnected guard avant rec.start. |
+| SF-REL-0105 | P2 | CLOSED | play() en vol après removeSound/relocateSound → vérif existence+path après getBuffer. |
+| SF-REL-0106 | P2 | CLOSED | importConfig ne purgeait pas bufCache (256 Mo orphelins) → clear bufCache/bytes/longWarned/inflight. |
+| SF-REL-0107 | P2 | CLOSED | Aucune borne sons/catégories ; file:check >5000 → checkMissing mort. Plafonds 5000/500 + import JSON ≤8 Mo. |
+| SF-REL-0108 | P3 | CLOSED | Erreurs file:read (trop gros/EACCES/ext) badgeaient « introuvable » → classification ENOENT vs noFileErr. |
+| SF-REL-0109 | P3 | CLOSED | Appliquer réglages avec énumération dégradée effaçait cableId/monId/micId → pickVal préserve si noEnum. |
+| SF-REL-0110 | P3 | CLOSED | normalizeAll écrasait s.norm=1 en cas d'échec → conserve le réglage. |
+| SF-REL-0111 | P3 | ACCEPTED | Cache bufCache jamais invalidé si fichier remplacé à chemin identique — nécessite stat IPC (mtime+size) ; documenté. |
+| SF-REL-0112 | P3 | CLOSED | loadWave O(échantillons) gelait l'UI sur fichiers très longs → stride interne ≤2000/bucket. |
+| SF-REL-0113 | P4 | CLOSED | F11/Ctrl+Shift+I absents des raccourcis réservés → ajoutés (normalizeCfg + findShortcutOwner). |
+| SF-REL-0114 | P4 | CLOSED | Overlay drag&drop figé sur drag annulé → reset dragend/blur. |
+| SF-REL-0115 | P4 | CLOSED | #addBtn pickFiles sans catch → try/catch + logErr. |
+| SF-REL-0116 | P4 | ACCEPTED | stopVoice : si onended ne tire pas (contexte suspendu), voix zombie jusqu'au watchdog dur+15 s — fenêtre acceptable, documenté. |
+
+### main.js / C# — IDs renumerotes SF-REL-0120+ (collision agent)
+
+| ID | Gravité | Statut | Résumé |
+|---|---|---|---|
+| SF-REL-0120 | P1 | CLOSED | Marqueur audio-restore.json avec owner=pid mort + micro déjà sur câble → pas de guard pour la nouvelle session → kill suivant = micro coincé. Adoption du marqueur (owner→pid courant) + respawn guard. |
+| SF-REL-0121 | P1 | CLOSED | Race will-quit vs bascule micro : set capture en vol après restoreMicNow → micro coincé sans marqueur. Flag `quitting` testé avant set et spawn guard. |
+| SF-REL-0122 | P2 | CLOSED | tapStop pendant tapStart (compile/spawn) → AudioTap orphelin. Epoch tapEpoch vérifié à 2 points. |
+| SF-REL-0123 | P2 | CLOSED | N guards AudioEndpoint accumulés (un par bascule). Guard sort si marqueur absent ou owner ≠ pid pendant l'attente. |
+| SF-REL-0124 | P2 | CLOSED | audio:restore/watchdog/autoSetup sans mutex commun → audio:restore passe par autoSetupChain ; fallback « non virtuel » exige name non vide (aussi dans chooseRestoreIds). |
+| SF-REL-0125 | P2 | CLOSED | audio-restore.json écrit non atomiquement → JSON tronqué irrécupérable. writeRestoreMarker .tmp+rename. |
+| SF-REL-0126 | P3 | ACCEPTED | Restauration synchrone will-quit ~15 s/étape — choix assumé (restauration prioritaire), documenté. |
+| SF-REL-0127 | P2 | CLOSED | yt:info via execFileP non tracké → execFileTracked (tué au will-quit). |
+| SF-REL-0128 | P3 | INVESTIGATING | Binaires/outils existants approuvés par existsSync sans sonde — corrompu = échecs en chaîne. Reste à faire : sonde --version bornée + self-heal. |
+| SF-REL-0129 | P3 | ACCEPTED | storageRoot accepte UNC/chemins absolus (choix utilisateur, NAS) — documenté. |
+| SF-REL-0130 | P2 | CLOSED | rec:save : wx protège le nom mais pas le contenu → .part + hardlink atomique (repli wx sur FS sans liens). |
+| SF-REL-0131 | P3 | CLOSED | media:cut : échec ffmpeg → placeholder 0 octet conservé → unlink en catch. |
+| SF-REL-0132 | P3 | CLOSED | .bak lu sans borne de taille → statSync ≤16 Mo aux 2 endroits. (Rotation .bak unique reste ACCEPTED.) |
+| SF-REL-0133 | P3 | CLOSED | watchdog relisait config.json sans borne → statSync ≤16 Mo. |
+| SF-REL-0134 | P3 | CLOSED | downloadVerified lisait les sommes sans borne → ≤256 Ko. |
+| SF-REL-0135 | P3 | CLOSED | yt:download « plus récent » pouvait prendre un .part/artefact → filtre extensions audio + exclusion .part/.ytdl + taille>0. |
+| SF-REL-0136 | P4 | ACCEPTED | Artefacts orphelins (.part yt-dlp, arbre ffmpeg, .tmp, .broken-*) non purgés — disque seulement, documenté. |
+| SF-REL-0137 | P4 | ACCEPTED | Doublon de SF-REL-0042 (backpressure PCM) — même conclusion. |
+| SF-REL-0138 | P4 | CLOSED | ui:log acceptait 
+ → injection de lignes de log → strip caractères de contrôle. |
+| SF-REL-0139 | P4 | ACCEPTED | file:read suit les symlinks, pas de realpath — renderer local de confiance, documenté. |
+| SF-REL-0140 | P3 | CLOSED | Fallback restauration : endpoint sans nom traité « non virtuel » → name requis (main.js + lib). |
+
 ## Synthèse cycle 1
 - 57 anomalies qualifiées : 44 CLOSED, 8 ACCEPTED (documentées), 0 INVESTIGATING ouvert — toutes les anomalies qualifiées sont tranchées.
 - P0 : 1 (SF-REL-0001) — introduit par la campagne précédente, attrapé par l'audit cycle 2. Preuve que la boucle fonctionne.

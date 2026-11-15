@@ -27,3 +27,29 @@
   doit deleguer a lib/.
 - Smoke 11:38 OK ; crash AudioContext exitCode -1 observe 11:35 sur run
   precedent = bug connu non resolu (AGENTS), rapporte honnetement.
+
+## 2026-11-15 — Cycle 3 (suite) : audits profonds renderer + main.js
+- 2 subagents : app.js cycle de vie + main.js zones restantes.
+- P0 supplementaire : SF-REL-0100 previewBtn (enregistreur casse) — 2e P0
+  de regression issus des corrections precedentes. La passe
+  contradictoire paie.
+- ~35 anomalies qualifiees -> FINDINGS.md (IDs 0100-0140).
+- Corrections : lifecycle micro (adoption marqueur, quitting, guard
+  early-exit, mutex), tap epoch, ecritures atomiques (marqueur, rec via
+  hardlink), bornes (config/.bak/sums/watchdog/import JSON), filtres
+  yt sortie, UI (modales YouTube/recorder, cache, bornes, raccourcis).
+- npm test 32/32, node --check OK, csc OK.
+- Reste INVESTIGATING : SF-REL-0128 (sonde integrite binaires).
+
+## 2026-11-15 — Cycle 3 (suite) : audits profonds renderer + main.js
+- 2 subagents : app.js cycle de vie + main.js zones restantes.
+- P0 supplementaire : SF-REL-0100 previewBtn (enregistreur casse) — 2e P0
+  de regression issus des corrections precedentes. La passe
+  contradictoire paie.
+- ~35 anomalies qualifiees -> FINDINGS.md (IDs 0100-0140).
+- Corrections : lifecycle micro (adoption marqueur, quitting, guard
+  early-exit, mutex), tap epoch, ecritures atomiques (marqueur, rec via
+  hardlink), bornes (config/.bak/sums/watchdog/import JSON), filtres
+  yt sortie, UI (modales YouTube/recorder, cache, bornes, raccourcis).
+- npm test 32/32, node --check OK, csc OK.
+- Reste INVESTIGATING : SF-REL-0128 (sonde integrite binaires).

@@ -193,7 +193,9 @@ ipcMain.on('menu:state', (e, s) => {
 });
 
 ipcMain.on('ui:log', (e, m) => {
-  if (fromApp(e)) log('[ui] ' + String(m).slice(0, 800));
+  // Strip les caracteres de controle : un message avec \r\n pourrait forger
+  // des entrees de log au format timestamp/niveau.
+  if (fromApp(e)) log('[ui] ' + String(m).replace(/[\r\n\x00-\x1f]/g, ' ').slice(0, 800));
 });
 
 H('desktop:source', async () => {
@@ -220,6 +222,9 @@ H('config:load', () => {
       // crash) : tenter le .bak AVANT migrateOldConfig — il contient la
       // derniere config validee, sinon la bibliotheque repart vide.
       try {
+        // Meme borne que config.json : un .bak geant pose a la main ne
+        // doit pas geler le demarrage.
+        if (fs.statSync(f + '.bak').size > 16 * 1024 * 1024) throw new Error('bak trop volumineux');
         const b = JSON.parse(fs.readFileSync(f + '.bak', 'utf-8'));
         if (b && typeof b === 'object' && !Array.isArray(b)) return b;
       } catch {}
@@ -237,6 +242,7 @@ H('config:load', () => {
     // la derniere config validee — mieux que de demarrer sur une bibliotheque vide.
     // Mais seulement si c'est bien un objet config (pas un tableau/string).
     try {
+      if (fs.statSync(f + '.bak').size > 16 * 1024 * 1024) throw new Error('bak trop volumineux');
       const b = JSON.parse(fs.readFileSync(f + '.bak', 'utf-8'));
       if (b && typeof b === 'object' && !Array.isArray(b)) return b;
     } catch {}
@@ -452,9 +458,16 @@ H('media:cut', async (_e, o) => {
     }
   }
   // protocol_whitelist file : ffmpeg ne doit pas suivre de playlist/URL externe
-  await execFileTracked(path.join(fdir, 'ffmpeg.exe'),
-    ['-y', '-protocol_whitelist', 'file', '-ss', String(Math.max(0, +start || 0)), '-i', String(input), '-t', String(Math.max(0.1, dur)), '-vn', '-c:a', 'libmp3lame', '-q:a', '4', out],
-    { timeout: 600000 });
+  try {
+    await execFileTracked(path.join(fdir, 'ffmpeg.exe'),
+      ['-y', '-protocol_whitelist', 'file', '-ss', String(Math.max(0, +start || 0)), '-i', String(input), '-t', String(Math.max(0.1, dur)), '-vn', '-c:a', 'libmp3lame', '-q:a', '4', out],
+      { timeout: 600000 });
+  } catch (fe) {
+    // Echec ffmpeg (timeout, kill, crash) : le placeholder wx laisserait un
+    // *_extrait.mp3 vide de 0 octet dans cuts/ — on le supprime.
+    try { await fs.promises.unlink(out); } catch {}
+    throw fe;
+  }
   // ffmpeg -y a ecrase le placeholder : un extrait « reussi » mais vide
   // (start au-dela de la fin, flux muet) ne doit pas etre retourne comme valide.
   try {
@@ -552,6 +565,9 @@ async function downloadVerified({ url, dest, sumsUrl, match, onProgress }) {
     let sums;
     try {
       await downloadFile(sumsUrl, sumsTmp);
+      // Les sommes font quelques Ko : un endpoint compromis renvoyant un
+      // gros fichier ne doit pas geler le main en readFileSync+split.
+      if (fs.statSync(sumsTmp).size > 256 * 1024) throw new Error('fichier de sommes trop volumineux');
       sums = fs.readFileSync(sumsTmp, 'utf-8');
     } finally {
       try { fs.unlinkSync(sumsTmp); } catch {} // .sums partiel : jamais de residu
@@ -713,7 +729,9 @@ H('yt:info', async (_e, url) => {
   if (!validHttpUrl(url) || !isYoutubeUrl(url)) throw new Error('URL YouTube invalide');
   await ensureYtDlp();
   ytProgress(-1);
-  const { stdout } = await execFileP(ytdlpPath(), ['--dump-single-json', '--no-playlist', '--no-warnings', url], { maxBuffer: 64 * 1024 * 1024, timeout: 120000, windowsHide: true });
+  // execFileTracked (et non execFileP) : le process est suivi dans
+  // childProcs et tue au will-quit — un yt:info en vol ne survit pas.
+  const { stdout } = await execFileTracked(ytdlpPath(), ['--dump-single-json', '--no-playlist', '--no-warnings', url], { maxBuffer: 64 * 1024 * 1024, timeout: 120000, windowsHide: true });
   let j;
   try { j = JSON.parse(stdout); }
   catch (e) { throw new Error('yt-dlp a renvoyé des métadonnées illisibles : ' + e.message); }
@@ -755,9 +773,18 @@ H('yt:download', async (_e, o) => {
       ytProgress(-1);
       await runYt([...baseArgs, '-f', 'bestaudio/best', url], ytProgress);
     }
-    const created = fs.readdirSync(impDir).filter((f) => f.startsWith('sf-' + tag + '-'));
+    // Ne retenir qu'un fichier audio FINAL : yt-dlp peut laisser des
+    // .part/.ytdl ou un artefact non audio avec le meme prefixe ; prendre
+    // « le plus recent » sans filtre pouvait retourner un fichier inutilisable.
+    const AUDIO_OUT = ['.mp3', '.m4a', '.webm', '.opus', '.ogg', '.wav', '.flac', '.aac'];
+    const created = fs.readdirSync(impDir).filter((f) => {
+      if (!f.startsWith('sf-' + tag + '-')) return false;
+      if (/\.(part|ytdl|temp)$/i.test(f)) return false;
+      return AUDIO_OUT.includes(path.extname(f).toLowerCase());
+    }).map((f) => path.join(impDir, f))
+      .filter((f) => { try { return fs.statSync(f).size > 0; } catch { return false; } });
     if (!created.length) throw new Error('Aucun fichier audio produit.');
-    const newest = created.map((f) => path.join(impDir, f)).sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)[0];
+    const newest = created.sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)[0];
     ytProgress(-1);
     return { path: newest, sectioned };
   };
@@ -776,6 +803,26 @@ H('yt:download', async (_e, o) => {
 // A la fermeture (ou au prochain lancement si crash) : le peripherique d'origine est restaure.
 // Discord doit utiliser « Defaut / OS default » comme peripherique d'entree pour suivre ce changement.
 const restoreFile = () => path.join(app.getPath('userData'), 'audio-restore.json');
+// Marqueur de bascule micro : ecriture atomique (.tmp + rename) — un crash
+// pendant writeFileSync laissait un JSON tronque que restoreMicNow ne
+// pouvait plus parser (et qui bloquait la recreation du marqueur).
+function readRestoreMarker() {
+  try { return JSON.parse(fs.readFileSync(restoreFile(), 'utf-8')); } catch { return null; }
+}
+function writeRestoreMarker(obj) {
+  const f = restoreFile();
+  const t = f + '.tmp';
+  fs.writeFileSync(t, JSON.stringify(obj));
+  fs.renameSync(t, f);
+}
+// Garde externe : si ce process meurt sans will-quit (kill, crash, BSOD),
+// le guard detache restaure le micro a la mort du parent.
+function spawnMicGuard(tool) {
+  try {
+    const g = spawn(tool, ['guard', String(process.pid), restoreFile()], { detached: true, stdio: 'ignore', windowsHide: true });
+    g.unref();
+  } catch (e) { log('[mic-guard] spawn: ' + e.message, 'warn'); }
+}
 const CSC_CANDIDATES = [
   'C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe',
   'C:\\Windows\\Microsoft.NET\\Framework\\v4.0.30319\\csc.exe',
@@ -911,6 +958,8 @@ H('sounds:seed', () => {
   } catch { return []; }
 });
 
+let quitting = false; // will-quit : interdit tout NOUVEAU set capture/guard apres le debut de la sortie
+let tapEpoch = 0; // incremente par tapStop : un tapStart en vol ne doit pas spawner apres un stop
 let autoSetupChain = Promise.resolve(); // serialise les bascules micro : 2 appels concurrents spawnaient des guards AudioEndpoint dupliques
 H('audio:autoSetup', (e, opts) => {
   const run = autoSetupChain.then(() => autoSetupImpl(opts));
@@ -933,11 +982,23 @@ async function autoSetupImpl({ enabled, cableLabel }) {
     let cur = parseGet(await audioExecP(tool, ['get', 'capture']));
     if (cur.console === target.id && cur.comm === target.id && cur.multi === target.id) {
       // Deja bascule : on ne touche a rien (restoreFile reste = marqueur de bascule active).
-      // Exception : marqueur absent (suppression externe) -> l'etat est
-      // incoherent (micro sur cable sans restauration prevue) : on le signale,
-      // on ne recree PAS de marqueur (un faux « precedent » restaurerait mal).
-      if (!fs.existsSync(restoreFile()))
+      // Sauf marqueur absent (suppression externe) -> etat incoherent, on signale
+      // sans recreer de marqueur (un faux « precedent » restaurerait mal).
+      const m = readRestoreMarker();
+      if (!m) {
         log('[mic] entrees deja sur le cable mais audio-restore.json absent — restauration finale non garantie', 'warn');
+      } else if (m.owner !== process.pid) {
+        // Marqueur d'une session MORTE (crash precedent, guard perdu) : sans
+        // adoption, will-quit restaurerait quand meme (restoreMicNow ignore
+        // owner) mais un kill suivant laisserait le micro coince — le guard
+        // ne surveillait que l'ancien pid. On adopte le marqueur (ids
+        // d'origine preserves) et on respawn un guard pour ce pid.
+        try {
+          writeRestoreMarker({ ...m, owner: process.pid });
+          spawnMicGuard(tool);
+          log('[mic] marqueur audio-restore adopte (owner precedent mort)');
+        } catch (e) { log('[mic] adoption marqueur: ' + e.message, 'warn'); }
+      }
       return { ok: true, changed: false, device: target.name };
     }
     // Pas encore sur le cable : recuperer un eventuel etat incoherent puis memoriser le vrai peripherique
@@ -946,16 +1007,11 @@ async function autoSetupImpl({ enabled, cableLabel }) {
       cur = parseGet(await audioExecP(tool, ['get', 'capture']));
     }
     if (!fs.existsSync(restoreFile())) {
-      fs.writeFileSync(restoreFile(), JSON.stringify({ console: cur.console, comm: cur.comm, multi: cur.multi, owner: process.pid }));
+      writeRestoreMarker({ console: cur.console, comm: cur.comm, multi: cur.multi, owner: process.pid });
     }
+    if (quitting) return { ok: false, err: 'quitte' };
     await audioExecP(tool, ['set', 'capture', target.id, target.id, target.id]);
-    // Garde externe : si ce process meurt sans will-quit (kill, crash, BSOD), le guard
-    // detache restaure le micro a la mort du parent. Sans effet si fermeture propre
-    // (restoreFile deja supprime) ou si un autre SoundFart a repris la bascule (owner).
-    try {
-      const g = spawn(tool, ['guard', String(process.pid), restoreFile()], { detached: true, stdio: 'ignore', windowsHide: true });
-      g.unref();
-    } catch (e) { log('[mic-guard] spawn: ' + e.message, 'warn'); }
+    if (!quitting) spawnMicGuard(tool);
     return { ok: true, changed: true, device: target.name };
   } catch (e) {
     return { ok: false, err: e.message };
@@ -967,8 +1023,14 @@ async function autoSetupImpl({ enabled, cableLabel }) {
 // Sinon, si une entree est coincee sur un peripherique virtuel (cable perdu,
 // guard mort), on la rebascule sur le defaut Windows non virtuel ou le 1er
 // peripherique non virtuel — filet de secours pour l'utilisateur.
-ipcMain.on('audio:restore', async (e) => {
+ipcMain.on('audio:restore', (e) => {
   if (!fromApp(e)) return;
+  // Serialise avec audio:autoSetup : deux 'set capture' AudioEndpoint ne
+  // doivent jamais courir en parallele (watchdog/a4e403a pattern).
+  const run = autoSetupChain.then(() => audioRestoreImpl());
+  autoSetupChain = run.catch(() => {});
+});
+async function audioRestoreImpl() {
   try {
     const tool = audioToolPath();
     if (!tool || !fs.existsSync(tool)) return;
@@ -986,7 +1048,9 @@ ipcMain.on('audio:restore', async (e) => {
     const cur = parseGet(await audioExecP(tool, ['get', 'capture']));
     const stuck = [cur.console, cur.comm, cur.multi].some((id) => id && VIRTUAL_RE_MAIN.test(nameOf(id)));
     if (!stuck) return;
-    const fb = eps.find((e) => e.flow === 'capture' && !VIRTUAL_RE_MAIN.test(e.name));
+    // Exiger un nom : un endpoint sans DeviceName passait VIRTUAL_RE.test('')
+    // et etait traite comme « non virtuel » (memes regles que chooseRestoreIds).
+    const fb = eps.find((e) => e.flow === 'capture' && e.name && !VIRTUAL_RE_MAIN.test(e.name));
     if (fb) {
       await audioExecP(tool, ['set', 'capture', fb.id, fb.id, fb.id]);
       // Etat force = nouvelle base : on consomme le marqueur pour ne pas
@@ -995,7 +1059,7 @@ ipcMain.on('audio:restore', async (e) => {
       log('[mic-restore] micro force hors peripherique virtuel -> ' + fb.name);
     }
   } catch (err) { log('[mic-restore] ' + (err && err.message), 'warn'); }
-});
+}
 
 H('shell:openDir', (_e, d) => {
   const p = d && path.isAbsolute(String(d)) ? String(d) : app.getPath('userData');
@@ -1032,9 +1096,11 @@ let tapStartBusy = false;
 
 H('audio:tapStart', async () => {
   if (tapStartBusy) return { ok: false, err: 'démarrage AudioTap déjà en cours' };
+  const ep = tapEpoch; // un tapStop pendant la compilation ne doit pas etre ignore
   tapStartBusy = true;
   try {
     const tool = await ensureAudioTap();
+    if (ep !== tapEpoch) return { ok: false, err: 'arrêt demandé pendant le démarrage' };
     if (!tool) return { ok: false, err: 'composant audio natif indisponible : ' + (lastToolErr || 'compilation impossible') };
     if (audioTapProc && audioTapProc.exitCode === null && !audioTapFailed) return { ok: true };
     // Un tapStop vient peut-etre de tuer l'ancien processus sans que 'exit' soit encore arrive :
@@ -1044,6 +1110,7 @@ H('audio:tapStart', async () => {
       while (audioTapKilling && Date.now() - t0 < 3000) await new Promise((r) => setTimeout(r, 200));
       if (audioTapKilling) return { ok: false, err: 'arrêt de l\'ancien AudioTap en cours' };
     }
+    if (ep !== tapEpoch) return { ok: false, err: 'arrêt demandé pendant le démarrage' };
     // args[1] = pid du parent : AudioTap s'auto-termine si ce process meurt (anti-orphelin).
     // Mode « pcm » : PCM float32 stereo 48 kHz sur stdout -> relaie au renderer pour
     // l'enregistreur, SANS passer par le cable (evite l'echo Discord dans le micro).
@@ -1098,6 +1165,7 @@ H('audio:tapStart', async () => {
 });
 
 H('audio:tapStop', () => {
+  tapEpoch++; // invalide tout tapStart en vol (compile/spawn a venir)
   if (audioTapProc) {
     audioTapKilling = true;
     try { audioTapProc.kill(); } catch { audioTapKilling = false; }
@@ -1130,6 +1198,9 @@ async function watchdogMic() {
   try {
     const tool = audioToolPath();
     if (!tool || !fs.existsSync(tool) || !fs.existsSync(restoreFile()) || !fs.existsSync(configFile())) return;
+    // Borne de lecture : config:load limite a 16 Mo, le watchdog doit
+    // appliquer la meme regle (un fichier bloque/geant gele le main).
+    try { if (fs.statSync(configFile()).size > 16 * 1024 * 1024) return; } catch { return; }
     const cfg = JSON.parse(fs.readFileSync(configFile(), 'utf-8'));
     const st = cfg && cfg.settings;
     if (!st || st.autoSwitchMic === false || st.watchdogMic === false) return;
@@ -1293,6 +1364,7 @@ process.on('uncaughtException', (e) => {
 });
 process.on('unhandledRejection', (e) => log('[fatal] unhandledRejection: ' + (e && e.stack || e), 'error'));
 app.on('will-quit', () => {
+  quitting = true; // barriere : ni autoSetup ni audio:restore ne doivent plus toucher aux peripheriques
   if (!isPrimary) return; // ne jamais restaurer le micro depuis une 2e instance
   globalShortcut.unregisterAll();
   // Tue les enfants encore vivants (yt-dlp/ffmpeg) : taskkill /T emporte
