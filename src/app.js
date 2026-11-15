@@ -1487,6 +1487,26 @@ function settingsModal() {
     normAllBtn.disabled = true;
     try { await normalizeAll(normProg); } finally { normAllBtn.disabled = false; }
   } });
+  // Reset volume+normalisation : confirmation en deux clics (pas de
+  // confirmBox : modal() fermerait le panneau des reglages).
+  let resetArmed = false, resetArmTimer = null;
+  const resetSoundsBtn = el('button', { class: 'ghost', text: 'Remettre volume et normalisation à zéro', title: 'Chaque son revient à volume 100 % et normalisation ×1. Découpes, fondus, favoris, catégories et raccourcis ne sont pas touchés.', onclick: () => {
+    if (!resetArmed) {
+      resetArmed = true;
+      resetSoundsBtn.textContent = 'Confirmer : tous les sons → 100 % / ×1';
+      resetSoundsBtn.classList.add('danger');
+      resetArmTimer = setTimeout(() => { resetArmed = false; resetSoundsBtn.textContent = 'Remettre volume et normalisation à zéro'; resetSoundsBtn.classList.remove('danger'); }, 4000);
+      return;
+    }
+    clearTimeout(resetArmTimer); resetArmed = false;
+    resetSoundsBtn.textContent = 'Remettre volume et normalisation à zéro';
+    resetSoundsBtn.classList.remove('danger');
+    let n = 0;
+    for (const snd of cfg.sounds) { if (snd.volume !== 100 || (snd.norm ?? 1) !== 1) { snd.volume = 100; snd.norm = 1; n++; } }
+    save(); renderAll();
+    toast(n ? `${n} son(s) remis à 100 % / ×1.` : 'Tous les sons sont déjà à 100 % / ×1.');
+  } });
+
   const exportBtn = el('button', { text: 'Exporter la configuration', onclick: exportConfig });
   const importBtn = el('button', { text: 'Importer une configuration', onclick: () => importConfig(closeSettings) });
 
@@ -1503,37 +1523,67 @@ function settingsModal() {
   } });
   const cableInstallBtn = el('button', { class: 'ghost', text: 'Installer VB-CABLE…', onclick: () => showCableScreen() });
 
-  const closeSettings = modal('Réglages audio', [
-    el('div', { class: 'hint', text: '★ = choix recommandé (bordure rose) · ⚠ = à éviter (bordure rouge). Pour faire fonctionner la soundboard : sortie Discord = CABLE Input, écoute locale = ton casque, micro = ton vrai micro.' }),
-    field('Sortie vers Discord (micro virtuel)', el('div', { class: 'row' }, cableSel, cableVerifyBtn, cableInstallBtn),
-      cablePresent() ? 'Choisis « CABLE Input ». Dans Discord, mets « CABLE Output » comme micro.'
-        : 'Aucun câble virtuel détecté : la diffusion vers Discord est désactivée. VB-CABLE est un pilote gratuit de VB-Audio, à installer toi-même (vb-audio.com/Cable), puis redémarre le PC.'),
-    field('Écoute locale (ton casque)', monSel, s.monId && s.monId === s.cableId
-      ? '⚠ Écoute locale = sortie Discord : tu risks une boucle/écho — choisis un périphérique différent.'
-      : 'Choisis ton casque/écoute habituelle — pas un périphérique « CABLE » (boucle).'),
-    field('Mon micro', micSel, 'Le vrai micro est ★ ; les périphériques virtuels (CABLE Output, Voicemeeter…) sont ⚠ déconseillés ici.'),
-    el('label', { class: 'check' }, mix,
-      el('span', { text: 'Mixer mon micro dans la sortie Discord (sinon tes potes n\'entendent que les sons). Décoche si tu utilises « Écouter ce périphérique » de Windows.' })),
-    field('Bascule micro automatique', el('label', { class: 'check' }, autoMic,
-      el('span', { text: 'Au lancement, SEUL le micro (entrée Windows) passe sur « CABLE Output » et revient à ton micro à la fermeture — tes sorties (Discord, écoute locale) restent sur tes périphériques habituels. Dans Discord, choisis « Défaut » comme périphérique d\'entrée pour que ça suive.' }))),
-    field('Surveillance micro automatique', el('label', { class: 'check' }, watchMic,
-      el('span', { text: 'Pendant que SoundFart tourne, revérifie régulièrement que l\'entrée micro est toujours sur le câble. Si tu changes le micro toi-même (ou qu\'une app le change), la surveillance se met en pause jusqu\'au prochain lancement.' }))),
-    field('Récupération micro', el('button', { class: 'ghost', text: 'Restaurer mon micro Windows', title: 'Force le retour de l\'entrée micro Windows sur ton vrai micro — à utiliser si elle est restée bloquée sur « CABLE Output » (crash, coupure).', onclick: () => {
-      window.sf.restoreMic();
-      toast('Restauration du micro demandée — si l\'entrée était bloquée sur le câble, elle revient sur ton micro.', 'info');
-    } }),
-      'À utiliser si ton micro Windows est resté bloqué sur « CABLE Output » (coupure, crash). Ramène l\'entrée sur ton vrai micro.'),
-    field('Dossier de stockage', el('div', { class: 'row' }, dirLbl, pickDirBtn, openDirBtn, resetDirBtn),
-      'Dossier par défaut des fichiers créés par SoundFart (imports YouTube, enregistrements, extraits MP3) — un choix de dossier est aussi proposé avant chaque ajout.'),
-    field('Raccourci global STOP', el('div', { class: 'row' }, stopBtn), stopHint),
-    field('Niveaux audio', el('div', {},
-      el('div', { class: 'row' },
-        el('span', { class: 'hint', text: 'Cible de pic :' }), normTargetIn, el('span', { class: 'hint', text: '%' }), normTestBtn, normAllBtn),
-      normProg),
-      'Ramène le pic de chaque son au niveau cible (les fichiers ne sont pas modifiés). Plus haut = plus fort, plus bas = plus doux — 89 % ≈ -1 dBFS.'),
-    field('Sauvegarde', el('div', { class: 'row' }, exportBtn, importBtn),
-      'La configuration contient les références aux fichiers, catégories, découpes, raccourcis et favoris — pas les fichiers audio eux-mêmes.'),
-  ], [
+  // Panneau organise en onglets : peripheriques / niveaux / stockage /
+  // general — chaque groupe reste focused et le panneau ne devient pas
+  // une page interminable.
+  const sections = [
+    { label: 'Périphériques', nodes: [
+      el('div', { class: 'hint', text: '★ = choix recommandé (bordure rose) · ⚠ = à éviter (bordure rouge). Pour faire fonctionner la soundboard : sortie Discord = CABLE Input, écoute locale = ton casque, micro = ton vrai micro.' }),
+      field('Sortie vers Discord (micro virtuel)', el('div', { class: 'row' }, cableSel, cableVerifyBtn, cableInstallBtn),
+        cablePresent() ? 'Choisis « CABLE Input ». Dans Discord, mets « CABLE Output » comme micro.'
+          : 'Aucun câble virtuel détecté : la diffusion vers Discord est désactivée. VB-CABLE est un pilote gratuit de VB-Audio, à installer toi-même (vb-audio.com/Cable), puis redémarre le PC.'),
+      field('Écoute locale (ton casque)', monSel, s.monId && s.monId === s.cableId
+        ? '⚠ Écoute locale = sortie Discord : tu risks une boucle/écho — choisis un périphérique différent.'
+        : 'Choisis ton casque/écoute habituelle — pas un périphérique « CABLE » (boucle).'),
+      field('Mon micro', micSel, 'Le vrai micro est ★ ; les périphériques virtuels (CABLE Output, Voicemeeter…) sont ⚠ déconseillés ici.'),
+      el('label', { class: 'check' }, mix,
+        el('span', { text: 'Mixer mon micro dans la sortie Discord (sinon tes potes n\'entendent que les sons). Décoche si tu utilises « Écouter ce périphérique » de Windows.' })),
+      field('Bascule micro automatique', el('label', { class: 'check' }, autoMic,
+        el('span', { text: 'Au lancement, SEUL le micro (entrée Windows) passe sur « CABLE Output » et revient à ton micro à la fermeture — tes sorties (Discord, écoute locale) restent sur tes périphériques habituels. Dans Discord, choisis « Défaut » comme périphérique d\'entrée pour que ça suive.' }))),
+      field('Surveillance micro automatique', el('label', { class: 'check' }, watchMic,
+        el('span', { text: 'Pendant que SoundFart tourne, revérifie régulièrement que l\'entrée micro est toujours sur le câble. Si tu changes le micro toi-même (ou qu\'une app le change), la surveillance se met en pause jusqu\'au prochain lancement.' }))),
+      field('Récupération micro', el('button', { class: 'ghost', text: 'Restaurer mon micro Windows', title: 'Force le retour de l\'entrée micro Windows sur ton vrai micro — à utiliser si elle est restée bloquée sur « CABLE Output » (crash, coupure).', onclick: () => {
+          window.sf.restoreMic();
+          toast('Restauration du micro demandée — si l\'entrée était bloquée sur le câble, elle revient sur ton micro.', 'info');
+        } }),
+        'À utiliser si ton micro Windows est resté bloqué sur « CABLE Output » (coupure, crash). Ramène l\'entrée sur ton vrai micro.'),
+    ]},
+    { label: 'Niveaux audio', nodes: [
+      field('Niveaux audio', el('div', {},
+        el('div', { class: 'row' },
+          el('span', { class: 'hint', text: 'Cible de pic :' }), normTargetIn, el('span', { class: 'hint', text: '%' }), normTestBtn, normAllBtn),
+        normProg),
+        'Ramène le pic de chaque son au niveau cible (les fichiers ne sont pas modifiés). Plus haut = plus fort, plus bas = plus doux — 89 % ≈ -1 dBFS.'),
+      field('Réinitialiser', el('div', { class: 'row' }, resetSoundsBtn),
+        'Remet chaque son à volume 100 % et normalisation ×1 (cliquer deux fois pour confirmer).'),
+    ]},
+    { label: 'Stockage', nodes: [
+      field('Dossier de stockage', el('div', { class: 'row' }, dirLbl, pickDirBtn, openDirBtn, resetDirBtn),
+        'Dossier par défaut des fichiers créés par SoundFart (imports YouTube, enregistrements, extraits MP3) — un choix de dossier est aussi proposé avant chaque ajout.'),
+    ]},
+    { label: 'Général', nodes: [
+      field('Raccourci global STOP', el('div', { class: 'row' }, stopBtn), stopHint),
+      field('Sauvegarde', el('div', { class: 'row' }, exportBtn, importBtn),
+        'La configuration contient les références aux fichiers, catégories, découpes, raccourcis et favoris — pas les fichiers audio eux-mêmes.'),
+    ]},
+  ];
+  const tabBar = el('div', { class: 'tabs' });
+  const tabBody = el('div', {});
+  const tabBtns = [];
+  function activateTab(btn, body) {
+    for (const t of tabBtns) { t.b.classList.toggle('on', t.b === btn); t.body.hidden = t.body !== body; }
+  }
+  for (const sec of sections) {
+    const body = el('div', {});
+    for (const n of sec.nodes) body.append(n);
+    body.hidden = true;
+    tabBody.append(body);
+    const b = el('button', { class: 'ghost', text: sec.label, onclick: () => activateTab(b, body) });
+    tabBar.append(b); tabBtns.push({ b, body });
+  }
+  if (tabBtns.length) activateTab(tabBtns[0].b, tabBtns[0].body);
+
+  const closeSettings = modal('Réglages audio', [tabBar, tabBody], [
     { label: 'Fermer', onclick: (c) => c() },
     { label: 'Appliquer', kind: 'primary', onclick: async (c) => {
       // Enumeration degradee ou liste vide (permission refusee, transitoire) :
