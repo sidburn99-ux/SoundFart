@@ -71,7 +71,7 @@ Sécurité : CSP stricte (`default-src 'self'`), `contextIsolation`, `sandbox`, 
 - Clic = lecture **immédiate** vers la sortie « Discord » configurée (ex. `CABLE Input`) **et** vers l'écoute locale (casque) — un `AudioContext` Web Audio par route.
 - **Limiteur** anti-saturation sur chaque sortie, volume maître global (0-100 %).
 - Volume par son (0-300 %), badge si ≠ 100 %.
-- **Normalisation** : par son (gain calculé sur le pic réel décodé — scan exhaustif de tous les échantillons — cible `settings.normTarget` en fraction du plein échelle, défaut 0,89 ≈ -1 dBFS, bornée 0,1–1,0, plafonnée à ×4, peut aussi atténuer un son trop fort) et « toute la bibliothèque » — non destructive, badge ⚖. Bouton « Tester » des réglages : bruit rose de 1,2 s calé sur la cible, écoute locale uniquement.
+- **Normalisation** : par son (gain calculé sur la **loudness intégrée** façon BS.1770 — pondération K via `OfflineAudioContext`, blocs 400 ms/100 ms, double porte -70/-10 LUFS — cible `settings.normLufs` en LUFS, défaut -18, bornée -40–0, plafonnée à ×4, peut aussi atténuer un son trop fort) et « toute la bibliothèque » — non destructive, badge ⚖. Bouton « Tester » des réglages : bruit rose de 1,2 s calé sur la cible LUFS, écoute locale uniquement.
 - **Bouton STOP** global + raccourci clavier global STOP configurable (défaut `Ctrl+Alt+S`), fonction même fenêtre minimisée.
 - Avertissements si la sortie Discord n'est pas un câble virtuel (évite l'écho micro).
 

@@ -57,7 +57,7 @@ const defaults = () => ({
   version: 1,
   sounds: [],
   categories: [],
-  settings: { cableId: '', cableLabel: '', monId: 'default', monLabel: '', micId: '', micLabel: '', micMix: false, master: 80, sort: 'added-desc', catSort: 'manual', stopShortcut: 'CommandOrControl+Alt+S', storageDir: '', autoSwitchMic: true, watchdogMic: true, groupByCat: true, normTarget: 0.89 },
+  settings: { cableId: '', cableLabel: '', monId: 'default', monLabel: '', micId: '', micLabel: '', micMix: false, master: 80, sort: 'added-desc', catSort: 'manual', stopShortcut: 'CommandOrControl+Alt+S', storageDir: '', autoSwitchMic: true, watchdogMic: true, groupByCat: true, normLufs: -18 },
   ui: { cat: 'all' },
 });
 
@@ -96,9 +96,11 @@ function normalizeCfg(saved) {
   if (typeof c.settings.stopShortcut !== 'string' || c.settings.stopShortcut.length > 64) c.settings.stopShortcut = defaults().settings.stopShortcut;
   if (typeof c.settings.sort !== 'string' || !SORTS.some(([v]) => v === c.settings.sort)) c.settings.sort = 'added-desc';
   if (typeof c.settings.catSort !== 'string' || !CAT_SORTS.some(([v]) => v === c.settings.catSort)) c.settings.catSort = 'manual';
-  // Cible de normalisation : fraction du plein echelle (0.89 ~ -1 dBFS).
-  const nt = +c.settings.normTarget;
-  c.settings.normTarget = (Number.isFinite(nt) && nt > 0 && nt <= 1) ? Math.min(1, Math.max(0.1, nt)) : defaults().settings.normTarget;
+  // Cible de loudness en LUFS (approx BS.1770) : -40 a 0, defaut -18.
+  // L'ancienne cle normTarget (fraction de pic) est abandonnee.
+  delete c.settings.normTarget;
+  const nl = +c.settings.normLufs;
+  c.settings.normLufs = (Number.isFinite(nl) && nl <= 0 && nl >= -40) ? nl : defaults().settings.normLufs;
   c.ui = mergeSub(defaults().ui, c.ui);
   if (!Array.isArray(c.sounds)) c.sounds = [];
   if (!Array.isArray(c.categories)) c.categories = [];
@@ -854,22 +856,69 @@ function logErr(tag, e) { console.error(tag, e); }
 const uiLog = (m) => { try { window.sf.uiLog(m); } catch {} };
 
 // ================================================================ normalisation
-// Pic reel : scan COMPLET de chaque canal — l'echantillonnage precedent
-// (max 200k points) ratait les pics etroits sur les longs fichiers et
-// sur-amplifiait le son (~+2,6 dB constate sur un extrait de 3 min).
+// Loudness integree facon BS.1770 : ponderation K (high-shelf ~+4 dB a
+// 1682 Hz puis high-pass ~38 Hz) rendue par OfflineAudioContext, puis
+// energies par blocs de 400 ms (pas 100 ms) avec double porte
+// (absolue -70 LUFS puis relative -10 LUFS). Contrairement a la norm
+// par pic, un extrait dense mais calme ressort plus fort qu'un pic
+// isole — c'est le volume PERCU disponible qu'on egale.
+async function measureLoudness(buf) {
+  const sr = buf.sampleRate, len = buf.length;
+  if (!len) return -Infinity;
+  const off = new OfflineAudioContext(buf.numberOfChannels, len, sr);
+  const src = off.createBufferSource();
+  src.buffer = buf;
+  const sh = off.createBiquadFilter();
+  sh.type = 'highshelf'; sh.frequency.value = 1681.974; sh.gain.value = 3.9998; sh.Q.value = 0.7072;
+  const hp = off.createBiquadFilter();
+  hp.type = 'highpass'; hp.frequency.value = 38.135; hp.Q.value = 0.5003;
+  src.connect(sh); sh.connect(hp); hp.connect(off.destination);
+  src.start();
+  const k = await off.startRendering();
+  const nch = k.numberOfChannels;
+  const data = [];
+  for (let c = 0; c < nch; c++) data.push(k.getChannelData(c));
+  const block = Math.max(1, Math.floor(0.4 * sr));
+  const hop = Math.max(1, Math.floor(0.1 * sr));
+  const blockZ = (st, en) => {
+    let z = 0;
+    for (let c = 0; c < nch; c++) {
+      const d = data[c]; let s = 0;
+      for (let i = st; i < en; i++) { const v = d[i]; s += v * v; }
+      z += s / (en - st);
+    }
+    return z;
+  };
+  const zs = [];
+  for (let st = 0; st + block <= len; st += hop) zs.push(blockZ(st, st + block));
+  // Fichier plus court qu'un bloc : une seule zone = tout le buffer,
+  // sinon les blips < 400 ms seraient consideres silencieux.
+  if (!zs.length) zs.push(blockZ(0, len));
+  // Portes en domaine energie : -70 LUFS absolue, puis -10 LUFS relative.
+  const absGate = Math.pow(10, (-70 + 0.691) / 10);
+  const gated = zs.filter((z) => z > absGate);
+  if (!gated.length) return -Infinity;
+  const zAbs = gated.reduce((a, b) => a + b, 0) / gated.length;
+  const relGate = zAbs * 0.1;
+  const fin = gated.filter((z) => z > relGate);
+  const zFin = fin.length ? fin.reduce((a, b) => a + b, 0) / fin.length : zAbs;
+  return -0.691 + 10 * Math.log10(zFin);
+}
+
+function normLufsTarget() {
+  const v = +cfg.settings.normLufs;
+  return (Number.isFinite(v) && v <= 0 && v >= -40) ? v : -18;
+}
+
+// Gain = ecart de loudness : +20log10(g) d'ecart en LUFS. Plafonne a x4
+// (un son trop faible n'est pas propulse indefiniment — le limiteur
+// aval absorbe les pics resultant d'une amplification forte).
 async function computeNorm(path) {
   const buf = await getBuffer(path);
-  let peak = 0;
-  for (let c = 0; c < buf.numberOfChannels; c++) {
-    const d = buf.getChannelData(c);
-    for (let i = 0; i < d.length; i++) {
-      const v = Math.abs(d[i]);
-      if (v > peak) peak = v;
-    }
-  }
-  if (!peak) return 1;
-  const target = Number.isFinite(+cfg.settings.normTarget) ? +cfg.settings.normTarget : 0.89;
-  return Math.min(4, Math.round((target / peak) * 100) / 100);
+  const L = await measureLoudness(buf);
+  if (!Number.isFinite(L)) return 1; // silence : pas de gain a calculer
+  const g = Math.pow(10, (normLufsTarget() - L) / 20);
+  return Math.min(4, Math.round(g * 100) / 100);
 }
 
 // host fourni (panneau reglages) : la progression s'affiche EN LIGNE et le
@@ -878,9 +927,9 @@ async function computeNorm(path) {
 async function normalizeAll(host) {
   const targets = cfg.sounds.filter((s) => !missing.has(s.id));
   if (!targets.length) { toast('Aucun son à normaliser.', 'warn'); return; }
-  const pct = Math.round((Number.isFinite(+cfg.settings.normTarget) ? +cfg.settings.normTarget : 0.89) * 100);
+  const lufs = normLufsTarget();
   const prog = el('div', { class: 'hint', text: `0 / ${targets.length}` });
-  const hint = el('div', { class: 'hint', text: `Le pic de chaque son est ramené à ${pct} % de l'amplitude max. Ça peut prendre un moment sur une grosse bibliothèque.` });
+  const hint = el('div', { class: 'hint', text: `La loudness de chaque son est ramenée à ${lufs} LUFS. Ça peut prendre un moment sur une grosse bibliothèque.` });
   let done = 0, failed = 0, cancelled = false, closeP = () => {};
   if (host) {
     const cancelBtn = el('button', { class: 'ghost', text: 'Annuler', onclick: () => { cancelled = true; cancelBtn.disabled = true; cancelBtn.textContent = 'Annulation…'; } });
@@ -901,41 +950,44 @@ async function normalizeAll(host) {
   toast(msg);
 }
 
-// Test audibility de la cible : 1,2 s de bruit rose (proche d'un programme
-// audio) dont le pic est mis exactement a settings.normTarget, joue UNIQUEMENT
-// sur l'ecoute locale — jamais sur le cable Discord (tes potes n'ont pas a
+// Test de la cible loudness : 1,2 s de bruit rose dont la loudness est
+// mesuree puis ramenee exactement au LUFS saisi — joue UNIQUEMENT sur
+// l'ecoute locale, jamais sur le cable Discord (tes potes n'ont pas a
 // entendre le test).
-function testNormTarget(targetPct) {
+async function testNormTarget(targetLufs) {
   const out = audio.mon;
   if (!out) { toast('Choisis d\'abord une « écoute locale » dans les réglages.', 'warn'); return; }
-  const ctx = out.ctx;
-  if (ctx.state !== 'running') ctx.resume().catch(() => {});
-  const target = Number.isFinite(+targetPct) ? Math.min(1, Math.max(0.1, +targetPct / 100)) : (Number.isFinite(+cfg.settings.normTarget) ? +cfg.settings.normTarget : 0.89);
-  const dur = 1.2, n = Math.floor(dur * ctx.sampleRate);
-  const buf = ctx.createBuffer(1, n, ctx.sampleRate);
-  const d = buf.getChannelData(0);
-  // Bruit rose approxime (filtre passe-bas) : plus representatif qu'une sine.
-  let b0 = 0, b1 = 0, b2 = 0, peak = 0;
-  for (let i = 0; i < n; i++) {
-    const w = Math.random() * 2 - 1;
-    b0 = 0.99765 * b0 + w * 0.0990460;
-    b1 = 0.96300 * b1 + w * 0.2965164;
-    b2 = 0.57000 * b2 + w * 1.0526913;
-    const pink = b0 + b1 + b2 + w * 0.1848;
-    const env = Math.min(1, i / (0.01 * ctx.sampleRate), (n - i) / (0.05 * ctx.sampleRate));
-    const v = pink * env;
-    d[i] = v;
-    const a = Math.abs(v);
-    if (a > peak) peak = a;
-  }
-  if (peak > 0) { const k = target / peak; for (let i = 0; i < n; i++) d[i] *= k; }
-  const src = ctx.createBufferSource();
-  src.buffer = buf;
-  const g = ctx.createGain();
-  src.connect(g); g.connect(out.bus);
-  src.onended = () => { try { g.disconnect(); } catch {} };
-  src.start();
-  toast('Test : pic à ' + Math.round(target * 100) + ' % — écouté sur « ' + (cfg.settings.monLabel || 'écoute locale') + ' » uniquement.');
+  try {
+    const ctx = out.ctx;
+    if (ctx.state !== 'running') ctx.resume().catch(() => {});
+    const target = Number.isFinite(+targetLufs) ? Math.min(0, Math.max(-40, +targetLufs)) : normLufsTarget();
+    const dur = 1.2, n = Math.floor(dur * ctx.sampleRate);
+    const buf = ctx.createBuffer(1, n, ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    // Bruit rose approxime (filtre passe-bas) : plus representatif qu'une sine.
+    let b0 = 0, b1 = 0, b2 = 0;
+    for (let i = 0; i < n; i++) {
+      const w = Math.random() * 2 - 1;
+      b0 = 0.99765 * b0 + w * 0.0990460;
+      b1 = 0.96300 * b1 + w * 0.2965164;
+      b2 = 0.57000 * b2 + w * 1.0526913;
+      const pink = b0 + b1 + b2 + w * 0.1848;
+      const env = Math.min(1, i / (0.01 * ctx.sampleRate), (n - i) / (0.05 * ctx.sampleRate));
+      d[i] = pink * env;
+    }
+    const L = await measureLoudness(buf);
+    if (Number.isFinite(L)) {
+      const k = Math.pow(10, (target - L) / 20);
+      for (let i = 0; i < n; i++) d[i] *= k;
+    }
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    const g = ctx.createGain();
+    src.connect(g); g.connect(out.bus);
+    src.onended = () => { try { g.disconnect(); } catch {} };
+    src.start();
+    toast('Test : loudness ' + target + ' LUFS — écouté sur « ' + (cfg.settings.monLabel || 'écoute locale') + ' » uniquement.');
+  } catch (e) { logErr('testNormTarget', e); toast('Test impossible : ' + (e && e.message || e), 'warn'); }
 }
 
 // ================================================================ utilitaires
@@ -1271,7 +1323,7 @@ function editSound(s) {
     field('Volume de ce son', el('div', { class: 'row' }, vol, volLbl),
       '100 % = volume d\'origine. Au-delà, le son est amplifié (un limiteur évite la saturation).'),
     field('Normalisation', el('div', { class: 'row' }, normBtn, normVal),
-      `Ajuste le volume du son vers la cible des réglages (${Math.round((Number.isFinite(+cfg.settings.normTarget) ? +cfg.settings.normTarget : 0.89) * 100)} %) sans toucher au fichier. ×1 = inchangé.`),
+      `Ajuste le volume du son vers la loudness cible des réglages (${normLufsTarget()} LUFS) sans toucher au fichier. ×1 = inchangé.`),
     field('Raccourci clavier global', el('div', { class: 'row' }, scBtn, scClear), scHint),
     field('Découper (début / fin) et fondus', el('div', { class: 'trim' }, canvas, pvTime, info, times),
       'Glisse les repères roses sur l\'onde ou tape les temps. Clique sur l\'onde pendant l\'écoute pour déplacer la tête de lecture. Le fichier original n\'est jamais modifié.'),
@@ -1475,15 +1527,15 @@ function settingsModal() {
   const autoMic = el('input', { type: 'checkbox', checked: !!s.autoSwitchMic, title: 'Au lancement, l\'entrée micro Windows bascule sur « CABLE Output » (pour que Discord capte ta voix via le câble), puis revient à ton vrai micro à la fermeture ou en cas de crash.' });
   const watchMic = el('input', { type: 'checkbox', checked: s.watchdogMic !== false, title: 'Revérifie périodiquement que l\'entrée micro est toujours sur le câble. Se met en pause pour la session si tu changes le micro toi-même (Discord inclus).' });
 
-  const normTargetIn = el('input', { type: 'number', min: 10, max: 100, step: 1, value: Math.round((Number.isFinite(+s.normTarget) ? +s.normTarget : 0.89) * 100), title: 'Niveau de crête cible en % de l\'amplitude maximale. 89 % ≈ -1 dBFS (défaut). Plus haut = sons plus forts (le limiteur en aval absorbe les dépassements), plus bas = plus doux.' });
-  const normTestBtn = el('button', { class: 'ghost', text: 'Tester', title: 'Joue 1,2 s de bruit dont le pic est exactement au niveau saisi — sur ton écoute locale uniquement (pas sur Discord).', onclick: () => testNormTarget(normTargetIn.value) });
+  const normTargetIn = el('input', { type: 'number', min: -30, max: 0, step: 1, value: normLufsTarget(), title: 'Loudness cible en LUFS (volume perçu, pas le pic). -18 LUFS par défaut. Plus haut (proche de 0) = plus fort, plus bas = plus doux. Le limiteur en aval absorbe les dépassements.' });
+  const normTestBtn = el('button', { class: 'ghost', text: 'Tester', title: 'Joue 1,2 s de bruit dont la loudness est exactement au niveau saisi — sur ton écoute locale uniquement (pas sur Discord).', onclick: () => testNormTarget(normTargetIn.value) });
   const normProg = el('div', {});
-  const normAllBtn = el('button', { text: 'Normaliser toute la bibliothèque', title: 'Ramène le pic de chaque son au niveau cible ci-contre (la valeur saisie est appliquée d\'abord). Les fichiers audio ne sont jamais modifiés — seul le gain en lecture change. La progression s\'affiche ici, le panneau reste ouvert.', onclick: async () => {
+  const normAllBtn = el('button', { text: 'Normaliser toute la bibliothèque', title: 'Ramène la loudness perçue de chaque son au niveau LUFS ci-contre (la valeur saisie est appliquée d\'abord). Les fichiers audio ne sont jamais modifiés — seul le gain en lecture change. La progression s\'affiche ici, le panneau reste ouvert.', onclick: async () => {
     // La valeur tapee est appliquee d'abord (le panneau ne se ferme plus) ;
     // la progression s'affiche en ligne dans normProg, « Appliquer » reste
     // utilisable pendant la normalisation.
-    const nt = +normTargetIn.value / 100;
-    if (Number.isFinite(nt) && nt > 0) { s.normTarget = Math.min(1, Math.max(0.1, nt)); save(); }
+    const nl = +normTargetIn.value;
+    if (Number.isFinite(nl) && nl <= 0) { s.normLufs = Math.max(-40, nl); save(); }
     normAllBtn.disabled = true;
     try { await normalizeAll(normProg); } finally { normAllBtn.disabled = false; }
   } });
@@ -1551,9 +1603,9 @@ function settingsModal() {
     { label: 'Niveaux audio', nodes: [
       field('Niveaux audio', el('div', {},
         el('div', { class: 'row' },
-          el('span', { class: 'hint', text: 'Cible de pic :' }), normTargetIn, el('span', { class: 'hint', text: '%' }), normTestBtn, normAllBtn),
+          el('span', { class: 'hint', text: 'Cible loudness (LUFS) :' }), normTargetIn, el('span', { class: 'hint', text: 'LUFS' }), normTestBtn, normAllBtn),
         normProg),
-        'Ramène le pic de chaque son au niveau cible (les fichiers ne sont pas modifiés). Plus haut = plus fort, plus bas = plus doux — 89 % ≈ -1 dBFS.'),
+        'Ramène la loudness perçue de chaque son au niveau cible (les fichiers ne sont pas modifiés). Plus haut = plus fort, plus bas = plus doux — -18 LUFS par défaut.'),
       field('Réinitialiser', el('div', { class: 'row' }, resetSoundsBtn),
         'Remet chaque son à volume 100 % et normalisation ×1 (cliquer deux fois pour confirmer).'),
     ]},
@@ -1605,8 +1657,8 @@ function settingsModal() {
       s.storageDir = s.storageDir || '';
       s.autoSwitchMic = autoMic.checked;
       s.watchdogMic = watchMic.checked;
-      const nt = +normTargetIn.value / 100;
-      s.normTarget = (Number.isFinite(nt) && nt > 0) ? Math.min(1, Math.max(0.1, nt)) : defaults().settings.normTarget;
+      const nl = +normTargetIn.value;
+      s.normLufs = (Number.isFinite(nl) && nl <= 0) ? Math.max(-40, nl) : defaults().settings.normLufs;
       save(); c();
       if (await applyAudio().catch((e) => { logErr('applyAudio', e); return false; })) toast('Réglages audio appliqués.');
       applyShortcuts();
