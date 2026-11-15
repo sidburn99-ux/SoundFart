@@ -169,3 +169,13 @@ de main.js exige smoke test-env >= 60 s avec verification du log.
   dry-fart_extrait.mp3 1996 o. media:cut FONCTIONNEL de bout en bout.
 - yt:info reel valide (Big Buck Bunny). Reste : yt:download complet,
   MediaRecorder micro/loopback, Discord routing, endurance, .dmp 0611.
+
+## V2 — yt:download sectionne reel valide (15/11/2026)
+
+- test/cdp-ytdl.js : ytDownload(BBB, 10-15s, sectioned) -> MP3 reel
+  sf-mwhuhtl48ml4-aqz-KE-bpKQ.mp3 (217 Ko) dans imports/.
+- Valide : ensureYtDlp+ensureFfmpeg, runYt --download-sections -x,
+  filtre artefacts .part/.ytdl, template unique, retour {path,
+  sectioned:true}. Toute la chaine YouTube import fonctionne.
+- Reste non couvert : yt:download audio COMPLET (gros), MediaRecorder
+  micro/loopback, Discord routing, sleep/wake, endurance, .dmp 0611.
