@@ -598,3 +598,12 @@ il ne reste que 0611 (.dmp), VALIDATION.md materiel, endurance.
 - pc seul : RMS 0,0168 / peak 0,19 — loopback systeme capture le son.
 - all : RMS 0,0216 / peak 0,26 — mix 3 sources sans erreur.
 - Micro seul : flux OK mais niveau non prouvable sans voix reelle.
+
+## 15/11/2026 (suite 15) — VALIDATION.md C fermeture modale enregistrement
+
+- Nouveau driver test/cdp-recclose.js : « Fermer » pendant une prise
+  micro de 3 s -> enregistreur s'arrete, askDestDir affiche, annulation
+  -> 0 son ajoute (29->29), AUCUN fichier dans recordings/ (verifie par
+  listing), reouverture recorderModal propre.
+- LED micro non verifiable par agent (niveau OS) — note dans
+  VALIDATION.md.
