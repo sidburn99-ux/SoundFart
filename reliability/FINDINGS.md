@@ -258,8 +258,7 @@ dans un event handler -> uncaughtException hors promise.
 rejoue apres rebuild -> yt-dlp.exe 23,5 Mo installe, « SHA-256 verifie »,
 process vivant (session s63cdb5). Le scenario exact du crash initial
 est desormais valide de bout en bout.
-**Statut** : CLOSED — cause corrigee + test cbOrNoop (38/38) + revue independante + runtime ytEnsure/media:cut/yt:info. Limite : le test couvre le helper, pas les call-sites main.js. — revue independante du diff
-encore requise pour CLOSED (diff trivial : 2 params par defaut).
+**Statut** : CLOSED — cause corrigee + test cbOrNoop (38/38) + revue independante + runtime ytEnsure/media:cut/yt:info. Limite : le test couvre le helper cbOrNoop, pas les call-sites main.js (non testables via npm test).
 
 
 ## SF-REL-0613 — ffmpeg inexploitable : tar GNU lit pas zip + « C: » distant (P0)
@@ -279,7 +278,7 @@ contrôle de version/capacité.
 **Preuve** : runtime CDP — media:cut complet : ffmpeg.zip 80 Mo SHA-256
 vérifié x3 sessions, extraction bsdtar OK, coupe réelle
 `cuts/dry-fart_extrait.mp3` (1996 o > seuil 1 Ko). npm test 37/37.
-**Statut** : CLOSED — meme dossier 0612 : correctif + test + revue independante + validation runtime. Voir SF-REL-0612 pour les limites. (revue indépendante requise).
+**Statut** : CLOSED — meme dossier 0612 : correctif + test + revue independante + validation runtime. Voir SF-REL-0612 pour les limites.
 
 
 ## SF-REL-0614 — callbacks progression non normalisés (null/truthy) (P3)
@@ -295,7 +294,7 @@ downloadFile/runYt/downloadVerified ; `webContents.send` des callbacks
 ytprogress (x3) + tapDead enveloppes de try/catch (main.js).
 **Preuve** : node --check, npm test 37/37, dist rebuild, smoke runtime
 OK (fenetre + contextes audio crees). Revue independante requise.
-**Statut** : CLOSED — meme dossier 0612 : correctif + test + revue independante + validation runtime. Voir SF-REL-0612 pour les limites..
+**Statut** : CLOSED — meme dossier 0612 : correctif + test + revue independante + validation runtime. Voir SF-REL-0612 pour les limites.
 
 ## SF-REL-0615 — webContents.send dans callback progression : race destruction (P2)
 
@@ -306,7 +305,7 @@ webContents meurt entre check et send, exception dans handler 'data'
 Même classe : sf:tapDead (1201) non wrappé.
 **Revue** : indépendante, sévérité faible-moyenne.
 **Fix** : idem 0614 — try/catch autour des sends restants.
-**Statut** : CLOSED — meme dossier 0612 : correctif + test + revue independante + validation runtime. Voir SF-REL-0612 pour les limites..
+**Statut** : CLOSED — meme dossier 0612 : correctif + test + revue independante + validation runtime. Voir SF-REL-0612 pour les limites.
 
 ## Historique actif des régressions (Quality Gate V2 §9)
 
