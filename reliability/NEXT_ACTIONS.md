@@ -21,3 +21,14 @@
    fiabilite (enregistrement, routage, debranchement peripherique).
 4. Bug connu : crash AudioContext exitCode -1/143 sporadique —
    surveiller, reproduire si possible, NE PAS masquer.
+
+## Reprise (fin cycle 4)
+1. `git log --oneline -3`, `npm test` (32 attendus), HEAD=4375793.
+2. Aucune anomalie INVESTIGATING ouverte ; reste ACCEPTED documentes
+   (SF-REL-0111, 0116, 0126, 0129, 0136, 0137, 0139 + anciens).investigation possible : SF-REL-0111 (invalidation cache par mtime via
+   IPC stat) — benefit faible, couteux.
+3. PRIORITE : validation manuelle VALIDATION.md — l'enregistreur et le
+   flux YouTube ont ete heavily modifies (modales, pickDir, pcConnected,
+   toast erreurs) et demandent un test UI reel.
+4. Bug connu : crash AudioContext -1/143 sporadique — 2 occurrences
+   smoke (11:18, 11:35, 11:38). Enquete forensique si possible.

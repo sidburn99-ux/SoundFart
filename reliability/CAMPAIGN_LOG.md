@@ -53,3 +53,7 @@
   yt sortie, UI (modales YouTube/recorder, cache, bornes, raccourcis).
 - npm test 32/32, node --check OK, csc OK.
 - Reste INVESTIGATING : SF-REL-0128 (sonde integrite binaires).
+- SF-REL-0128 CLOSED : toolSane + discardCorruptTool (sonde integrite).
+- Smoke 12:00 : adoption marqueur validee en reel (owner mort -> adopte,
+  guard respawne). Crash AudioContext -1 observe 11:38 = bug connu.
+- Plus aucune anomalie INVESTIGATING ouverte. ~95 anomalies qualifiees.
