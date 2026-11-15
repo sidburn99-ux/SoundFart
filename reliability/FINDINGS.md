@@ -456,6 +456,56 @@ survivre a la sortie.
 **Fix** : p.kill() systematique en filet apres killTree.
 **Statut** : CLOSED — revue independante + runtime (smoke, yt:info, yt:download, cdp-drive). p.kill filet quit. Limites documentees par entree..
 
+
+## SF-REL-0631 — enregistreur : sources restees live pendant choix dossier (P1)
+
+**Symptome** : modale fermee pendant la prise -> rec.onstop -> askDestDir
+choix dossier avec micro getUserMedia live, AudioTap.exe capturant, et
+AudioContext ouvert (plus personne ne stoppait).
+**Fix** : cleanup (streams/tapNode/audioTapStop/actx/boutons) deplace
+juste apres chunks=[] avant askDestDir + doublon idempotent dans catch.
+**Statut** : FIXED_PENDING_VALIDATION.
+
+## SF-REL-0632 — micSel : repli « premier non virtuel » mort (P2)
+
+**Symptome** : select sans option selected auto-prend devs[0] ->
+micSel.value truthy -> firstReal jamais applique -> « micro » pouvait
+enregistrer CABLE Output.
+**Fix** : flag micMatched a la creation des options.
+**Statut** : FIXED_PENDING_VALIDATION.
+
+## SF-REL-0633 — previewSound : lecture jamais produite (P2)
+
+**Symptome** : play() exigeait l'appartenance a cfg.sounds ; l'aperçu
+YouTube passait un id ephemere -> decode puis null silencieux.
+**Fix** : opts.preview exempte du check.
+**Statut** : FIXED_PENDING_VALIDATION.
+
+## SF-REL-0634 — plafond 5000 sons contourne par ajouts runtime (P2)
+
+**Symptome** : enregistrement/YouTube/seed poussaient sans borne ->
+file:check refusait le batch (badges geles) et config:save >5 Mo.
+**Fix** : pushSound() borne + toast ; seed borne aussi.
+**Statut** : FIXED_PENDING_VALIDATION.
+
+## SF-REL-0635 — raccourcis : STOP affame + alias non normalises (P2)
+
+**Symptome** : __stop__ ajoute en dernier -> jamais enregistre au-dela
+ de 200 raccourcis ; 'CommandOrControl+X' vs 'Ctrl+X' non detectes
+comme conflits (dedupe normalizeCfg + findShortcutOwner).
+**Fix** : __stop__ en premier ; normAccel() (commandorcontrol/cmdorctrl/
+control -> ctrl) dans findShortcutOwner et dedupe normalizeCfg.
+**Statut** : FIXED_PENDING_VALIDATION.
+
+## SF-REL-0636 — modales : pas de piege focus / file d'attente (P2, OPEN)
+
+**Symptome** : #app non inerte pendant modale -> Tab/Entree peuvent
+agir sur l'UI derriere (re-ouvrir modale = edits perdus) ; flux async
+(ytDownload termine, enregistrement) peuvent detruire une modale sans
+rapport ; ytModalAlive ecrit jamais lu.
+**Statut** : OPEN — correctif propose : inert sur #app + jeton de
+possession modale.
+
 ## Historique actif des régressions (Quality Gate V2 §9)
 
 | Régression | Origine | Introduite par | Prévention |
@@ -476,7 +526,7 @@ Règle : avant de toucher un composant, chercher ici + dans le tableau ses anoma
 | ACCEPTED | 24 | cycle 1 : 12 · cycle 2 : 1 · cycle 3 : 7 · cycle 5 : 4 |
 | INVESTIGATING | 1 | SF-REL-0611 crash AudioContext |
 | OPEN / BLOCKED | 0 | — |
-| **Total IDs définis** | **133** | IDs uniques, aucun doublon de définition |
+| **Total IDs définis** | **139** | IDs uniques, aucun doublon de définition |
 
 ### Doublons fonctionnels documentés (IDs distincts, même anomalie)
 

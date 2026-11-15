@@ -138,16 +138,18 @@ function normalizeCfg(saved) {
   // doublons que l'UI bloque mais qui sinon faisaient echouer register().
   {
     const seenSc = new Set();
-    const stopSc = (c.settings.stopShortcut || '').toLowerCase();
+    // normAccel : 'CommandOrControl+X' et 'Ctrl+X' sont le meme raccourci
+    // Windows — la dedupe brute les laissait passer toutes les deux.
+    const stopSc = normAccel(c.settings.stopShortcut);
     // Accesseurs reserves du menu applicatif : un import ne doit pas pouvoir
     // capter Ctrl+F/Ctrl+O/F12 en global et entrer en conflit avec le menu.
-    const RESERVED_SC = new Set(['ctrl+f', 'cmdorctrl+f', 'ctrl+o', 'cmdorctrl+o', 'f12', 'f11', 'ctrl+shift+i', 'cmdorctrl+shift+i']);
+    const RESERVED_SC = new Set(['ctrl+f', 'ctrl+o', 'f12', 'f11', 'ctrl+shift+i']);
     for (const s of c.sounds) {
       if (!s.shortcut) continue;
-      const a = s.shortcut.toLowerCase();
+      const a = normAccel(s.shortcut);
       if (seenSc.has(a) || a === stopSc || RESERVED_SC.has(a)) s.shortcut = null; else seenSc.add(a);
     }
-    if (RESERVED_SC.has((c.settings.stopShortcut || '').toLowerCase())) c.settings.stopShortcut = defaults().settings.stopShortcut;
+    if (RESERVED_SC.has(normAccel(c.settings.stopShortcut))) c.settings.stopShortcut = defaults().settings.stopShortcut;
   }
   // ids de categories dupliques : garde le premier (catById serait ambigu)
   {
@@ -603,7 +605,7 @@ function play(sound, opts = {}) {
     if (gen !== playGen) return null; // lecture percutee par un stop : ne pas demarrer la voix
     // Supprime/relocalise pendant le decode async : ne pas jouer un fantome
     // (ancien fichier) ni un son qui n'existe plus.
-    if (!cfg.sounds.some((x) => x.id === sound.id && x.path === sound.path)) return null;
+    if (!opts.preview && !cfg.sounds.some((x) => x.id === sound.id && x.path === sound.path)) return null;
     const vol = ((opts.volume ?? sound.volume) / 100) * (sound.norm ?? 1);
     const offset = Math.min(Math.max(0, opts.trimStart ?? sound.trimStart ?? 0), Math.max(0, buf.duration - 0.05));
     const endRaw = opts.trimEnd !== undefined ? opts.trimEnd : sound.trimEnd;
@@ -727,21 +729,34 @@ function buildAccel(e) {
   return parts.join('+');
 }
 
+// Normalise les alias d'accelerateurs : 'CommandOrControl+Alt+S' (defaut
+// stopShortcut) et 'Ctrl+Alt+S' (buildAccel) designent le meme raccourci
+// Windows — sans ca, findShortcutOwner ne detectait pas le conflit et le
+// son s'enregistrait avant le STOP (ou l'inverse).
+function normAccel(a) {
+  return (a || '').toLowerCase()
+    .replace(/commandorcontrol|cmdorctrl/g, 'ctrl')
+    .replace(/control/g, 'ctrl');
+}
+
 function findShortcutOwner(acc, excludeSoundId) {
-  const a = (acc || '').toLowerCase();
+  const a = normAccel(acc);
   if (!a) return null;
-  if ((cfg.settings.stopShortcut || '').toLowerCase() === a) return 'le raccourci STOP';
+  if (normAccel(cfg.settings.stopShortcut) === a) return 'le raccourci STOP';
   // Accelerateurs du menu applicatif (fenetre focus) : un raccourci de son
   // identique produirait une double action (jouer + ouvrir la dialog).
-  if (['ctrl+f', 'cmdorctrl+f', 'ctrl+o', 'cmdorctrl+o', 'f12', 'f11', 'ctrl+shift+i', 'cmdorctrl+shift+i'].includes(a)) return 'un raccourci du menu';
-  const s = cfg.sounds.find((x) => x.id !== excludeSoundId && (x.shortcut || '').toLowerCase() === a);
+  if (['ctrl+f', 'ctrl+o', 'f12', 'f11', 'ctrl+shift+i'].includes(a)) return 'un raccourci du menu';
+  const s = cfg.sounds.find((x) => x.id !== excludeSoundId && normAccel(x.shortcut) === a);
   return s ? '« ' + s.name + ' »' : null;
 }
 
 async function applyShortcuts() {
   const entries = [];
-  for (const s of cfg.sounds) if (s.shortcut) entries.push({ key: s.id, accel: s.shortcut });
+  // __stop__ EN PREMIER : shortcuts:apply ne retient que les 200 premiers
+  // -- un STOP ajoute en dernier n'etait jamais enregistre au-dela de
+  // 200 raccourcis de sons (et 'failed' affichait un '…' illisible).
   if (cfg.settings.stopShortcut) entries.push({ key: '__stop__', accel: cfg.settings.stopShortcut });
+  for (const s of cfg.sounds) if (s.shortcut) entries.push({ key: s.id, accel: s.shortcut });
   try {
     const failed = await window.sf.applyShortcuts(entries);
     if (failed && failed.length) toast('Raccourcis refusés par Windows : ' + failed.map(fmtAccel).join(', '), 'warn');
@@ -796,6 +811,13 @@ async function normalizeAll() {
 const { fmtTime, parseTs } = window.SFUtils;
 
 // ================================================================ donnees : sons & categories
+// Plafond unique pour tous les ajouts runtime (enregistrement, YouTube,
+// seed) : au-dela file:check refuse le batch et config:save depasse 5 Mo.
+function pushSound(s) {
+  if (cfg.sounds.length >= 5000) { toast('Limite de 5000 sons atteinte.', 'warn'); return false; }
+  cfg.sounds.push(s); return true;
+}
+
 async function addPaths(rawPaths) {
   const paths = await window.sf.expandPaths(rawPaths);
   if (!paths.length) { toast('Aucun fichier audio reconnu (mp3, wav, ogg, flac, m4a, aac, opus).', 'warn'); return; }
@@ -1619,12 +1641,18 @@ async function recorderModal() {
     if (offTapPcm) offTapPcm();
     throw e;
   }
+  // matched : sans ca, un select sans option « selected » prend devs[0]
+  // automatiquement et micSel.value est truthy -> le repli firstReal
+  // ci-dessous ne se declenchait JAMAIS (peut choisir CABLE Output).
+  let micMatched = false;
   const micSel = el('select', {}, devs.map((d) => {
-    const o = el('option', { value: d.deviceId, text: (VIRTUAL_RE.test(d.label || '') ? '⚠ ' : '') + (d.label || d.deviceId), selected: d.deviceId === cfg.settings.micId });
+    const sel = d.deviceId === cfg.settings.micId;
+    if (sel) micMatched = true;
+    const o = el('option', { value: d.deviceId, text: (VIRTUAL_RE.test(d.label || '') ? '⚠ ' : '') + (d.label || d.deviceId), selected: sel });
     o.dataset.label = d.label || d.deviceId;
     return o;
   }));
-  if (!micSel.value && devs.length) {
+  if (!micMatched && devs.length) {
     // Priorite a un peripherique non virtuel : devs[0] peut etre CABLE Output
     // -> le « micro » enregistrerait la soundboard au lieu de la voix.
     const firstReal = devs.find((d) => !VIRTUAL_RE.test(d.label || '')) || devs[0];
@@ -1833,6 +1861,17 @@ async function recorderModal() {
           const blob = new Blob(chunks, { type: recMime || mime || 'audio/webm' });
           const ab = await blob.arrayBuffer();
           chunks = []; // liberer les Blob sources : des centaines de Mo sinon
+          // Liberer TOUT de suite : si la modale a ete fermee pendant la
+          // prise, plus personne ne stoppait micro/AudioTap/AudioContext
+          // pendant que l'utilisateur choisissait le dossier (P1).
+          streams.forEach((st) => st.getTracks().forEach((t) => t.stop()));
+          stopLoose();
+          killTapNode();
+          window.sf.audioTapStop().catch(() => {});
+          if (actx) { actx.close().catch(() => {}); actx = null; }
+          rec = null;
+          startBtn.disabled = false; stopBtn.disabled = true;
+          micSel.disabled = micOn.disabled = pcOn.disabled = cableOn.disabled = false;
           const fname = nameIn.value.trim() || 'enregistrement';
           const destDir = await askDestDir();
           if (destDir === null) {
@@ -1861,7 +1900,7 @@ async function recorderModal() {
               recordedSound.categoryId = catSel.value || null;
               const added = recordedSound;
               recordedSound = null;
-              cfg.sounds.push(added);
+              if (!pushSound(added)) { c(); return; }
               save(); renderAll(); c();
               toast('Son ajouté à la bibliothèque.');
               setTimeout(() => editSound(added), 60);
@@ -1869,20 +1908,21 @@ async function recorderModal() {
           ]);
           }
         } catch (e) {
+          // Si l'echec precede le cleanup deplace (arrayBuffer), les sources
+          // sont encore live : on libere ici aussi (idempotent).
+          streams.forEach((st) => st.getTracks().forEach((t) => t.stop()));
+          stopLoose();
+          killTapNode();
+          window.sf.audioTapStop().catch(() => {});
+          if (actx) { actx.close().catch(() => {}); actx = null; }
+          rec = null;
+          startBtn.disabled = false; stopBtn.disabled = true;
           // Modale potentiellement detruite par askDestDir : toast, pas
           // status — sinon l'echec de sauvegarde etait invisible et la
           // prise (des centaines de Mo) perdue sans trace.
           toast('Sauvegarde impossible : ' + e.message, 'warn');
           window.sf.uiLog('rec:save: ' + (e && e.message));
         }
-        streams.forEach((st) => st.getTracks().forEach((t) => t.stop()));
-        stopLoose();
-        killTapNode();
-        window.sf.audioTapStop().catch(() => {});
-        if (actx) { actx.close().catch(() => {}); actx = null; }
-        rec = null;
-        startBtn.disabled = false; stopBtn.disabled = true;
-        micSel.disabled = micOn.disabled = pcOn.disabled = cableOn.disabled = false;
       };
       // modal ferme pendant la preparation : ne pas demarrer l'enregistrement
       if (dead) { deadCleanup(); if (actx) { actx.close().catch(() => {}); actx = null; } return; }
@@ -1958,7 +1998,7 @@ async function recorderModal() {
       if (!recordedSound) { toast('Enregistre d\'abord un son.', 'warn'); return; }
       recordedSound.name = nameIn.value.trim() || recordedSound.name;
       recordedSound.categoryId = catSel.value || null;
-      cfg.sounds.push(recordedSound);
+      if (!pushSound(recordedSound)) { c(); return; }
       save(); renderAll(); c();
       toast('Son ajouté à la bibliothèque.');
       setTimeout(() => editSound(recordedSound), 60);
@@ -2070,7 +2110,7 @@ function youtubeModal() {
             fadeIn: 0, fadeOut: 0,
           };
           dl = null;
-          cfg.sounds.push(s);
+          if (!pushSound(s)) { c(); return; }
           save(); renderAll(); c();
           toast('Son YouTube ajouté : ' + s.path);
         } },
@@ -2127,7 +2167,7 @@ function youtubeModal() {
         trimEnd: dl.sectioned ? null : dl.end,
         fadeIn: 0, fadeOut: 0,
       };
-      cfg.sounds.push(s);
+      if (!pushSound(s)) { c(); return; }
       save(); renderAll(); c();
       toast('Son YouTube ajouté : ' + dl.path);
     } },
@@ -2262,6 +2302,7 @@ async function init() {
     const defs = await window.sf.seedSounds();
     const now = Date.now();
     defs.forEach((d, i) => {
+      if (cfg.sounds.length >= 5000) return;
       cfg.sounds.push({
         id: uid(), name: d.name, path: d.path, categoryId: null,
         volume: 100, addedAt: now + i, plays: 0,

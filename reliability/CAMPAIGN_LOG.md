@@ -298,3 +298,13 @@ npm test 39/39, dist rebuild, smoke + yt:info reel OK.
 - Runtime : yt:download sectionne re-valide apres correctifs.
 - 0620-0630 -> CLOSED avec limites par entree (0625 deadline non
 testable en auto, 0627 getDisplayMedia non teste UI).
+
+## V2 — audit renderer app.js : 5 corriges, 1 ouvert (15/11/2026)
+
+Audit adverse zones non couvertes (bufCache, modales, raccourcis,
+playback) : P1 enregistreur (sources live pendant askDestDir) +
+4 P2 corriges (0631-0635). Documentes non corriges : 0636 modales
+sans piege focus ni file d'attente (P2), PCM decode non borne (P2),
+checkMissing sans debounce/timeout (P2), renderGrid par frappe (P2),
+polyphonie illimitée (P3).
+npm test 39/39, dist rebuild, smoke + cdp-drive 12/12 PASS.
