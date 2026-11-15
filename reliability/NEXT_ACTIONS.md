@@ -15,7 +15,11 @@
   Réserves mineures documentées dans FINDINGS (cycle 8). Affinage
   post-revue : SF-REL-0059 `noRetry` + unlink fichier >512 Mo.
 - **Branche** : `hardening/v2`, poussé sur GitHub SSH après chaque commit.
-- **Build** : `dist\SoundFart.exe` à jour. Smoke `--test-profile` actif ;
+- **SF-REL-0611 mitigation (74ab247)** : AudioContext partagé quand
+  `cableId===monId` — surface d'exposition au crash divisée par 2.
+  Mitigation, pas preuve de cause : INVESTIGATING maintenu.
+- **Build** : `dist\SoundFart.exe` à jour (rebuild post-74ab247).
+  Smoke `--test-profile` + cdp-stress long (200 iters) actifs ;
   aucun `.dmp` Crashpad à ce jour.
 - **Couverture runtime** : voir TEST_MATRIX.md — YouTube complet,
   micro/MediaRecorder, boucle VB-CABLE, AudioTap, rec:save, media:cut
