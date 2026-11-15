@@ -499,3 +499,14 @@ il ne reste que 0611 (.dmp), VALIDATION.md materiel, endurance.
   (shared:true), teardown null les deux, restore monId=default ->
   contextes distincts a nouveau. cdp-drive 12/12 PASS, npm test 40/40.
 - 0611 reste INVESTIGATING : mitigation de surface, pas preuve de cause.
+
+## 15/11/2026 (suite 5) — residus config/raccourcis corriges
+
+- SF-REL-0681 : watchdogMic desarme si settings absent de config.json
+  (UI affichait watchdog arme) -> settings non-objet traite comme {}.
+- SF-REL-0682 : Alt+F4 absent de RESERVED_SC -> ajout (fermeture OS
+  ne doit pas etre enregistrable en globalShortcut).
+- Verifications : node --check x2, npm test 40/40, npm run dist,
+  cdp-drive 12/12 PASS sur nouveau build, smoke+stress relances.
+- Registre : 168 anomalies — 142 CLOSED, 2 FPV (0681/0682), 23 ACCEPTED,
+  1 INVESTIGATING.

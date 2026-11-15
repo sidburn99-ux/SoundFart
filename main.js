@@ -1388,8 +1388,11 @@ async function watchdogMic() {
     // appliquer la meme regle (un fichier bloque/geant gele le main).
     try { if (fs.statSync(configFile()).size > 16 * 1024 * 1024) return; } catch { return; }
     const cfg = JSON.parse(fs.readFileSync(configFile(), 'utf-8'));
-    const st = cfg && cfg.settings;
-    if (!st || typeof st !== 'object' || Array.isArray(st)) return;
+    // settings absent = defauts du renderer (autoSwitchMic/watchdogMic
+    // actifs) : les traiter comme {} pour ne pas desarmer le watchdog
+    // alors que l'UI l'affiche arme (config editee main / ancienne).
+    const rawSt = cfg && cfg.settings;
+    const st = (rawSt && typeof rawSt === 'object' && !Array.isArray(rawSt)) ? rawSt : {};
     // Aligne sur normalizeCfg (app.js) : absent = defaut actif, present
     // doit etre strictement true — 'false' string ou autre desactive.
     if (st.autoSwitchMic !== undefined && st.autoSwitchMic !== true) return;

@@ -152,7 +152,9 @@ function normalizeCfg(saved) {
     const stopSc = normAccel(c.settings.stopShortcut);
     // Accesseurs reserves du menu applicatif : un import ne doit pas pouvoir
     // capter Ctrl+F/Ctrl+O/F12 en global et entrer en conflit avec le menu.
-    const RESERVED_SC = new Set(['ctrl+f', 'ctrl+o', 'f12', 'f11', 'ctrl+shift+i']);
+    // Alt+F4 = fermeture Windows geree par l'OS : qu'un raccourci global
+    // l'enregistre bloquerait la fermeture normale de la fenetre.
+    const RESERVED_SC = new Set(['ctrl+f', 'ctrl+o', 'f12', 'f11', 'ctrl+shift+i', 'alt+f4']);
     for (const s of c.sounds) {
       if (!s.shortcut) continue;
       const a = normAccel(s.shortcut);
