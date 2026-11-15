@@ -157,6 +157,10 @@ internal static class AudioTap
             // seraient lus decales (padding/24-in-32) -> audio corrompu.
             if (f.blockAlign != f.channels * (f.bits / 8))
                 throw new Exception("blockAlign " + f.blockAlign + " != " + f.channels + " canaux x " + (f.bits / 8) + " o");
+            // bytesPerSec alimente maxQueued (file render) : a 0 la file serait
+            // toujours jugee pleine -> tout le backlog jete -> silence sans erreur.
+            if (f.bytesPerSec < 1)
+                throw new Exception("format audio invalide (bytesPerSec " + f.bytesPerSec + ")");
             f.frameBytes = f.blockAlign;
             return f;
         }
@@ -286,11 +290,17 @@ internal static class AudioTap
                 if (v > 1f) v = 1f; else if (v < -1f) v = -1f; // clamp (somme downmix + float)
                 int p = off + c * dSamplesPer;
                 if (df.isFloat) Buffer.BlockCopy(BitConverter.GetBytes(v), 0, outBuf, p, 4);
-                else
+                else if (df.bits == 16) Buffer.BlockCopy(BitConverter.GetBytes((short)(v * 32767f)), 0, outBuf, p, 2);
+                else if (df.bits == 24)
                 {
-                    if (df.bits == 16) Buffer.BlockCopy(BitConverter.GetBytes((short)(v * 32767f)), 0, outBuf, p, 2);
-                    else Buffer.BlockCopy(BitConverter.GetBytes((int)(v * 2147483647f)), 0, outBuf, p, 4);
+                    // PCM 24 bits little-endian : stride 3 octets — ecrire un int32
+                    // ici debordait du buffer et corrompait le canal suivant.
+                    int s = (int)(v * 8388607f);
+                    outBuf[p] = (byte)s;
+                    outBuf[p + 1] = (byte)(s >> 8);
+                    outBuf[p + 2] = (byte)(s >> 16);
                 }
+                else Buffer.BlockCopy(BitConverter.GetBytes((int)(v * 2147483647f)), 0, outBuf, p, 4);
             }
         }
         return outBuf;
@@ -302,6 +312,7 @@ internal static class AudioTap
         // PROPVARIANT alloue en memoire non geree (24 o couvre x64 et x86) :
         // vt a l'offset 0, pointeur de la variante a l'offset 8.
         IntPtr pv = Marshal.AllocCoTaskMem(24);
+        Marshal.WriteInt16(pv, 0, 0); // vt = VT_EMPTY : si GetValue echoue, Clear est un no-op (AllocCoTaskMem ne zero pas)
         try
         {
             IPropertyStore store;
@@ -549,6 +560,12 @@ internal static class AudioTap
         long pcmPending = 0;
 
         timeBeginPeriod(1); // granularity 1 ms pour le Sleep(4) de la boucle
+        // StartTime du parent memorise AVANT la boucle : sinon un PID reutilise
+        // dans la fenetre avant le premier check (500 ms) devenait « parent »
+        // et l'anti-orphelin ne se declenchait jamais.
+        if (parentPid > 0)
+            try { parentStart = System.Diagnostics.Process.GetProcessById(parentPid).StartTime; }
+            catch { parentStart = DateTime.MinValue; } // parent deja mort : le check en boucle tranchera
         while (DateTime.UtcNow < deadline)
         {
             // Parent verifie par TEMPS (toutes les 500 ms), pas par nombre de paquets :
@@ -580,6 +597,7 @@ internal static class AudioTap
                     Console.Error.WriteLine("AudioTap: GetNextPacketSize echoue hr=0x" + pkHr.ToString("X8") + " (peripherique invalide ?)");
                     if (pkHr == unchecked((int)0x88890004)) { wantReconnect = true; break; } // AUDCLNT_E_DEVICE_INVALIDATED
                     try { src.Stop(); if (dst != null) dst.Stop(); } catch {}
+                    try { if (pcmOut != null) { pcmOut.Flush(); pcmOut.Dispose(); } } catch {}
                     timeEndPeriod(1); return 2;
                 }
                 if (pkHr != 0) { if (++sStreak > 500) break; if (sStreak == 100) Thread.Sleep(1); continue; } // code S_ : rien a faire ce tour
@@ -592,6 +610,7 @@ internal static class AudioTap
                     Console.Error.WriteLine("AudioTap: GetBuffer echoue hr=0x" + gbHr.ToString("X8") + " (peripherique invalide ?)");
                     if (gbHr == unchecked((int)0x88890004)) { wantReconnect = true; break; } // AUDCLNT_E_DEVICE_INVALIDATED
                     try { src.Stop(); if (dst != null) dst.Stop(); } catch {}
+                    try { if (pcmOut != null) { pcmOut.Flush(); pcmOut.Dispose(); } } catch {}
                     timeEndPeriod(1); return 2;
                 }
                 if (gbHr > 0) { if (++sStreak > 500) break; if (sStreak == 100) Thread.Sleep(1); continue; } // code S_ : pas de donnees a consommer ce tour
@@ -642,32 +661,6 @@ internal static class AudioTap
                 queue.Enqueue(outBuf);
                 queuedBytes += outBuf.Length;
             }
-            if (wantReconnect)
-            {
-                // AUDCLNT_E_DEVICE_INVALIDATED : peripherique retire ou service
-                // audio reinitalise. Arret propre, re-resolution complete (l'id
-                // a pu changer), re-init — borne a 5 tentatives, backoff
-                // 0.5 s -> 2.5 s ; au-dela, echec net (code 2 -> tapDead).
-                try { src.Stop(); if (dst != null) dst.Stop(); } catch {}
-                TapCtx t2 = null;
-                for (int att = 0; att < 5 && t2 == null; att++)
-                {
-                    Thread.Sleep(500 * (att + 1));
-                    try { t2 = InitTap(en, cableName, srcName, pcmMode); }
-                    catch (Exception rex) { Console.Error.WriteLine("AudioTap: reconnexion " + (att + 1) + "/5: " + rex.Message); }
-                }
-                if (t2 == null)
-                {
-                    Console.Error.WriteLine("AudioTap: reconnexion impossible apres 5 tentatives");
-                    timeEndPeriod(1); return 2;
-                }
-                src = t2.src; dst = t2.dst; cap = t2.cap; ren = t2.ren;
-                sf = t2.sf; df = t2.df; convert = t2.convert; dstBufFrames = t2.dstBufFrames;
-                queue.Clear(); queuedBytes = 0; // buffers de l'ancien format : invalides
-                Console.Error.WriteLine("AudioTap: reconnecte -> " + sf.channels + "ch " + sf.rate + "Hz " + sf.bits + "b -> "
-                    + df.channels + "ch " + df.rate + "Hz " + df.bits + "b" + (convert ? " (conversion)" : " (copie)"));
-                continue; // boucle externe : re-drain avec les nouveaux clients
-            }
             if (parentDead) break;
 
             uint padNow;
@@ -702,7 +695,8 @@ internal static class AudioTap
                             Console.Error.WriteLine("AudioTap: render GetBuffer echoue hr=0x" + rgHr.ToString("X8"));
                             if (rgHr == unchecked((int)0x88890004)) { wantReconnect = true; break; } // AUDCLNT_E_DEVICE_INVALIDATED
                             try { src.Stop(); dst.Stop(); } catch {}
-                            timeEndPeriod(1); return 2;
+                            try { if (pcmOut != null) { pcmOut.Flush(); pcmOut.Dispose(); } } catch {}
+                    timeEndPeriod(1); return 2;
                         }
                         if (rgHr > 0) break; // code S_ : pas de buffer ce tour (symetrique au cote capture)
                         if (takeBytes == head.Length)
@@ -720,11 +714,48 @@ internal static class AudioTap
                             queue.Enqueue(rest);
                             queuedBytes -= takeBytes;
                         }
-                        ren.ReleaseBuffer((uint)takeFrames, 0);
+                        int rb2Hr = ren.ReleaseBuffer((uint)takeFrames, 0);
+                        if (rb2Hr < 0) Console.Error.WriteLine("AudioTap: render ReleaseBuffer echoue hr=0x" + rb2Hr.ToString("X8"));
                         statWritten += takeBytes; // octets, comme le mode pcm (statWritten += outBuf.Length)
                         spaceBytes -= takeBytes;
                     }
                 }
+            }
+
+            // Reconnexion DEVICE_INVALIDATED — placée APRES le bloc render :
+            // wantReconnect peut etre pose cote capture (GetNextPacketSize/
+            // GetBuffer) OU cote render (ren.GetBuffer). Le test precedent
+            // etait AVANT la section render : un flag pose la n'etait jamais
+            // consomme (reinitialise a chaque iteration) -> invalidation
+            // render jamais geree. La file residuelle est d'abord drainee
+            // vers le render (endpoint distinct, souvent encore vivant),
+            // puis on reconnecte les DEUX clients.
+            if (wantReconnect)
+            {
+                // AUDCLNT_E_DEVICE_INVALIDATED : peripherique retire ou service
+                // audio reinitalise. Arret propre, re-resolution complete (l'id
+                // a pu changer), re-init — borne a 5 tentatives, backoff
+                // 0.5 s -> 2.5 s ; au-dela, echec net (code 2 -> tapDead).
+                try { src.Stop(); if (dst != null) dst.Stop(); } catch {}
+                TapCtx t2 = null;
+                for (int att = 0; att < 5 && t2 == null; att++)
+                {
+                    Thread.Sleep(500 * (att + 1));
+                    try { t2 = InitTap(en, cableName, srcName, pcmMode); }
+                    catch (Exception rex) { Console.Error.WriteLine("AudioTap: reconnexion " + (att + 1) + "/5: " + rex.Message); }
+                }
+                if (t2 == null)
+                {
+                    Console.Error.WriteLine("AudioTap: reconnexion impossible apres 5 tentatives");
+                    try { if (pcmOut != null) { pcmOut.Flush(); pcmOut.Dispose(); } } catch {}
+                    timeEndPeriod(1); return 2;
+                }
+                src = t2.src; dst = t2.dst; cap = t2.cap; ren = t2.ren;
+                sf = t2.sf; df = t2.df; convert = t2.convert; dstBufFrames = t2.dstBufFrames;
+                queue.Clear(); queuedBytes = 0; // buffers de l'ancien format : invalides
+                Console.Error.WriteLine("AudioTap: reconnecte -> " + sf.channels + "ch " + sf.rate + "Hz " + sf.bits + "b -> "
+                    + df.channels + "ch " + df.rate + "Hz " + df.bits + "b" + (convert ? " (conversion)" : " (copie)"));
+                continue; // boucle externe : re-drain avec les nouveaux clients
             }
 
             Thread.Sleep(4);
@@ -741,12 +772,16 @@ internal static class AudioTap
     {
         try
         {
+            // stderr en UTF-8 : les noms de peripheriques non-ASCII (accents)
+            // etaient corrompus selon la page de code OEM de la console.
+            Console.OutputEncoding = new System.Text.UTF8Encoding(false);
             string cable = args.Length > 0 ? args[0] : "CABLE Input";
             int parentPid = 0;
             if (args.Length > 1) int.TryParse(args[1], out parentPid); // non numerique -> 0 = check desactive
             double seconds = 0;
-            if (args.Length > 2 && !double.TryParse(args[2], System.Globalization.NumberStyles.Float,
-                System.Globalization.CultureInfo.InvariantCulture, out seconds))
+            if (args.Length > 2 && (!double.TryParse(args[2], System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out seconds)
+                || double.IsNaN(seconds) || double.IsInfinity(seconds)))
                 throw new Exception("argument « secondes » invalide : " + args[2]);
             string srcName = args.Length > 3 && args[3].Length > 0 ? args[3] : null;
             bool pcmMode = args.Length > 4 && args[4] == "pcm";

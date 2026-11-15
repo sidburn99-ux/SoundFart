@@ -98,6 +98,7 @@ internal static class AudioEndpoint
             if (dev.OpenPropertyStore(STGM_READ, out store) != 0) return "";
             PropertyKey key = FriendlyNameKey;
             IntPtr pv = Marshal.AllocCoTaskMem(24); // PROPVARIANT : 24 o couvre x64/x86
+            Marshal.WriteInt16(pv, 0, 0); // vt = VT_EMPTY : si GetValue echoue, Clear est un no-op sur une variante vide (AllocCoTaskMem ne zero pas)
             string name = "";
             try
             {
@@ -130,9 +131,9 @@ internal static class AudioEndpoint
             {
                 IMMDevice dev;
                 if (coll.Item(i, out dev) != 0) continue;
-                string id, name;
-                dev.GetId(out id);
-                name = DeviceName(dev);
+                string id;
+                if (dev.GetId(out id) != 0 || string.IsNullOrEmpty(id)) continue; // endpoint sans id : fantome, inutilisable pour la restauration
+                string name = DeviceName(dev);
                 Console.WriteLine((flow == DataFlow.Render ? "render" : "capture") + "|" + id + "|" + name.Replace("\n", " ").Replace("|", "/"));
             }
             // Pas de Marshal.Release(pColl) : GetObjectForIUnknown a cree un RCW
@@ -147,7 +148,10 @@ internal static class AudioEndpoint
             IMMDevice dev;
             string id = "";
             if (en.GetDefaultAudioEndpoint(flow, role, out dev) == 0 && dev != null)
-                dev.GetId(out id);
+            {
+                int gidHr = dev.GetId(out id);
+                if (gidHr != 0) Console.Error.WriteLine("get: GetId role " + role + " hr=0x" + gidHr.ToString("X8"));
+            }
             Console.WriteLine((role == Role.Console ? "console" : role == Role.Multimedia ? "multi" : "comm") + "=" + id);
         }
     }
@@ -219,7 +223,8 @@ internal static class AudioEndpoint
             {
                 IMMDevice d;
                 if (coll.Item(i, out d) != 0) continue;
-                string id; d.GetId(out id);
+                string id;
+                if (d.GetId(out id) != 0 || string.IsNullOrEmpty(id)) continue;
                 caps.Add(new KeyValuePair<string, string>(id, DeviceName(d)));
             }
             var g = new string[3];
@@ -247,7 +252,8 @@ internal static class AudioEndpoint
                 // une restauration incomplete pourra etre retentee.
                 return 1;
             }
-            try { System.IO.File.Delete(restorePath); } catch {}
+            try { System.IO.File.Delete(restorePath); }
+            catch (Exception dex) { try { Console.Error.WriteLine("restore: suppression marqueur: " + dex.Message); } catch {} }
             return 0;
         }
         catch (Exception ex)
@@ -268,10 +274,13 @@ internal static class AudioEndpoint
         {
             try
             {
-                var proc = System.Diagnostics.Process.GetProcessById(pid);
-                if (proc.StartTime != startTime) return 0; // PID reutilise : ce n'est plus notre parent
+                using (var proc = System.Diagnostics.Process.GetProcessById(pid))
+                {
+                    if (proc.StartTime != startTime) return 0; // PID reutilise : ce n'est plus notre parent
+                }
             }
-            catch { break; }
+            catch (ArgumentException) { break; } // processus inexistant : parent mort
+            catch { /* acces refuse/integrite : on continue a sonder, jamais restaurer sur un doute */ }
             System.Threading.Thread.Sleep(500);
         }
         // owner : le guard ne restaure que si c'est bien SA bascule qui est enregistree
@@ -300,7 +309,10 @@ internal static class AudioEndpoint
             IMMDevice dev;
             string id = "";
             if (en.GetDefaultAudioEndpoint(flow, role, out dev) == 0 && dev != null)
-                dev.GetId(out id);
+            {
+                int gidHr = dev.GetId(out id);
+                if (gidHr != 0) id = ""; // id invalide : ne pas restaurer sur un id errone
+            }
             ids[i++] = id;
         }
     }
