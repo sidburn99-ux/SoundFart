@@ -51,13 +51,20 @@ let lastSizeCheck = 0;
 // un renderer buggé spamant console.error ecrivait des Go/min sur disque et
 // bloquait le main via appendFileSync synchrone (SF-REL-0651).
 const UI_LOG_MAX_PER_SEC = 30;
-let uiLogWinStart = 0, uiLogWinCount = 0, uiLogDropped = 0;
-function uiLogAllowed() {
+const uiLogState = { ui: { start: 0, count: 0 }, page: { start: 0, count: 0 } };
+let uiLogDropped = 0, uiLogDropLogAt = 0;
+function uiLogAllowed(ch) {
   const now = Date.now();
-  if (now - uiLogWinStart >= 1000) { uiLogWinStart = now; uiLogWinCount = 0; }
-  if (++uiLogWinCount <= UI_LOG_MAX_PER_SEC) return true;
+  const st = uiLogState[ch] || (uiLogState[ch] = { start: 0, count: 0 });
+  if (now - st.start >= 1000) { st.start = now; st.count = 0; }
+  if (++st.count <= UI_LOG_MAX_PER_SEC) return true;
   uiLogDropped++;
-  if (uiLogDropped % 100 === 0) log('[log] ' + uiLogDropped + ' messages renderer ignores (spam)', 'warn');
+  // Resume cadence : au plus 1 warn/seconde meme sous spam massif — sinon
+  // le warn de resume lui-meme ecrivait ~50 lignes/s (taux proportionnel).
+  if (uiLogDropped % 100 === 0 && now - uiLogDropLogAt > 1000) {
+    uiLogDropLogAt = now;
+    log('[log] ' + uiLogDropped + ' messages renderer ignores (spam)', 'warn');
+  }
   return false;
 }
 function log(msg, lvl = 'info') {
@@ -82,11 +89,16 @@ function log(msg, lvl = 'info') {
           const fd = fs.openSync(f, 'r');
           try {
             const tail = Buffer.alloc(keep);
-            fs.readSync(fd, tail, 0, keep, size - keep);
-            fs.writeFileSync(f, tail);
+            // bytesRead : si le fichier a retreci entre statSync et readSync,
+            // on ne reecrit PAS (sinon des zeros tronqueraient le log).
+            const n = fs.readSync(fd, tail, 0, keep, size - keep);
+            if (n === keep) fs.writeFileSync(f, tail);
           } finally { fs.closeSync(fd); }
         }
-      } catch (e) { log('[log] trim echoue: ' + (e && e.message), 'warn'); }
+      } catch (e) {
+        // ENOENT = log pas encore cree : rien a rogner, pas un warn.
+        if (e && e.code !== 'ENOENT') log('[log] trim echoue: ' + (e && e.message), 'warn');
+      }
     }
     fs.appendFileSync(f, new Date().toISOString() + ' [' + lvl + '] [s' + SESSION_ID + '] ' + msg + '\n');
   } catch {}
@@ -264,7 +276,7 @@ ipcMain.on('menu:state', (e, s) => {
 ipcMain.on('ui:log', (e, m) => {
   // Strip les caracteres de controle : un message avec \r\n pourrait forger
   // des entrees de log au format timestamp/niveau.
-  if (fromApp(e) && uiLogAllowed()) log('[ui] ' + String(m).replace(/[\r\n\x00-\x1f]/g, ' ').slice(0, 800));
+  if (fromApp(e) && uiLogAllowed('ui')) log('[ui] ' + String(m).replace(/[\r\n\x00-\x1f]/g, ' ').slice(0, 800));
 });
 
 H('desktop:source', async () => {
@@ -1101,9 +1113,11 @@ H('audio:autoSetup', (e, opts) => {
   return run;
 });
 async function autoSetupImpl({ enabled, cableLabel }) {
+  if (quitting) return { ok: false, err: 'quitte' }; // ne pas spawner AudioEndpoint pendant la sortie
   micSwitching = true;
   try {
     const tool = await ensureAudioTool();
+    if (quitting) return { ok: false, err: 'quitte' };
     if (!tool) return { ok: false, err: 'composant audio natif indisponible : ' + (lastToolErr || 'compilation impossible') };
     if (!enabled) {
       // Rien a restaurer si aucun marqueur : ok. Marqueur present mais
@@ -1190,14 +1204,16 @@ async function audioRestoreImpl() {
     if (!fs.existsSync(restoreFile())) return;
     if (quitting) return; // will-quit gere deja la restauration synchrone
     if (await restoreMicNowP(tool)) return;
+    if (quitting) return; // will-quit a deja restaure : ne pas re-spawner
     // restoreFile present = bascule faite par SoundFart mais restauration
     // incomplete (cible introuvable, JSON corrompu...) : dernier recours borne,
     // on sort les roles coinces sur un virtuel vers le premier non virtuel.
+    if (quitting) return; // will-quit gere deja la restauration
     const eps = parseEndpoints(await audioExecP(tool, ['list']));
     const nameOf = (id) => { const e = eps.find((x) => x.id === id); return e ? e.name : ''; };
     const cur = parseGet(await audioExecP(tool, ['get', 'capture']));
     const stuck = [cur.console, cur.comm, cur.multi].some((id) => id && VIRTUAL_RE_MAIN.test(nameOf(id)));
-    if (!stuck) return;
+    if (!stuck || quitting) return;
     // Exiger un nom : un endpoint sans DeviceName passait VIRTUAL_RE.test('')
     // et etait traite comme « non virtuel » (memes regles que chooseRestoreIds).
     const fb = eps.find((e) => e.flow === 'capture' && e.name && !VIRTUAL_RE_MAIN.test(e.name));
@@ -1356,11 +1372,6 @@ async function watchdogMic() {
   watchdogBusy = true;
   try {
     if (!fs.existsSync(restoreFile()) || !fs.existsSync(configFile())) return;
-    // ensureAudioTool (single-flight) : si l'exe a ete supprime/tronque en
-    // cours de session, le watchdog le recompilait jamais et la surveillance
-    // micro etait muette a jamais — y compris a la fermeture (SF-REL-0653).
-    const tool = await ensureAudioTool();
-    if (!tool) return;
     // Borne de lecture : config:load limite a 16 Mo, le watchdog doit
     // appliquer la meme regle (un fichier bloque/geant gele le main).
     try { if (fs.statSync(configFile()).size > 16 * 1024 * 1024) return; } catch { return; }
@@ -1371,6 +1382,11 @@ async function watchdogMic() {
     // doit etre strictement true — 'false' string ou autre desactive.
     if (st.autoSwitchMic !== undefined && st.autoSwitchMic !== true) return;
     if (st.watchdogMic !== undefined && st.watchdogMic !== true) return;
+    // ensureAudioTool APRES les gardes config : sinon un watchdog/desarme
+    // ou une config corrompue declenchait une compilation C# toutes les
+    // 30 s pour rien (SF-REL-0653 revue).
+    const tool = await ensureAudioTool();
+    if (!tool) return;
     const eps = parseEndpoints(await audioExecP(tool, ['list']));
     const target = findCableCapture(eps, st.cableLabel);
     if (!target) return;
@@ -1423,7 +1439,9 @@ function createWindow() {
     const d = (event && typeof event === 'object' && 'message' in event)
       ? { level: event.level, message: event.message, line: event.lineNumber, sourceId: event.sourceId }
       : { level, message, line, sourceId };
-    if ((d.level === 3 || d.level === 'error') && uiLogAllowed()) log(`[page] ${d.message} (${d.sourceId}:${d.line})`, 'error');
+    // Meme sanitization que ui:log : un console.error avec \n pourrait
+    // forger des lignes de log au format timestamp/niveau.
+    if ((d.level === 3 || d.level === 'error') && uiLogAllowed('page')) log(`[page] ${String(d.message).replace(/[\r\n\x00-\x1f]/g, ' ').slice(0, 800)} (${d.sourceId}:${d.line})`, 'error');
   });
   let rendererReloads = 0; // anti-boucle : 1 reload max par session apres crash renderer
   win.webContents.on('render-process-gone', (_e, details) => {

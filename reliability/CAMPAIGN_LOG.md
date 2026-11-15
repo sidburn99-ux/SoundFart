@@ -389,3 +389,13 @@ chronologique. TEST_MATRIX mis a jour : 39 tests (etait 37), couverture
 CDP complete documentee (10 drivers, niveau non nul mesure), zones
 « NON couvert » recadrees sur le seul vrai restant = materiel/VALIDATION.
 Registre verifie : 145 IDs, 32 CLOSED, 90 FPV, 22 ACCEPTED, 1 INVESTIGATING.
+
+## V2 — revue groupee e99d0b1+b007d19 : 6 residus corriges (15/11/2026)
+
+Revue adverse : 0639/0650-0655/0657 audites. 0655/0657 CORRECTS.
+Residus corriges : 0639 (noFileErr sur rejet file pleine -> faux badge),
+0650 (warn ENOENT parasite + bytesRead), 0651 (warn resume spam +
+compteur partage + console-message non sanitize), 0652 (delai 2,5 s
+post-resume), 0653 (ensureAudioTool apres gardes config), 0654 (gardes
+quitting autoSetupImpl + fallback). FPV en attente re-revue.
+Verifs : node --check x3, npm test 39/39, dist, smoke + cdp-drive.

@@ -556,6 +556,7 @@ remonte a l'utilisateur via le catch de play().
 getBuffer ; un utilisateur peut toujours cliquer 64 sons lourds
 (~9 Go de buffers bruts en file — improbable en usage reel).
 **Statut** : FIXED_PENDING_VALIDATION.
+**Revue** : Revue a trouve : rejet sans noFileErr -> faux badge introuvable + message masque. Corrige (noFileErr=true). Limite : borne mesure l'octet encode, pas le heap reel.
 
 
 ## SF-REL-0640 — importConfig onDone detruirait une modale vivante ? (P3, REJETE)
@@ -619,6 +620,7 @@ re-echouait toutes les 60 s -> log sans borne jusqu'au disque plein.
 (readSync avec offset) + warn logge si le trim echoue.
 **Preuve** : node --check, npm test 39/39, dist, smoke + cdp-drive.
 **Statut** : FIXED_PENDING_VALIDATION.
+**Revue** : Revue a trouve : warn ENOENT parasite au 1er log + bytesRead ignore (zeros si fichier retreci). Corriges : ENOENT silencieux, reecriture seulement si n===keep.
 
 ## SF-REL-0651 — ui:log/console-message sans limite de debit (P2)
 
@@ -628,6 +630,8 @@ quota -> renderer buggé = Go/min + blocage main (appendFileSync).
 et resume « N messages ignores » toutes les 100. Applique aux 2 canaux.
 **Preuve** : node --check, npm test 39/39, dist, smoke + cdp-drive.
 **Statut** : FIXED_PENDING_VALIDATION.
+**Revue** : Revue a trouve : warn resume ~50/s sous spam + compteur partage affamant console.error + console-message non sanitize (forge 
+). Corriges : budgets separes par canal, warn cadence 1/s, sanitization.
 
 ## SF-REL-0652 — aucun handler powerMonitor : sleep/wake non gere (P2)
 
@@ -640,6 +644,7 @@ le trou dans un enregistrement en cours n'est pas detectable sans
 horloge audio (non corrige — a evaluer si terrain le remonte).
 **Preuve** : node --check, npm test 39/39, dist, smoke + cdp-drive.
 **Statut** : FIXED_PENDING_VALIDATION.
+**Revue** : Revue a trouve : enumeration partielle post-resume effacait cableId. Corrige : delai 2,5 s avant refreshDevices. Limite : trou enregistrement veille reste.
 
 ## SF-REL-0653 — watchdog micro : exe absent -> surveillance muette (P2)
 
@@ -650,6 +655,7 @@ coince possible a la fermeture sans recours.
 tick watchdog au lieu du test existsSync.
 **Preuve** : node --check, npm test 39/39, dist, smoke + cdp-drive.
 **Statut** : FIXED_PENDING_VALIDATION.
+**Revue** : Revue a trouve : ensureAudioTool avant gardes config -> compilation C# meme watchdog desarme. Corrige : config validee d'abord.
 
 ## SF-REL-0654 — audioRestoreImpl sans garde quitting (P3)
 
@@ -660,6 +666,7 @@ synchrone du will-quit -> peripherique re-bascule sans marqueur.
 restoreMicNowP.
 **Preuve** : node --check, npm test 39/39, dist, smoke + cdp-drive.
 **Statut** : FIXED_PENDING_VALIDATION.
+**Revue** : Revue a trouve : gardes incompletes (autoSetupImpl sans entree, fallback post-restoreMicNowP). Corrigees : entrees + post-restore + avant set fallback.
 
 ## SF-REL-0655 — Crashpad : minidumps jamais purges (P3)
 

@@ -295,7 +295,11 @@ function acquireDecode(bytes) {
   // File bornee : sans ca, des centaines de clics sur sons lourds
   // retenaient chacun leur ArrayBuffer brut (jusqu'a 150 Mo) en attente.
   if (decodeQueue.length >= DECODE_QUEUE_MAX || decodeQueuedBytes + bytes > DECODE_QUEUE_MAX_BYTES) {
-    return Promise.reject(new Error('Trop de lectures simultanées — réessayez dans un instant.'));
+    // noFileErr : erreur transitoire de ressource, pas un fichier absent —
+    // sinon play() badge « introuvable » et le vrai message est masque.
+    const e = new Error('Trop de lectures simultanées — réessayez dans un instant.');
+    e.noFileErr = true;
+    return Promise.reject(e);
   }
   decodeQueuedBytes += bytes;
   return new Promise((res) => decodeQueue.push({ res, bytes }));
@@ -2415,8 +2419,13 @@ async function init() {
   });
   window.sf.onPowerResume && window.sf.onPowerResume(() => {
     // Reveil systeme : peripheriques re-enumeres sans devicechange fiable.
-    refreshDevices(false).then(() => { resolveDevices(); updateCableUi(); })
-      .catch((e) => logErr('powerResume', e));
+    // Delai : les drivers audio/USB/Bluetooth peuvent mettre >1 s a se
+    // re-initialiser — une enumeration prematuree partielle effacerait
+    // cableId/monId (resolveDevices) et casserait le routage.
+    setTimeout(() => {
+      refreshDevices(false).then(() => { resolveDevices(); updateCableUi(); })
+        .catch((e) => logErr('powerResume', e));
+    }, 2500);
   });
   window.sf.onShortcut((key) => {
     if (key === '__stop__') { stopAll(false); return; }
