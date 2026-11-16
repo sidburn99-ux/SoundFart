@@ -67,6 +67,8 @@ function youtubeModal() {
       info = await window.sf.ytInfo(url);
       analyzedUrl = url;
       infoBox.textContent = `« ${info.title} » — durée ${fmtTime(info.duration)}.`;
+      const md = +cfg.settings.maxSoundDur;
+      if (md > 0 && info.duration > md) infoBox.textContent += ` ⚠ Plus long que la limite de lecture (${md} s) : seuls les ${md} premières secondes seront jouées.`;
       if (!nameIn.value) nameIn.value = String(info.title).slice(0, 80);
       endIn.placeholder = info.duration ? 'Fin (max ' + fmtTime(info.duration) + ')' : 'Fin';
     } catch (e) {

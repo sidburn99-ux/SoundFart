@@ -174,6 +174,7 @@ function settingsModal() {
     } catch (e) { logErr('pickDir', e); }
   } });
   const resetDirBtn = el('button', { class: 'ghost', text: 'Réinitialiser', onclick: () => { s.storageDir = ''; dirLbl.textContent = 'Dossier SoundFart par défaut (SoundFart-data) — les fichiers vont dans imports/, recordings/, cuts/ à l\'intérieur'; } });
+  const voiceDsp = el('input', { type: 'checkbox', checked: s.voiceDsp !== false, title: 'Applique aux sons de la VOIX uniquement (jamais aux sons de la soundboard) : annulation d\'écho, suppression de bruit et filtre de souffle. Décoche si ta voix sonne étouffée ou si tu utilises déjà un filtre Discord/Teams.' });
   const autoMic = el('input', { type: 'checkbox', checked: !!s.autoSwitchMic, title: 'Au lancement, l\'entrée micro Windows bascule sur « CABLE Output » (pour que Discord capte ta voix via le câble), puis revient à ton vrai micro à la fermeture ou en cas de crash.' });
   const watchMic = el('input', { type: 'checkbox', checked: s.watchdogMic !== false, title: 'Revérifie périodiquement que l\'entrée micro est toujours sur le câble. Se met en pause pour la session si tu changes le micro toi-même (Discord inclus).' });
 
@@ -184,6 +185,12 @@ function settingsModal() {
     const nl = +normLufsIn.value;
     if (Number.isFinite(nl) && nl <= 0) { s.normLufs = Math.max(-40, nl); save(); }
     else normLufsIn.value = normLufsTarget(); // valeur refusee : re-affiche la cible reelle
+  });
+  const maxDurIn = el('input', { type: 'number', min: 0, max: 86400, step: 5, value: s.maxSoundDur ?? 45, title: 'Durée max jouée d\'un son en secondes (0 = illimité). Le fichier n\'est jamais coupé — seules les N premières secondes sont jouées. Une notification prévient la première fois qu\'un son est tronqué.' });
+  maxDurIn.addEventListener('change', () => {
+    const v = +maxDurIn.value;
+    if (Number.isFinite(v) && v >= 0) { s.maxSoundDur = Math.min(86400, v); save(); }
+    else maxDurIn.value = s.maxSoundDur ?? 45;
   });
   const normTestBtn = el('button', { class: 'ghost', text: 'Tester', title: 'Joue 1,2 s de bruit dont la loudness est exactement au niveau saisi — sur ton écoute locale uniquement (pas sur Discord).', onclick: () => testNormLufs(normLufsIn.value) });
   const normProg = el('div', {});
@@ -247,6 +254,8 @@ function settingsModal() {
       field('Mon micro', micSel, 'Le vrai micro est ★ ; les périphériques virtuels (CABLE Output, Voicemeeter…) sont ⚠ déconseillés ici.'),
       el('label', { class: 'check' }, mix,
         el('span', { text: 'Mixer mon micro dans la sortie Discord (sinon tes potes n\'entendent que les sons). Décoche si tu utilises « Écouter ce périphérique » de Windows.' })),
+      el('label', { class: 'check' }, voiceDsp,
+        el('span', { text: 'Réduction de bruit et écho sur la voix uniquement — n\'affecte pas les sons. Le gain micro reste indépendant du volume general.' })),
       field('Bascule micro automatique', el('label', { class: 'check' }, autoMic,
         el('span', { text: 'Au lancement, SEUL le micro (entrée Windows) passe sur « CABLE Output » et revient à ton micro à la fermeture — tes sorties (Discord, écoute locale) restent sur tes périphériques habituels. Dans Discord, choisis « Défaut » comme périphérique d\'entrée pour que ça suive.' }))),
       field('Surveillance micro automatique', el('label', { class: 'check' }, watchMic,
@@ -261,6 +270,8 @@ function settingsModal() {
       field('Niveaux audio', el('div', {},
         el('div', { class: 'row' },
           el('span', { class: 'hint', text: 'Cible loudness (LUFS) :' }), normLufsIn, el('span', { class: 'hint', text: 'LUFS' }), normTestBtn, normAllBtn),
+        el('div', { class: 'row' },
+          el('span', { class: 'hint', text: 'Durée max par son (s, 0 = illimité) :' }), maxDurIn),
         normProg),
         'Ramène la loudness perçue de chaque son au niveau cible sans dépasser le plafond de pic (-1 dBFS). Mesure 100 % interne (BS.1770), aucun téléchargement — les fichiers ne sont pas modifiés.'),
       field('Réinitialiser', el('div', { class: 'row' }, resetSoundsBtn),
@@ -314,8 +325,11 @@ function settingsModal() {
       s.storageDir = s.storageDir || '';
       s.autoSwitchMic = autoMic.checked;
       s.watchdogMic = watchMic.checked;
+      s.voiceDsp = voiceDsp.checked;
       const nl = +normLufsIn.value;
       s.normLufs = (Number.isFinite(nl) && nl <= 0) ? Math.max(-40, nl) : defaults().settings.normLufs;
+      const md = +maxDurIn.value;
+      if (Number.isFinite(md) && md >= 0) s.maxSoundDur = Math.min(86400, md);
       save(); c();
       if (await applyAudio().catch((e) => { logErr('applyAudio', e); return false; })) toast('Réglages audio appliqués.');
       applyShortcuts();

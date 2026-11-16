@@ -60,7 +60,7 @@ const defaults = () => ({
   version: 2,
   sounds: [],
   categories: [],
-  settings: { cableId: '', cableLabel: '', monId: 'default', monLabel: '', micId: '', micLabel: '', micMix: false, master: 80, sort: 'added-desc', catSort: 'manual', stopShortcut: 'CommandOrControl+Alt+S', storageDir: '', autoSwitchMic: true, watchdogMic: true, groupByCat: true, normLufs: -18 },
+  settings: { cableId: '', cableLabel: '', monId: 'default', monLabel: '', micId: '', micLabel: '', micMix: false, master: 80, sort: 'added-desc', catSort: 'manual', stopShortcut: 'CommandOrControl+Alt+S', storageDir: '', autoSwitchMic: true, watchdogMic: true, groupByCat: true, normLufs: -18, maxSoundDur: 45, voiceDsp: true },
   ui: { cat: 'all' },
 });
 
@@ -95,6 +95,9 @@ function normalizeCfg(saved) {
   // 'false' (string truthy) ou des nombres invalides -> comportement
   // incoherent (micMix active, volumes aberrants).
   for (const k of ['micMix', 'autoSwitchMic', 'watchdogMic', 'groupByCat']) c.settings[k] = c.settings[k] === true;
+  // voiceDsp : true par defaut — seul un false EXPLICITE desactive le
+  // traitement vocal (cle absente/invalide -> garde actif).
+  c.settings.voiceDsp = c.settings.voiceDsp !== false;
   if (!Number.isFinite(+c.settings.master)) c.settings.master = 80; else c.settings.master = Math.min(100, Math.max(0, +c.settings.master));
   if (typeof c.settings.stopShortcut !== 'string' || c.settings.stopShortcut.length > 64) c.settings.stopShortcut = defaults().settings.stopShortcut;
   if (typeof c.settings.sort !== 'string' || !SORTS.some(([v]) => v === c.settings.sort)) c.settings.sort = 'added-desc';
@@ -104,6 +107,10 @@ function normalizeCfg(saved) {
   delete c.settings.normTarget;
   const nl = +c.settings.normLufs;
   c.settings.normLufs = (Number.isFinite(nl) && nl <= 0 && nl >= -40) ? nl : defaults().settings.normLufs;
+  // Duree max de lecture d'un son (s) : 0 = illimite. Le fichier n'est
+  // jamais coupe — seul ce qui est joue est borne (trimStart respecte).
+  const md = +c.settings.maxSoundDur;
+  c.settings.maxSoundDur = (Number.isFinite(md) && md >= 0) ? Math.min(86400, md) : defaults().settings.maxSoundDur;
   c.ui = mergeSub(defaults().ui, c.ui);
   if (!Array.isArray(c.sounds)) c.sounds = [];
   if (!Array.isArray(c.categories)) c.categories = [];
@@ -304,6 +311,7 @@ const bufCache = new Map(); // path -> { buf, bytes } — LRU borne en OCTETS (2
 const BUF_CACHE_MAX = 256 * 1024 * 1024;
 const bufBytes = (b) => b.length * b.numberOfChannels * 4; // float32
 const longWarned = new Set();
+const truncWarned = new Set(); // chemin -> deja prevu : un toast par fichier
 const voices = new Set();
 let playGen = 0; // generation audio : stopAll/teardownAudio l'incrementent pour avorter les play() en vol
 let deadRetries = 0; // retry borne sur 'interrupted'/'closed' (reset sur 'running')
@@ -530,10 +538,14 @@ async function applyAudioInner() {
         if (!micDev) {
           warns.push('Mixage micro : aucun micro réel détecté (débranché ?).');
         } else {
-        // Traitement vocal sur la voix uniquement (echo cancellation, bruit, gain) —
-        // les sons joues via Web Audio ne sont pas concernes.
+        // Traitement vocal sur la voix uniquement : echo cancellation et
+        // noise suppression sont des contraintes getUserMedia (actives
+        // sauf desactivation explicite dans les reglages) — les sons joues
+        // via Web Audio ne sont pas concernes. AGC toujours actif :
+        // c'est du nivellement, pas de la reduction de bruit.
+        const vdsp = s.voiceDsp !== false;
         micPendingStream = await navigator.mediaDevices.getUserMedia({
-          audio: { deviceId: { exact: micDev }, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+          audio: { deviceId: { exact: micDev }, echoCancellation: vdsp, noiseSuppression: vdsp, autoGainControl: true },
         });
         const stream = micPendingStream;
         // Micro perdu sans devicechange (debranchement, BT qui coupe) : le
@@ -550,12 +562,16 @@ async function applyAudioInner() {
         // Directement sur le limiteur, en amont de bus : la voix ne suit PAS
         // le gain master (réglage son soundboard). Seul le limiteur la protège.
         try {
-          const out = audio.cable;
-          out._vgMod = out._vgMod || out.ctx.audioWorklet.addModule('voice-gate.js');
-          await out._vgMod;
-          const gate = new AudioWorkletNode(out.ctx, 'voice-gate', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2] });
-          src.connect(gate);
-          gate.connect(out.lim);
+          if (vdsp) {
+            const out = audio.cable;
+            out._vgMod = out._vgMod || out.ctx.audioWorklet.addModule('voice-gate.js');
+            await out._vgMod;
+            const gate = new AudioWorkletNode(out.ctx, 'voice-gate', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2] });
+            src.connect(gate);
+            gate.connect(out.lim);
+          } else {
+            src.connect(audio.cable.lim);
+          }
         } catch (e) {
           uiLog('voice-gate indisponible, micro connecte direct : ' + (e && e.message));
           src.connect(audio.cable.lim);
@@ -738,7 +754,18 @@ function play(sound, opts = {}) {
     const vol = ((opts.volume ?? sound.volume) / 100) * (sound.norm ?? 1);
     const offset = Math.min(Math.max(0, opts.trimStart ?? sound.trimStart ?? 0), Math.max(0, buf.duration - 0.05));
     const endRaw = opts.trimEnd !== undefined ? opts.trimEnd : sound.trimEnd;
-    const endEff = endRaw ?? buf.duration;
+    let endEff = endRaw ?? buf.duration;
+    // Duree max de lecture (reglage, 0 = illimite) : borne la fenetre
+    // [offset, offset+max] — le fichier complet reste intact et un trim
+    // utilisateur plus court est respecte.
+    const maxDur = +cfg.settings.maxSoundDur;
+    if (maxDur > 0 && endEff - offset > maxDur) {
+      endEff = offset + maxDur;
+      if (!opts.preview && !truncWarned.has(sound.path)) {
+        truncWarned.add(sound.path);
+        toast('Son plus long que la limite (' + maxDur + ' s) : seuls les ' + maxDur + ' premières secondes sont jouées.', 'warn');
+      }
+    }
     if (endEff <= offset + 0.01) return null; // trim vide/invalide : ne rien jouer
     const dur = Math.max(0.05, Math.min(endEff, buf.duration) - offset);
     let fi = (opts.fadeIn ?? sound.fadeIn ?? 0) / 1000;
@@ -964,6 +991,7 @@ async function removeSound(s) {
   // Libere le buffer decode du son supprime (sinon jusqu'a 256 Mo d'orphelins).
   cacheDelete(s.path); // libere le buffer decode du son supprime
   longWarned.delete(s.path);
+  truncWarned.delete(s.path);
   save(); renderAll();
   applyShortcuts(); // desenregistre le raccourci global du son supprime
 }
