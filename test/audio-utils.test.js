@@ -341,3 +341,26 @@ test('expandPaths : les non-audio ne consomment pas le plafond de sons', async (
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// ---------- isUsablePath (normalizeCfg : champs de chemins) ----------
+test('isUsablePath : chemins absolus valides acceptes (retrocompat)', () => {
+  for (const p of [
+    'C:\\Users\\Sidbu\\Sounds\\fart.mp3',
+    'C:/Users/Sidbu/Sounds/fart.mp3',
+    '\\\\NAS\\partage\\son avec espaces et accents é.mp3',
+    '\\\\?\\C:\\long\\path.mp3',
+    '\\\\?\\UNC\\serveur\\partage\\son.mp3',
+    'Z:\\Reseau\\son.mp3',
+    '/mnt/son.mp3',
+    '\\Windows\\Temp\\son.mp3',
+    'D:\\dossier avec \'apostrophe\\f.wav',
+  ]) assert.equal(U.isUsablePath(p), true, p);
+});
+
+test('isUsablePath : valeurs invalides rejetees', () => {
+  for (const p of [
+    '', '   ', 'relatif\\son.mp3', 'son.mp3', 'C:fart.mp3',
+    'C:\\ok\\puis\ninjection.mp3', 'C:\\ctrl\x07.mp3',
+    null, undefined, 42, {}, [], 'file:///C:/son.mp3',
+  ]) assert.equal(U.isUsablePath(p), false, JSON.stringify(p));
+});

@@ -109,10 +109,15 @@ function normalizeCfg(saved) {
   if (!Array.isArray(c.categories)) c.categories = [];
   // purge les entrees invalides et deduplique par id puis par chemin (garde le premier)
   const seenId = new Set(), seenPath = new Set();
+  let droppedPaths = 0;
   c.sounds = c.sounds.filter((s) => {
     // '__stop__' est la cle reservee des raccourcis globaux (main.js) :
     // un son avec cet id aurait un raccourci qui agit comme STOP.
-    if (!s || typeof s.id !== 'string' || s.id === '__stop__' || typeof s.path !== 'string' || typeof s.name !== 'string') return false;
+    if (!s || typeof s.id !== 'string' || s.id === '__stop__' || typeof s.name !== 'string') return false;
+    // Chemin exploitable seulement : file:read exige path.isAbsolute —
+    // une valeur relative, vide ou a caracteres de controle ne peut
+    // jamais etre lue ; on purge l'entree au lieu de garder un mort.
+    if (!window.SFUtils.isUsablePath(s.path)) { droppedPaths++; return false; }
     // Bornes : shortcuts:apply ignore silencieusement les id >128 car. et
     // des noms geants x5000 sons font echouer config:save (>5 Mo) en silence.
     s.id = s.id.slice(0, 128); s.name = s.name.slice(0, 200);
@@ -121,6 +126,7 @@ function normalizeCfg(saved) {
     seenId.add(s.id); seenPath.add(p);
     return true;
   });
+  if (droppedPaths) uiLog('normalizeCfg: ' + droppedPaths + ' son(s) a chemin invalide ignores');
   // Plafonds : file:check refuse >5000 chemins (checkMissing mourrait en
   // silence) et une config geante gelerait le rendu (carte par son).
   if (c.sounds.length > 5000) c.sounds = c.sounds.slice(0, 5000);
@@ -195,10 +201,10 @@ function normalizeCfg(saved) {
   if (typeof st.stopShortcut !== 'string' || st.stopShortcut.length > 64) st.stopShortcut = defaults().settings.stopShortcut;
   // Chemins relatifs : storageRoot() retomberait silencieusement sur
   // userData alors que l'UI affiche le dossier choisi — on exige un
-  // chemin absolu (lettre:\\, UNC \\\\, ou /) pour les deux champs.
-  const absPath = (p) => /^([a-zA-Z]:[\\/]|\\\\|\/)/.test(p);
-  if (st.storageDir != null && (typeof st.storageDir !== 'string' || (st.storageDir !== '' && !absPath(st.storageDir)))) st.storageDir = '';
-  if (st.lastDestDir != null && (typeof st.lastDestDir !== 'string' || (st.lastDestDir !== '' && !absPath(st.lastDestDir)))) delete st.lastDestDir;
+  // chemin absolu sain (lettre:\\, UNC \\\\, ou /, sans caractere de
+  // controle) pour les deux champs. isUsablePath = source unique SFUtils.
+  if (st.storageDir != null && (typeof st.storageDir !== 'string' || (st.storageDir !== '' && !window.SFUtils.isUsablePath(st.storageDir)))) st.storageDir = '';
+  if (st.lastDestDir != null && (typeof st.lastDestDir !== 'string' || (st.lastDestDir !== '' && !window.SFUtils.isUsablePath(st.lastDestDir)))) delete st.lastDestDir;
   const hasCat = (id) => c.categories.some((x) => x.id === id);
   if (!['all', 'none', 'fav'].includes(c.ui.cat) && !hasCat(c.ui.cat)) c.ui.cat = 'all';
   return c;
