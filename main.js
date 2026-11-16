@@ -1102,13 +1102,14 @@ app.whenReady().then(() => {
     log(`[displaymedia] requete audio=${request.audioRequested} video=${request.videoRequested}`);
     desktopCapturer.getSources({ types: ['screen'] }).then((sources) => {
       log(`[displaymedia] ${sources.length} source(s) ecran`);
-      if (sources.length) {
-        // L'app n'utilise que l'audio loopback : jamais de capture video
-        // d'ecran, meme si le renderer la demande (videoRequested).
-        const opts = {};
-        if (request.audioRequested) opts.audio = 'loopback';
-        callback(Object.keys(opts).length ? opts : {});
-      } else callback({});
+      const opts = {};
+      // getDisplayMedia exige une source video quand le renderer la demande
+      // (video:true) — sans elle la requete echoue et le repli enregistreur
+      // etait mort. Le renderer garde la piste video vivante sans jamais la
+      // lire (loopback audio seulement) : sources[0] = ecran primaire.
+      if (request.videoRequested && sources.length) opts.video = sources[0];
+      if (request.audioRequested) opts.audio = 'loopback';
+      callback(Object.keys(opts).length ? opts : {});
     }).catch((e) => { log('[displaymedia] getSources: ' + e.message, 'warn'); callback({}); });
   });
   createWindow();
