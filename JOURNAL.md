@@ -47,6 +47,36 @@ Boucle audit → correction → vérification, ~13 commits unitaires. Baseline :
 - UI interactive complète, IPC `yt:*`/`media:cut` réels, enregistreur multi-sources, routage audio — « À valider » terrain.
 - Smoke post-build : exe lancé, AudioContext créés, aucune erreur `[page]` dans `soundfart.log`.
 
+## Deuxième passe ciblée (16/11/2026, branche `audit/pass-2`)
+
+Baseline : `npm test` → pass 54 / fail 0 ; `node --check` OK sur les 19 fichiers JS ; `npm run dist` OK ; smoke : `env -u ELECTRON_RUN_AS_NODE ./dist/SoundFart.exe` → AudioContext créés (`makeOutput: creation AudioContext device=default`), aucune erreur `[page]` dans `soundfart.log`.
+
+Vérifiable ici : `node --check`, `npm test`, `npm run dist`, build `.bat`/`.ps1`, smoke exe, instanciation de `createMediaTools` avec deps stub. **Non vérifiable** : UI interactive, audio réel, Discord, VB-CABLE, téléchargements YouTube/ffmpeg réels (pas de réseau utilisé), compilation C# à l'usage.
+
+### Contre-vérification de la passe 1
+
+- **`media-tools.js` — vrai défaut trouvé et corrigé** : `killTree()` appelé au timeout yt-dlp (2 min) sans être injecté → `ReferenceError` (même famille que le bug `AUDIO_EXT`). Injecté via deps (`main.js` + destructuration). Après fix : scan de tous les symboles top-level de `main.js` contre le module → aucun autre symbole non injecté ; instanciation réelle OK, 4 handlers IPC enregistrés (`media:cut`, `yt:ensure`, `yt:info`, `yt:download`).
+- **`childProcs`** : `'close'`/`'error'`/`'exit'` retirent tous du Set (`Set.delete` idempotent, pas de double-kill) ; `will-quit` itère une copie puis `clear()` ; `killTree`/`p.kill()` sur un process déjà mort = no-op silencieux. Restore micro à la fermeture : `will-quit` → `restoreMicNow` (budgeté, voir ci-dessous) + garde externe `audio-restore.json` pour les morts sans will-quit. OK.
+- **Ménage `.part`/`.ytdl`/`.temp`** : ne touche que `imports/` et uniquement les fichiers préfixés `sf-<tag>-` où `<tag>` = `Date.now().toString(36)` + aléatoire régénéré par requête yt-dlp — collision avec un fichier utilisateur pratiquement impossible, et `imports/` est un dossier géré par l'app. OK.
+
+### Corrigé
+
+- **`killTree` non injecté** dans `createMediaTools` (cf. ci-dessus) — commit `7ef3187`.
+- **`audioExecSync`/`restoreMicNow` borné** : 3 `execFileSync` × 15 s = ~45 s de gel possible du `will-quit` si `AudioEndpoint.exe` se fige (COM). Budget global 8 s partagé entre les appels, timeout par appel `min(5000, restant)` ; en cas de dépassement le marqueur `audio-restore.json` est conservé → reprise au prochain lancement (`restoreMicNowP`) ou par la garde externe. Preuve : 3 appels sur processus dormant 30 s → abort à 8,0 s (`ETIMEDOUT` à 5,0 s puis `budget epuise`), au lieu de ~45 s.
+- **`normalizeCfg` : validation des chemins** : nouveau `SFUtils.isUsablePath` (`lib/audio-utils.js`) — string non vide, sans caractère de contrôle, chemin absolu aligné sur `path.win32.isAbsolute` (lettre, `UNC`, `/`, `\`). Appliqué à `s.path` (purge + `uiLog`), `settings.storageDir`, `settings.lastDestDir` (qui gagnent aussi le rejet des caractères de contrôle). Rétrocompat vérifiée par tests : `\\NAS\`, `\\?\`, `Z:\`, accents, espaces, apostrophes acceptés ; relatifs, vides, `file://`, non-strings rejetés. `npm test` 56/56.
+
+### « À valider » — mise à jour
+
+- **Résolus par cette passe** : `normalizeCfg` chemins, `audioExecSync` blocage `will-quit`.
+- **`normalizeCfg` — limite volontaire** : la validation porte sur la *forme* du chemin (absolu, sain), pas sur l'existence ni l'extension audio — un chemin absolu vers un `.txt` ou un fichier disparu reste en config (badge « manquant » + relocation, comportement existant conservé).
+- **Toujours « À valider »** (inchangés) : `setDisplayMediaRequestHandler`, dédup `restoreMicNowP`/`restoreMicNow`, déplacement `test/cdp-*.js`, déplacement `AudioEndpoint.cs`/`AudioTap.cs`, `.gitignore` `.mp3`, `enabled` permissif.
+
+### Non vérifié dans cet environnement (passe 2)
+
+- `media:cut`/`yt:download` exécutés pour de vrai (nécessitent ffmpeg/yt-dlp — pas de téléchargement réseau lancé) : vérifiés par instanciation du module + lecture, pas par exécution.
+- Restauration micro réelle sur matériel (AudioEndpoint.exe compilé à l'usage) : le budget 8 s est prouvé sur `execFileSync` générique, pas sur le vrai binaire.
+- Comportement `normalizeCfg` dans l'UI réelle (purge de sons à chemin invalide) : logique testée unitairement via `isUsablePath`, pas rejouée en interface.
+
 ## Campagne de fiabilisation (15/11/2026)
 
 Audit complet (3 revues parallèles + recherche documentaire) puis corrections par cycles, avec Quality Gate V2 (CLOSED exige cause + test + non-régression + revue indépendante + runtime + limites documentées).
