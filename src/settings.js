@@ -324,5 +324,5 @@ function settingsModal() {
         else if (r && !r.ok) toast('Bascule micro auto impossible : ' + r.err, 'warn');
       }).catch((e) => logErr('audioAutoSetup', e));
     } },
-  ], { onClose: () => stopCleanup() });
+  ], { onClose: () => { stopCleanup(); if (resetArmTimer) { clearTimeout(resetArmTimer); resetArmTimer = null; resetArmed = false; } } });
 }
