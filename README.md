@@ -40,7 +40,7 @@ npm run dist       # build portable -> dist\SoundFart.exe
 ```
 
 - Stack : Electron 45, JS vanilla, C# compilé à la volée (`csc.exe`), yt-dlp + ffmpeg téléchargés et vérifiés (SHA-256)
-- `AGENTS.md` : règles de dev · `GUIDE.md` : guide utilisateur · `TESTS_VM.md` : plan de test · `suivi.tsv` : journal
+- `AGENTS.md` : règles de dev · `GUIDE.md` : guide utilisateur · `JOURNAL.md` : historique · `suivi.tsv` : journal technique · `VALIDATION.md` / `TESTS_VM.md` : plans de test
 
 ## Licence
 

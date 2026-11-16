@@ -84,7 +84,7 @@ node --check <f>  # syntaxe JS
 - Livraison/release : invoquer le skill `release` (`.devin/skills/release/SKILL.md`) — il exécute la Definition of Done.
 - `suivi.tsv` + `suivi.html` (régénérer via `regen-suivi.ps1`) : à jour à chaque changement significatif ; le TSV est la source, le HTML jamais édité à la main.
 - Tout changement de comportement → mettre à jour les docs impactées (`SPECIFICATION.md` pour le technique, `GUIDE.md` pour l'utilisateur, `README.md` si visible) ; jamais de comportement documenté qui n'existe pas.
-- `TECHNICAL_HARDENING_PLAN.md` : vidé ou archivé en fin de mission hardening — ne pas le laisser pourrir avec des constats obsolètes.
+- `reliability/FINDINGS.md` : registre canonique des anomalies de la campagne de fiabilisation (terminée le 15/11/2026) — archivé, ne pas le faire grossir sans nouvelle campagne ; le reste de `reliability/` a été condensé dans `JOURNAL.md`.
 
 ## Pour faire X, lis Y
 
@@ -94,17 +94,15 @@ node --check <f>  # syntaxe JS
 | Architecture et flux | `SPECIFICATION.md` |
 | Utiliser l'application | `GUIDE.md` |
 | État d'avancement et tests | `suivi.tsv` |
-| Validations fonctionnelles et régressions | `STABILITY_STATUS.md` |
-| Audit de fiabilisation et plan P0-P3 | `AUDIT_FIABILISATION.md` |
+| Historique, campagnes, validations | `JOURNAL.md` |
+| Registre des anomalies (campagne close) | `reliability/FINDINGS.md` |
 | Tester sur VM Windows propre | `TESTS_VM.md` |
 | Valider l'audio sur matériel réel | `VALIDATION.md` |
-| Historique des versions | `JOURNAL.md`, `JOURNAL_DE_DEVELOPMENT.md` |
-| Reprendre un chantier hardening | `TECHNICAL_HARDENING_PLAN.md` |
 | Mentions légales | `THIRD-PARTY-NOTICES` |
 
 ## Ne pas lire par défaut
 
-`JOURNAL.md`, `JOURNAL_DE_DEVELOPMENT.md`, `suivi.html` (généré), `TECHNICAL_HARDENING_PLAN.md` (sauf mission hardening), `dist/` (sauf pour vérifier le build).
+`JOURNAL.md`, `suivi.html` (généré), `reliability/` (campagne close), `dist/` (sauf pour vérifier le build).
 
 ## Definition of Done
 
