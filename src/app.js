@@ -203,7 +203,18 @@ function normalizeCfg(saved) {
 }
 
 const catById = (id) => cfg.categories.find((c) => c.id === id);
-const soundHasCat = (s) => !!(s.categoryId && catById(s.categoryId));
+// soundHasCat est appele par son a chaque render (des milliers d'appels) :
+// un find() lineaire par son = O(sons x categories). Set d'ids mis en cache,
+// invalide des que le tableau change de reference ou de taille (rename/
+// reorder gardent les memes ids -> cache reste valide a juste titre).
+let catIdCache = { ref: null, size: -1, set: null };
+const catIdSet = () => {
+  if (!catIdCache.set || catIdCache.ref !== cfg.categories || catIdCache.size !== cfg.categories.length) {
+    catIdCache = { ref: cfg.categories, size: cfg.categories.length, set: new Set(cfg.categories.map((c) => c.id)) };
+  }
+  return catIdCache.set;
+};
+const soundHasCat = (s) => !!(s.categoryId && catIdSet().has(s.categoryId));
 
 // ================================================================ interface generique
 function toast(msg, kind = '') {
