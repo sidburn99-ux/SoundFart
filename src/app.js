@@ -531,7 +531,10 @@ async function applyAudioInner() {
           t.addEventListener('mute', () => { if (audio.micStream === stream) toast('Micro muet par le système — voix coupée.', 'warn'); });
         });
         const src = audio.cable.ctx.createMediaStreamSource(stream);
-        src.connect(audio.cable.lim);
+        // bus (gain master) puis lim en aval — comme les sons : avant, le
+        // micro etait branche sur lim en amont de bus et master=0% ne
+        // coupait PAS la voix sur Discord.
+        src.connect(audio.cable.bus);
         audio.micStream = stream; // apres connect : un echec ne laisse pas de piste orpheline
         micPendingStream = null;
       }
