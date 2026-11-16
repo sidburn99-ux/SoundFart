@@ -306,7 +306,7 @@ const bufBytes = (b) => b.length * b.numberOfChannels * 4; // float32
 const longWarned = new Set();
 const voices = new Set();
 let playGen = 0; // generation audio : stopAll/teardownAudio l'incrementent pour avorter les play() en vol
-let interruptedRetries = 0; // retry borne sur etat 'interrupted' (reset sur 'running')
+let deadRetries = 0; // retry borne sur 'interrupted'/'closed' (reset sur 'running')
 let bufCacheBytes = 0;
 
 const bufInflight = new Map(); // path -> Promise<buf> : evite le double decodage concurrent
@@ -427,21 +427,27 @@ async function makeOutput(deviceId) {
     throw e;
   }
   // Etat 'interrupted' (session Windows coupee sans devicechange) : sans
-  // ecoute, les voix restent zombies et le silence est indetectable.
+  // ecoute, les voix restent zombies et le silence est detectable.
+  // 'closed' arrive aussi hors teardown volontaire : au reveil systeme
+  // Chromium ferme les contextes — sans reconstruction, l'audio reste mort
+  // jusqu'au prochain devicechange. Garde : un ctx ferme volontairement
+  // (teardownAudio null audio[k] AVANT close) n'est plus reference -> on ne
+  // rebuild pas pour lui.
   ctx.addEventListener('statechange', () => {
-    if (ctx.state === 'running') interruptedRetries = 0;
+    if (ctx.state === 'running') deadRetries = 0;
     if (ctx.state === 'suspended') { uiLog('sortie audio suspendue (device=' + (deviceId || 'defaut') + ')'); return; }
     if (ctx.state === 'interrupted' || ctx.state === 'closed') {
       uiLog('sortie audio ' + ctx.state + ' (device=' + (deviceId || 'defaut') + ')');
-      if (ctx.state === 'interrupted') {
-        toast('Sortie audio interrompue — réessaie de jouer un son.', 'warn');
-        // Session Windows coupee sans devicechange : on retente UNE
-        // reconstruction bornee (applyAudio recree les sorties) au lieu de
-        // laisser une sortie morte jusqu'au prochain changement de peripherique.
-        if (interruptedRetries < 3) {
-          interruptedRetries++;
-          setTimeout(() => { applyAudio().catch((e) => logErr('applyAudio retry', e)); }, 1500);
-        }
+      const stillActive = audio.cable && audio.cable.ctx === ctx || audio.mon && audio.mon.ctx === ctx;
+      if (!stillActive) return; // fermeture volontaire (teardown/applyAudio)
+      if (ctx.state === 'interrupted') toast('Sortie audio interrompue — réessaie de jouer un son.', 'warn');
+      else toast('Sortie audio fermée par le système — reconstruction en cours…', 'warn');
+      // Reconstruction bornee : applyAudio recree les sorties. Ferme =
+      // device probablement en re-init (reveil) -> delai plus long, plus
+      // de tentatives que 'interrupted'.
+      if (deadRetries < 5) {
+        deadRetries++;
+        setTimeout(() => { applyAudio().catch((e) => logErr('applyAudio retry', e)); }, ctx.state === 'closed' ? 2500 : 1500);
       }
     }
   });
@@ -516,12 +522,18 @@ async function applyAudioInner() {
         if (micDev && !(audio.devices.inp || []).some((d) => d.deviceId === micDev)) micDev = null;
         if (!micDev) {
           const real = (audio.devices.inp || []).find((d) => d.deviceId !== 'default' && !VIRTUAL_RE.test(d.label || ''));
-          micDev = real ? real.deviceId : (s.micId === 'default' ? 'default' : undefined);
+          micDev = real ? real.deviceId : null;
         }
+        // JAMAIS de repli « unconstrained »/default : apres la bascule auto,
+        // le peripherique par defaut Windows est CABLE Output — ouvrir le
+        // micro dessus enregistrerait la sortie Discord = larsen.
+        if (!micDev) {
+          warns.push('Mixage micro : aucun micro réel détecté (débranché ?).');
+        } else {
         // Traitement vocal sur la voix uniquement (echo cancellation, bruit, gain) —
         // les sons joues via Web Audio ne sont pas concernes.
         micPendingStream = await navigator.mediaDevices.getUserMedia({
-          audio: { deviceId: micDev ? { exact: micDev } : undefined, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+          audio: { deviceId: { exact: micDev }, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
         });
         const stream = micPendingStream;
         // Micro perdu sans devicechange (debranchement, BT qui coupe) : le
@@ -531,11 +543,26 @@ async function applyAudioInner() {
           t.addEventListener('mute', () => { if (audio.micStream === stream) toast('Micro muet par le système — voix coupée.', 'warn'); });
         });
         const src = audio.cable.ctx.createMediaStreamSource(stream);
+        // Voice gate DSP (highpass ~80 Hz + noise gate) sur la voix
+        // uniquement — les sons ne passent pas par ce noeud. Contraintes
+        // getUserMedia (AEC/NS/AGC) restent actives en amont. Repli sur
+        // connexion directe si le worklet echoue : jamais de micro muet.
         // Directement sur le limiteur, en amont de bus : la voix ne suit PAS
         // le gain master (réglage son soundboard). Seul le limiteur la protège.
-        src.connect(audio.cable.lim);
+        try {
+          const out = audio.cable;
+          out._vgMod = out._vgMod || out.ctx.audioWorklet.addModule('voice-gate.js');
+          await out._vgMod;
+          const gate = new AudioWorkletNode(out.ctx, 'voice-gate', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2] });
+          src.connect(gate);
+          gate.connect(out.lim);
+        } catch (e) {
+          uiLog('voice-gate indisponible, micro connecte direct : ' + (e && e.message));
+          src.connect(audio.cable.lim);
+        }
         audio.micStream = stream; // apres connect : un echec ne laisse pas de piste orpheline
         micPendingStream = null;
+        }
       }
     } catch (e) {
         // Si le graphe a jete apres getUserMedia, stopper le stream tout de
@@ -1340,7 +1367,11 @@ async function init() {
       resolveDevices();
       updateCableUi();
       // ne reconstruit les sorties que si un peripherique configure a disparu
-      if (s.cableId !== prev.cable || s.monId !== prev.mon || s.micId !== prev.mic) await applyAudio().catch((e) => logErr('applyAudio', e));
+      // — ou si le micro requis est mort : au rebranchement USB l'endpointId
+      // Windows est stable, donc micId ne change pas et sans cette condition
+      // le micro restait coupe jusqu'au prochain changement reel.
+      const needMic = (s.micMix || s.autoSwitchMic) && !audio.micStream && (audio.devices.inp || []).length > 0;
+      if (s.cableId !== prev.cable || s.monId !== prev.mon || s.micId !== prev.mic || needMic) await applyAudio().catch((e) => logErr('applyAudio', e));
       // Cable branche/installé a chaud : diffusion + bascule micro sans relancer l'app
       if (!hadCable && cablePresent()) {
         await applyAudio().catch((e) => logErr('applyAudio', e));
