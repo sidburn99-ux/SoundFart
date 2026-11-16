@@ -564,20 +564,34 @@ function audioExecSync(tool, args, timeoutMs) {
 
 // parseEndpoints/parseGet/findCableCapture viennent de lib/audio-utils.js.
 
+// Logique de restauration mutualisee (async et sync) : la duplication
+// complete derivait — un correctif dans l'une pouvait rater l'autre.
+// Priorite : peripherique par defaut Windows non virtuel (role multi), puis
+// les ids d'origine par role, puis le 1er peripherique non virtuel.
+// Retourne les args du 'set capture' ou null si rien a restaurer.
+function micRestoreArgs(eps, cur, prev) {
+  const r = chooseRestoreIds(eps, prev, cur);
+  const cId = r.consoleId, mId = r.commId;
+  if (!cId && !mId) return null; // garde restoreFile pour reessayer plus tard
+  return ['set', 'capture', cId || mId, mId || cId, r.multiId || cId || mId];
+}
+
+function restoreMarker() {
+  if (!fs.existsSync(restoreFile())) return null;
+  return readRestoreMarker();
+}
+
 async function restoreMicNowP(tool) {
   try {
-    if (!tool || !fs.existsSync(restoreFile())) return false;
-    const prev = JSON.parse(fs.readFileSync(restoreFile(), 'utf-8'));
+    if (!tool) return false;
+    const prev = restoreMarker();
+    if (!prev) return false;
     const eps = parseEndpoints(await audioExecP(tool, ['list']));
-    // Priorite : peripherique par defaut Windows non virtuel (role multi), puis
-    // les ids d'origine par role, puis le 1er peripherique non virtuel.
-    // Comme ca la restauration suit le micro par defaut de l'utilisateur.
     let cur = { console: '', comm: '', multi: '' };
     try { cur = parseGet(await audioExecP(tool, ['get', 'capture'])); } catch {}
-    const r = chooseRestoreIds(eps, prev, cur);
-    const cId = r.consoleId, mId = r.commId;
-    if (!cId && !mId) return false; // garde restoreFile pour reessayer plus tard
-    await audioExecP(tool, ['set', 'capture', cId || mId, mId || cId, r.multiId || cId || mId]);
+    const args = micRestoreArgs(eps, cur, prev);
+    if (!args) return false;
+    await audioExecP(tool, args);
     try { fs.unlinkSync(restoreFile()); } catch {}
     return true;
   } catch { return false; }
@@ -598,15 +612,15 @@ function restoreMicNow(tool) {
     return audioExecSync(tool, args, Math.min(5000, Math.ceil(left)));
   };
   try {
-    if (!tool || !fs.existsSync(restoreFile())) return false;
-    const prev = JSON.parse(fs.readFileSync(restoreFile(), 'utf-8'));
+    if (!tool) return false;
+    const prev = restoreMarker();
+    if (!prev) return false;
     const eps = parseEndpoints(syncT(['list']));
     let cur = { console: '', comm: '', multi: '' };
     try { cur = parseGet(syncT(['get', 'capture'])); } catch {}
-    const r = chooseRestoreIds(eps, prev, cur);
-    const cId = r.consoleId, mId = r.commId;
-    if (!cId && !mId) return false;
-    syncT(['set', 'capture', cId || mId, mId || cId, r.multiId || cId || mId]);
+    const args = micRestoreArgs(eps, cur, prev);
+    if (!args) return false;
+    syncT(args);
     try { fs.unlinkSync(restoreFile()); } catch {}
     return true;
   } catch { return false; }
