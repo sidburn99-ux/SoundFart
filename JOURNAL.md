@@ -99,6 +99,42 @@ Vérifiable ici : `node --check`, `npm test`, `npm run dist`, build `.bat`/`.ps1
 - Race `normBtn` vs « Enregistrer » dans l'éditeur (gain perdu si enregistrement pendant computeNorm) — laissée, demande un choix produit (désactiver Enregistrer pendant le calcul).
 - `dl = null` symétrique dans youtube.js — chemin quasi-mort, non appliqué (cosmétique).
 
+## Campagne terrain + correctifs (16/11/2026, branche `fix/audio-robustness`)
+
+QCM de validation utilisateur (~50 points) : quasi tout OK. Bugs rapportés et traités :
+
+### Corrigé
+
+- **Micro USB rebranché ne revenait pas + larsen après reconnexion** : `devicechange` ne rebuildait que si un deviceId changeait — or l'ID Windows est stable au rebranchement → voix morte. Et si `applyAudio` tournait micro absent, `getUserMedia` sans contrainte prenait le périphérique par défaut = CABLE Output (post-bascule) → capture de la sortie Discord = larsen. Fix : rebuild si micro requis mais stream mort ; plus jamais de repli implicite (micro non résolu = warn).
+- **Veille/réveil → app morte** : Chromium ferme les `AudioContext` (`closed`) au réveil ; le handler ne rebuildait que sur `interrupted`. Rebuild borné (5 essais, 2,5 s) si le contexte est encore référencé ; les fermetures volontaires (teardown) ne rebuildent pas.
+- **« Tout réinitialiser » (éditeur)** ne remettait que trim/fades → étendu à volume + normalisation ; nom/catégorie/favori/raccourci conservés.
+- **Restauration micro à la fermeture** : pas de bug trouvé à la lecture — logs ajoutés (`[mic] will-quit` marqueur + résultat OK/échec) pour trancher au prochain test utilisateur.
+- **YouTube** : bouton « Annuler le téléchargement » (`yt:cancel` tue l'arbre yt-dlp) ; erreurs traduites en français (`ytErrFr` : privée, indisponible, 429, 403, timeout, réseau).
+- **Raccourci « touche simple »** : comportement voulu (un raccourci global Windows exige modifieur ou F — sinon il volerait la frappe). Hint déjà présent, pas de bug.
+
+### Features ajoutées (validées par l'utilisateur)
+
+- **Voice gate** : `src/voice-gate.js` AudioWorklet (highpass ~80 Hz + downward expander −50 dBFS) sur la voix uniquement + contraintes EC/NS/AGC getUserMedia déjà actives. Réglage `voiceDsp` (défaut actif) dans Réglages → Micro.
+- **Limite de durée par son** : `maxSoundDur` (défaut 45 s, 0 = illimité) — borne la lecture à `[trimStart, +max]`, fichier jamais coupé, toast une fois par fichier, avertissement à l'analyse YouTube. Réglable dans Réglages → Niveaux audio.
+- **Enregistreur** : jauge de niveau temps réel (AnalyserNode sur le mix) + bouton « Écouter » dans la modale de résultat avant ajout.
+
+### Preuve forensique
+
+Le smoke test kill a capturé `child-process-gone` en action : `Audio Service`, `Video Capture`, `Network Service`, `GPU` → `exitCode 143`, puis `[page] AudioContext…audio device` — la signature complète du crash `-1/143`. Au prochain crash réel, `soundfart.log` montrera si le fautif est le service audio Chromium.
+
+### Vérifications
+
+`node --check` ×6, `npm test` 57/57, `npm run dist` OK, smoke `--test-profile` : démarrage propre, `child-gone` opérationnel.
+
+### « À valider » (suite)
+
+- Micro USB rebranché : retour auto + plus de larsen (fix non testé en réel).
+- Veille/réveil : audio reconstruit (fix non testé en réel).
+- Voice gate : qualité vocale perçue (trop étouffé ? → régler ou `voiceDsp` off).
+- Limite 45 s : lecture tronquée + toast ; YouTube 19 min désormais limité à 45 s de lecture.
+- Restauration micro à la fermeture : retest utilisateur + lecture `[mic]` logs.
+- Jauge enregistreur + bouton Écouter.
+
 ## Campagne de fiabilisation (15/11/2026)
 
 ## Chantier audio-robustesse (16/11/2026, branche `fix/audio-robustness`)
