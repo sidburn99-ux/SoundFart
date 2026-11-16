@@ -32,7 +32,9 @@ async function ensureFfmpeg() {
   ffmpegPromise = (async () => {
     try {
       // ffmpeg.exe deja extrait quelque part dans ffmpegDir() : on l'utilise tel quel
-      if (fs.existsSync(ffmpegDir())) {
+      // (ffmpegDir() peut etre un FICHIER : existsSync vrai mais readdirSync
+      // dans findFile jetterait ENOTDIR a chaque appel).
+      if (fs.existsSync(ffmpegDir()) && fs.statSync(ffmpegDir()).isDirectory()) {
         const existing = findFile(ffmpegDir(), 'ffmpeg.exe');
         // Un exe <10 Mo est un reste d'extraction tuee par timeout :
         // on purge le dossier et on retente un telechargement propre.
@@ -189,7 +191,7 @@ function downloadFile(url, dest, onProgress) {
         const out = fs.createWriteStream(dest);
         res.on('data', (c) => {
           got += c.length;
-          if (got > 300 * 1024 * 1024) { req.destroy(new Error('téléchargement trop volumineux')); return; }
+          if (got > 300 * 1024 * 1024) { try { out.destroy(); } catch {} req.destroy(new Error('téléchargement trop volumineux')); return; }
           if (total) { try { onProgress(got / total); } catch {} }
         });
         res.on('error', (e) => { out.destroy(); rej(e); });
@@ -213,12 +215,18 @@ function downloadFile(url, dest, onProgress) {
 }
 
 // GET HTTPS borne (1 Mo) pour les petites API JSON — pas de fichier.
-function httpsGetText(url) {
+function httpsGetText(url, depth = 0) {
   return new Promise((resolve, reject) => {
+    // Bornes : HTTPS only a chaque saut (anti-downgrade) et max 5
+    // redirections — sinon une redirection circulaire bouclerait a vie.
+    if (!/^https:\/\//i.test(url)) return reject(new Error('URL non-HTTPS refusée'));
+    if (depth > 5) return reject(new Error('trop de redirections'));
     const req = https.get(url, { headers: { 'User-Agent': 'SoundFart' } }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
         res.resume();
-        try { return resolve(httpsGetText(new URL(res.headers.location, url).href)); } catch { return reject(new Error('redirection invalide')); }
+        let loc;
+        try { loc = new URL(res.headers.location, url).href; } catch { return reject(new Error('redirection invalide')); }
+        return resolve(httpsGetText(loc, depth + 1));
       }
       if (res.statusCode !== 200) { res.resume(); return reject(new Error('HTTP ' + res.statusCode)); }
       let got = 0; const chunks = [];
@@ -330,7 +338,11 @@ async function maybeUpdateYtDlp(force = false) {
     const latest = String(JSON.parse(body).tag_name || '').trim();
     if (!/^\d{4}\.\d{2}\.\d{2}$/.test(latest)) return false;
     const current = (await ytdlpInstalledVersion()) || YTDLP_VERSION;
-    fs.writeFileSync(ytdlpMetaFile(), JSON.stringify({ version: current, at: Date.now() })); // horodate la verification
+    // Ecriture atomique (.tmp + rename) : un crash pendant le write ne doit
+    // pas laisser un JSON tronque lu comme « pas de meta » au prochain boot.
+    const metaTmp = ytdlpMetaFile() + '.tmp';
+    fs.writeFileSync(metaTmp, JSON.stringify({ version: current, at: Date.now() }));
+    fs.renameSync(metaTmp, ytdlpMetaFile()); // horodate la verification
     // Format AAAA.MM.JJ : comparaison lexicale = chronologique. Ne jamais
     // "mettre a jour" vers une version plus ancienne que celle installee.
     if (latest <= current) return false;
@@ -367,7 +379,9 @@ async function ensureYtDlp() {
 function runYt(args, onProgress) {
   onProgress = cbOrNoop(onProgress);
   return new Promise((resolve, reject) => {
-    const p = trackChild(spawn(ytdlpPath(), args, { windowsHide: true }));
+    // stdin ignore : un outil externe ne doit pas heriter d'un pipe ouvert
+    // (yt-dlp/ffmpeg peuvent y attendre une saisie et pendre).
+    const p = trackChild(spawn(ytdlpPath(), args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }));
     let err = '', done = false;
     // Timeout global : un yt-dlp fige ne doit pas pendre le telechargement
     // indefiniment (le timeout inactivite de downloadVerified ne s'applique pas ici).
@@ -484,12 +498,18 @@ H('yt:download', async (_e, o) => {
     const lastTag = tags[tags.length - 1];
     const preferred = created.filter((f) => path.basename(f).startsWith('sf-' + lastTag + '-'));
     const pool = preferred.length ? preferred : created;
-    const newest = pool.sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)[0];
+    // statSync peut jeter si le fichier disparaît entre readdir et le tri
+    // (export/ suppression concurrente) : traiter comme mtime 0, pas crasher.
+    const mtime = (f) => { try { return fs.statSync(f).mtimeMs; } catch { return 0; } };
+    const newest = pool.sort((a, b) => mtime(b) - mtime(a))[0];
     // Plafond coherent avec file:read (512 Mo) : un audio plus lourd serait
     // de toute facon illisible par l'app — autant echouer ici, proprement.
     // noRetry : une mise a jour yt-dlp ne changera pas la taille ; et on
     // supprime le fichier pour ne pas laisser un import mort sur le disque.
-    if (fs.statSync(newest).size > 512 * 1024 * 1024) {
+    let newestSize = 0, newestGone = false;
+    try { newestSize = fs.statSync(newest).size; } catch { newestGone = true; }
+    if (newestGone || !newestSize) throw new Error('Le fichier téléchargé a disparu avant la validation.');
+    if (newestSize > 512 * 1024 * 1024) {
       try { fs.unlinkSync(newest); } catch {}
       const err = new Error('Le fichier téléchargé dépasse 512 Mo — trop lourd pour SoundFart.');
       err.noRetry = true;
