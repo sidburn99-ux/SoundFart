@@ -18,6 +18,51 @@ function ytErrFr(e) {
   return raw || 'Erreur inconnue.';
 }
 
+// Fichiers imports/ non ajoutes a la bibliotheque : un download YouTube
+// dont la modale de resultat est fermee sans « Ajouter » devient
+// introuvable — cette liste permet de les recuperer (retour terrain).
+async function orphanImportsModal() {
+  const dirs = [...new Set([cfg.settings.storageDir || '', cfg.settings.lastDestDir || ''].filter(Boolean))];
+  if (!dirs.length) dirs.push('');
+  const seen = new Set(), files = [];
+  for (const d of dirs) {
+    try {
+      for (const f of await window.sf.listImports(d)) {
+        if (seen.has(f.path) || cfg.sounds.some((s) => s.path === f.path)) continue;
+        seen.add(f.path); files.push(f);
+      }
+    } catch (e) { logErr('listImports', e); }
+  }
+  if (!files.length) { toast('Aucun fichier non ajouté dans imports/.', 'info'); return; }
+  const checks = files.map((f) => {
+    const cb = el('input', { type: 'checkbox', checked: true });
+    const sz = f.size > 1048576 ? (f.size / 1048576).toFixed(1) + ' Mo' : Math.round(f.size / 1024) + ' Ko';
+    return { f, cb, row: el('label', { class: 'check' }, cb,
+      el('span', { text: f.name.replace(/^sf-[a-z0-9]+-?/i, '') + ' — ' + sz + ' — ' + new Date(f.mtime).toLocaleDateString('fr-FR') })) };
+  });
+  modal('Fichiers importés non ajoutés (' + files.length + ')', [
+    el('div', { class: 'hint', style: { maxHeight: '50vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px' } },
+      checks.map((c) => c.row)),
+    el('div', { class: 'hint', text: 'Ce sont des fichiers téléchargés (YouTube) ou déposés dans imports/ qui ne sont pas encore dans ta bibliothèque. Coche ceux à ajouter.' }),
+  ], [
+    { label: 'Fermer', onclick: (c) => c() },
+    { label: 'Ajouter la sélection', kind: 'primary', onclick: (c) => {
+      let n = 0;
+      for (const { f, cb } of checks) {
+        if (!cb.checked) continue;
+        const s = {
+          id: uid(), name: f.name.replace(/^sf-[a-z0-9]+-?/i, '').replace(/\.[^.]+$/, '').slice(0, 80) || 'Import',
+          path: f.path, categoryId: null, volume: 100, addedAt: Date.now(), plays: 0,
+          favorite: false, norm: 1, shortcut: null, trimStart: 0, trimEnd: null, fadeIn: 0, fadeOut: 0,
+        };
+        if (pushSound(s)) n++;
+      }
+      save(); renderAll(); c();
+      toast(n ? n + ' fichier(s) ajouté(s) à la bibliothèque.' : 'Aucun fichier ajouté.', n ? 'info' : 'warn');
+    } },
+  ], { wide: true });
+}
+
 function youtubeModal() {
   const urlIn = el('input', { type: 'text', placeholder: 'https://www.youtube.com/watch?v=…' });
   urlIn.style.flex = '1';
@@ -154,7 +199,14 @@ function youtubeModal() {
           ? 'Audio complet téléchargé ; seul l\'extrait choisi sera joué (' + fmtTime(end - start) + ' sur ' + fmtTime(info.duration) + ').'
           : 'Fichier audio complet téléchargé — ajuste le début/fin dans l\'éditeur si besoin.';
     } catch (e) {
-      prog.textContent = 'Téléchargement impossible : ' + ytErrFr(e) + ' — vérifie le lien, ta connexion, et réessaie.';
+      // Annulation explicite : on quitte la modale d'importation plutot
+      // que d'afficher une « erreur » — demande utilisateur.
+      if (/annul/i.test(String((e && e.message) || e))) {
+        prog.textContent = 'Téléchargement annulé.';
+        if (modalClose === ytModalClose) ytModalClose();
+      } else {
+        prog.textContent = 'Téléchargement impossible : ' + ytErrFr(e) + ' — vérifie le lien, ta connexion, et réessaie.';
+      }
     } finally {
       busy = false;
       cancelBtn.disabled = true;
@@ -162,7 +214,7 @@ function youtubeModal() {
     }
   } });
 
-  const previewSound = () => {
+const previewSound = () => {
     if (!dl) return;
     play({
       id: uid(), name: (nameIn.value || '').trim() || 'YouTube', path: dl.path, volume: 100, plays: 0,

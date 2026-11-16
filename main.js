@@ -385,6 +385,25 @@ H('file:read', async (_e, p) => {
   return fs.promises.readFile(p);
 });
 
+// Liste les fichiers audio de <storageRoot(dir)>/imports non encore
+// references : les downloads YouTube dont la modale de resultat a ete
+// fermee sans « Ajouter » devenaient introuvables (retour terrain).
+H('imports:list', async (_e, dir) => {
+  const d = path.join(storageRoot(dir), 'imports');
+  let names;
+  try { names = await fs.promises.readdir(d); } catch { return []; }
+  const out = [];
+  for (const f of names) {
+    if (!AUDIO_EXT.includes(path.extname(f).toLowerCase())) continue;
+    const fp = path.join(d, f);
+    try {
+      const st = await fs.promises.stat(fp);
+      if (st.isFile()) out.push({ path: fp, name: f, size: st.size, mtime: st.mtimeMs });
+    } catch {}
+  }
+  return out.sort((a, b) => b.mtime - a.mtime).slice(0, 500);
+});
+
 H('file:check', async (_e, paths) => {
   if (!Array.isArray(paths) || paths.length > 5000) throw new Error('chemins invalides');
   // Async + par lots : jusqu'a 5000 existsSync synchrones sur le thread main

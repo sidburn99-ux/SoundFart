@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('sf', {
   expandPaths: (paths) => ipcRenderer.invoke('files:expand', paths),
   readFile: (p) => ipcRenderer.invoke('file:read', p),
   checkFiles: (paths) => ipcRenderer.invoke('file:check', paths),
+  listImports: (dir) => ipcRenderer.invoke('imports:list', dir),
   reveal: (p) => ipcRenderer.invoke('file:reveal', p),
   pathForFile: (file) => webUtils.getPathForFile(file),
   applyShortcuts: (entries) => ipcRenderer.invoke('shortcuts:apply', entries),

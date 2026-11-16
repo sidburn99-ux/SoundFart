@@ -175,6 +175,7 @@ function settingsModal() {
     } catch (e) { logErr('pickDir', e); }
   } });
   const resetDirBtn = el('button', { class: 'ghost', text: 'Réinitialiser', onclick: () => { s.storageDir = ''; dirLbl.textContent = 'Dossier SoundFart par défaut (SoundFart-data) — les fichiers vont dans imports/, recordings/, cuts/ à l\'intérieur'; } });
+  const orphanBtn2 = el('button', { text: 'Parcourir les fichiers non ajoutés…', onclick: () => orphanImportsModal().catch((e) => logErr('orphanImports', e)) });
   const voiceDsp = el('input', { type: 'checkbox', checked: s.voiceDsp !== false, title: 'Applique aux sons de la VOIX uniquement (jamais aux sons de la soundboard) : annulation d\'écho, suppression de bruit et filtre de souffle. Décoche si ta voix sonne étouffée ou si tu utilises déjà un filtre Discord/Teams.' });
   const voiceLvl = el('select', {},
     el('option', { value: '1', text: 'Léger' }),
@@ -293,6 +294,8 @@ function settingsModal() {
     { label: 'Stockage', nodes: [
       field('Dossier de stockage', el('div', { class: 'row' }, dirLbl, pickDirBtn, openDirBtn, resetDirBtn),
         'Dossier par défaut des fichiers créés par SoundFart (imports YouTube, enregistrements, extraits MP3) — un choix de dossier est aussi proposé avant chaque ajout.'),
+      field('Imports non ajoutés', orphanBtn2,
+        'Fichiers présents dans imports/ mais pas encore dans ta bibliothèque (téléchargements YouTube dont la fenêtre a été fermée sans « Ajouter »).'),
     ]},
     { label: 'Général', nodes: [
       field('Raccourci global STOP', el('div', { class: 'row' }, stopBtn), stopHint),
