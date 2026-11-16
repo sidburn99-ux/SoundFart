@@ -459,6 +459,11 @@ H('shortcuts:apply', (_e, entries) => {
       failed.push(accel);
     }
   }
+  // Forensique : un raccourci « cree mais jamais declenche » est
+  // indiscernable sans savoir si Windows l'a enregistre et si la
+  // touche arrive au renderer — on trace les deux cotes.
+  log('[shortcuts] ' + (valid.length - failed.length) + '/' + valid.length + ' enregistres' +
+    (failed.length ? ' — refuses: ' + failed.join(', ') : ''));
   return failed;
 });
 

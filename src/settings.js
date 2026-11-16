@@ -15,7 +15,7 @@ function exportConfig() {
 
 // Propose le dossier de destination avant un ajout (YouTube, enregistrement).
 // Pre-rempli avec le dernier choix (lastDestDir) ou le dossier de stockage.
-function askDestDir() {
+function askDestDir(extraButtons) {
   return new Promise((resolve) => {
     const inp = el('input', { type: 'text', value: cfg.settings.lastDestDir || cfg.settings.storageDir || '' });
     // input DOIT etre dans .field : sinon il garde le style natif (fond
@@ -24,6 +24,7 @@ function askDestDir() {
     modal('Dossier de destination', [
       field('Dossier', inp, 'Le fichier sera enregistré dans ce dossier (sous-dossier imports/ ou recordings/ selon la source). Laisse vide pour le dossier SoundFart par défaut.'),
     ], [
+      ...(extraButtons || []),
       { label: 'Annuler', onclick: (c) => { resolve(null); c(); } },
       { label: 'Choisir…', onclick: async () => { try { const d = await window.sf.pickDir(); if (d) inp.value = d; } catch (e) { logErr('pickDir', e); } } },
       { label: 'OK', kind: 'primary', onclick: (c) => {

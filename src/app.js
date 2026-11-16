@@ -890,7 +890,11 @@ const fmtAccel = (a) => (a || '').replace('CommandOrControl', 'Ctrl').replace(/\
 
 function buildAccel(e) {
   if (['Control', 'Alt', 'Shift', 'Meta'].includes(e.key)) return null;
-  let k = e.key;
+  // AZERTY : la rangee chiffres donne &é"'(-è_çà SANS Maj — e.key est le
+  // caractere, pas le chiffre, donc « Ctrl+1 » produisait « Ctrl+& », un
+  // accelerateur invalide refuse par globalShortcut. e.code est
+  // layout-independant : DigitN -> 'N' (le VK Windows est le meme).
+  let k = /^Digit\d$/.test(e.code || '') ? e.code.slice(5) : e.key;
   if (k === ' ') k = 'Space';
   else if (k === '+') k = 'Plus';
   else if (k === 'ArrowUp') k = 'Up';
@@ -1505,6 +1509,7 @@ async function init() {
     }, 2500);
   });
   window.sf.onShortcut((key) => {
+    uiLog('shortcut recu: ' + key); // forensique : distingue « jamais enregistre » de « joue mais muet »
     if (key === '__stop__') { stopAll(false); return; }
     const s = cfg.sounds.find((x) => x.id === key);
     if (s) play(s);

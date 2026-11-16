@@ -331,7 +331,31 @@ async function recorderModal() {
           startBtn.disabled = false; stopBtn.disabled = true;
           micSel.disabled = micOn.disabled = pcOn.disabled = cableOn.disabled = false;
           const fname = nameIn.value.trim() || 'enregistrement';
-          const destDir = await askDestDir();
+          // Apercu AVANT sauvegarde : la prise est en memoire (ab) — on la
+          // decode et la joue sur l'ecoute locale sans rien ecrire. La voix
+          // est enregistree dans voices/ pour que STOP et stopAll la
+          // stoppent comme une lecture normale.
+          let previewVoice = null;
+          const previewRec = async () => {
+            try {
+              if (previewVoice) { stopVoice(previewVoice, true); previewVoice = null; return; }
+              if (!audio.mon) { toast('Choisis une « écoute locale » dans les réglages pour pré-écouter.', 'warn'); return; }
+              if (ab.byteLength > 150 * 1024 * 1024) { toast('Enregistrement trop lourd pour l\'aperçu — sauvegarde d\'abord.', 'warn'); return; }
+              const buf = await decoder.decodeAudioData(ab.slice(0));
+              const out = audio.mon;
+              const src = out.ctx.createBufferSource();
+              src.buffer = buf;
+              const g = out.ctx.createGain();
+              g.gain.value = 1;
+              src.connect(g); g.connect(out.bus);
+              const v = { soundId: '__rec_preview__', nodes: [{ src, g, out }], preview: true };
+              voices.add(v);
+              src.onended = () => { try { g.disconnect(); } catch {} endVoice(v); if (previewVoice === v) previewVoice = null; };
+              src.start();
+              previewVoice = v;
+            } catch (e) { logErr('previewRec', e); toast('Aperçu impossible : ' + (e && e.message), 'warn'); }
+          };
+          const destDir = await askDestDir([{ label: 'Écouter', onclick: () => previewRec() }]);
           if (destDir === null) {
             // La modale a ete detruite par askDestDir : status est detache,
             // seul un toast reste visible — l'utilisateur doit etre informe.
