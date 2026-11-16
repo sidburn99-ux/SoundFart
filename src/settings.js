@@ -175,6 +175,13 @@ function settingsModal() {
   } });
   const resetDirBtn = el('button', { class: 'ghost', text: 'Réinitialiser', onclick: () => { s.storageDir = ''; dirLbl.textContent = 'Dossier SoundFart par défaut (SoundFart-data) — les fichiers vont dans imports/, recordings/, cuts/ à l\'intérieur'; } });
   const voiceDsp = el('input', { type: 'checkbox', checked: s.voiceDsp !== false, title: 'Applique aux sons de la VOIX uniquement (jamais aux sons de la soundboard) : annulation d\'écho, suppression de bruit et filtre de souffle. Décoche si ta voix sonne étouffée ou si tu utilises déjà un filtre Discord/Teams.' });
+  const voiceLvl = el('select', {},
+    el('option', { value: '1', text: 'Léger' }),
+    el('option', { value: '2', text: 'Normal' }),
+    el('option', { value: '3', text: 'Fort' }));
+  voiceLvl.value = String(s.voiceDspLvl ?? 2);
+  voiceLvl.title = 'Intensité du traitement vocal : Léger = peu de coupe, Normal = équilibré, Fort = bruit de clavier/fond très atténué (la voix peut paraître plus compressée).';
+  voiceLvl.addEventListener('change', () => { s.voiceDspLvl = Math.min(3, Math.max(1, +voiceLvl.value || 2)); save(); });
   const autoMic = el('input', { type: 'checkbox', checked: !!s.autoSwitchMic, title: 'Au lancement, l\'entrée micro Windows bascule sur « CABLE Output » (pour que Discord capte ta voix via le câble), puis revient à ton vrai micro à la fermeture ou en cas de crash.' });
   const watchMic = el('input', { type: 'checkbox', checked: s.watchdogMic !== false, title: 'Revérifie périodiquement que l\'entrée micro est toujours sur le câble. Se met en pause pour la session si tu changes le micro toi-même (Discord inclus).' });
 
@@ -256,6 +263,7 @@ function settingsModal() {
         el('span', { text: 'Mixer mon micro dans la sortie Discord (sinon tes potes n\'entendent que les sons). Décoche si tu utilises « Écouter ce périphérique » de Windows.' })),
       el('label', { class: 'check' }, voiceDsp,
         el('span', { text: 'Réduction de bruit et écho sur la voix uniquement — n\'affecte pas les sons. Le gain micro reste indépendant du volume general.' })),
+      el('div', { class: 'row' }, el('span', { class: 'hint', text: 'Intensité :' }), voiceLvl),
       field('Bascule micro automatique', el('label', { class: 'check' }, autoMic,
         el('span', { text: 'Au lancement, SEUL le micro (entrée Windows) passe sur « CABLE Output » et revient à ton micro à la fermeture — tes sorties (Discord, écoute locale) restent sur tes périphériques habituels. Dans Discord, choisis « Défaut » comme périphérique d\'entrée pour que ça suive.' }))),
       field('Surveillance micro automatique', el('label', { class: 'check' }, watchMic,
@@ -326,6 +334,7 @@ function settingsModal() {
       s.autoSwitchMic = autoMic.checked;
       s.watchdogMic = watchMic.checked;
       s.voiceDsp = voiceDsp.checked;
+      s.voiceDspLvl = Math.min(3, Math.max(1, +voiceLvl.value || 2));
       const nl = +normLufsIn.value;
       s.normLufs = (Number.isFinite(nl) && nl <= 0) ? Math.max(-40, nl) : defaults().settings.normLufs;
       const md = +maxDurIn.value;

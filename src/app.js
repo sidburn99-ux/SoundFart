@@ -60,7 +60,7 @@ const defaults = () => ({
   version: 2,
   sounds: [],
   categories: [],
-  settings: { cableId: '', cableLabel: '', monId: 'default', monLabel: '', micId: '', micLabel: '', micMix: false, master: 80, sort: 'added-desc', catSort: 'manual', stopShortcut: 'CommandOrControl+Alt+S', storageDir: '', autoSwitchMic: true, watchdogMic: true, groupByCat: true, normLufs: -18, maxSoundDur: 45, voiceDsp: true },
+  settings: { cableId: '', cableLabel: '', monId: 'default', monLabel: '', micId: '', micLabel: '', micMix: false, master: 80, sort: 'added-desc', catSort: 'manual', stopShortcut: 'CommandOrControl+Alt+S', storageDir: '', autoSwitchMic: true, watchdogMic: true, groupByCat: true, normLufs: -18, maxSoundDur: 45, voiceDsp: true, voiceDspLvl: 2 },
   ui: { cat: 'all' },
 });
 
@@ -98,6 +98,8 @@ function normalizeCfg(saved) {
   // voiceDsp : true par defaut — seul un false EXPLICITE desactive le
   // traitement vocal (cle absente/invalide -> garde actif).
   c.settings.voiceDsp = c.settings.voiceDsp !== false;
+  const vl = Math.round(+c.settings.voiceDspLvl);
+  c.settings.voiceDspLvl = (Number.isFinite(vl) && vl >= 1 && vl <= 3) ? vl : 2;
   if (!Number.isFinite(+c.settings.master)) c.settings.master = 80; else c.settings.master = Math.min(100, Math.max(0, +c.settings.master));
   if (typeof c.settings.stopShortcut !== 'string' || c.settings.stopShortcut.length > 64) c.settings.stopShortcut = defaults().settings.stopShortcut;
   if (typeof c.settings.sort !== 'string' || !SORTS.some(([v]) => v === c.settings.sort)) c.settings.sort = 'added-desc';
@@ -563,10 +565,21 @@ async function applyAudioInner() {
         // le gain master (réglage son soundboard). Seul le limiteur la protège.
         try {
           if (vdsp) {
+            // Intensite reglable : seuil du gate, vitesse de release et
+            // bande passante vocale (coupe les claviers/souffle). Niveaux :
+            // 1 leger, 2 normal, 3 fort — le reglage voiceDspLvl persiste.
+            const VOICE_DSP = {
+              1: { threshold: 0.0015, release: 0.35, highpass: 0.993, lowpass: 0.7 },
+              2: { threshold: 0.003, release: 0.25, highpass: 0.99, lowpass: 0.5 },
+              3: { threshold: 0.01, release: 0.12, highpass: 0.98, lowpass: 0.35 },
+            };
             const out = audio.cable;
             out._vgMod = out._vgMod || out.ctx.audioWorklet.addModule('voice-gate.js');
             await out._vgMod;
-            const gate = new AudioWorkletNode(out.ctx, 'voice-gate', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2] });
+            const gate = new AudioWorkletNode(out.ctx, 'voice-gate', {
+              numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2],
+              processorOptions: VOICE_DSP[Math.min(3, Math.max(1, +(s.voiceDspLvl || 2)))],
+            });
             src.connect(gate);
             gate.connect(out.lim);
           } else {

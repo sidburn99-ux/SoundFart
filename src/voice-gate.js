@@ -23,10 +23,14 @@ class VoiceGateProcessor extends AudioWorkletProcessor {
     this.relC = Math.exp(-1 / (Math.max(0.01, o.release || 0.25) * sr));
     this.env = 0;
     this.g = 1;
-    // Highpass one-pole : y = x - xPrev + r*yPrev, r ~ 0.99 -> ~76 Hz a 48 kHz.
+    // Filtre vocal : highpass one-pole (y = x - xPrev + r*yPrev) coupe les
+    // graves de table/clavier (~80-120 Hz) ; lowpass one-pole (y += a*(x-y))
+    // coupe le souffle/aigus au-dessus de ~3-4 kHz — bande passante parole.
     this.r = typeof o.highpass === 'number' ? o.highpass : 0.99;
+    this.lpA = typeof o.lowpass === 'number' ? o.lowpass : 0; // a = 0 -> inactif
     this.xPrev = [];
     this.yPrev = [];
+    this.lpPrev = [];
   }
 
   process(inputs, outputs) {
@@ -37,13 +41,15 @@ class VoiceGateProcessor extends AudioWorkletProcessor {
     const n = input[0].length;
     for (let c = 0; c < nCh; c++) {
       const inp = input[c], out = output[c];
-      if (this.xPrev.length <= c) { this.xPrev.push(0); this.yPrev.push(0); }
-      let xp = this.xPrev[c], yp = this.yPrev[c];
+      if (this.xPrev.length <= c) { this.xPrev.push(0); this.yPrev.push(0); this.lpPrev.push(0); }
+      let xp = this.xPrev[c], yp = this.yPrev[c], lp = this.lpPrev[c] || 0;
       for (let i = 0; i < n; i++) {
         const x = inp[i];
         // highpass one-pole
-        const y = x - xp + this.r * yp;
+        let y = x - xp + this.r * yp;
         xp = x; yp = y;
+        // lowpass one-pole (bande passante voix) si actif
+        if (this.lpA > 0) { lp += this.lpA * (y - lp); y = lp; }
         // enveloppe pic (canal 0 pour la detection — mono compatible)
         if (c === 0) {
           const a = Math.abs(y);
@@ -54,7 +60,7 @@ class VoiceGateProcessor extends AudioWorkletProcessor {
         }
         out[i] = y * this.g;
       }
-      this.xPrev[c] = xp; this.yPrev[c] = yp;
+      this.xPrev[c] = xp; this.yPrev[c] = yp; this.lpPrev[c] = lp;
     }
     return true;
   }
