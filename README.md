@@ -12,7 +12,7 @@ Soundboard Windows pour Discord : joue des sons dans tes appels, enregistre ta v
 - **Enregistreur intégré** : micro, audio du PC (loopback WASAPI sans repasser par le câble) et sortie SoundFart→Discord
 - **Import YouTube** : extrait MP3 par timeline ou fichier audio complet, avec progression
 - **Routage Discord** : sortie vers `CABLE Input`, micro Windows basculé automatiquement sur `CABLE Output` à la lancement et restauré à la fermeture (même après crash)
-- **Réglages audio** : sortie Discord, écoute locale casque, mixage micro, surveillance automatique du micro
+- **Paramètres** : sortie Discord, écoute locale casque, mixage micro, surveillance automatique du micro
 - **Sauvegarde** : export/import de la configuration (références, catégories, découpes, raccourcis)
 
 ## Prérequis
@@ -25,7 +25,7 @@ Soundboard Windows pour Discord : joue des sons dans tes appels, enregistre ta v
 
 1. Déplace/lance `SoundFart.exe` (conserve le dossier `SoundFart-data` à côté — il contient ta config, tes outils et tes logs)
 2. Si VB-CABLE est absent, l'écran d'accueil t'invite à le télécharger ; installe-le, redémarre Windows si besoin, puis « J'ai installé, vérifier »
-3. Réglages → audio : choisis **« CABLE Input »** (surligné ★) comme sortie Discord et ton casque comme écoute locale
+3. Paramètres → Sortie audio : choisis **« CABLE Input »** (surligné ★) comme sortie Discord et ton casque comme écoute locale
 4. Clique un son (ou son raccourci) pour le jouer
 
 > ⚠️ L'exe n'est **pas signé** → SmartScreen peut afficher un avertissement au 1er lancement (« Informations complémentaires » → Exécuter).

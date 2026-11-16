@@ -241,7 +241,7 @@ function buildMenu() {
     { label: 'Audio', submenu: [
       { label: 'Stopper tous les sons', click: sendMenu('stop') }, // pas d'accelerator : le globalShortcut gere le global, le menu doublait le declenchement
       { type: 'separator' },
-      { label: 'Réglages audio…', click: sendMenu('settings') },
+      { label: 'Paramètres…', click: sendMenu('settings') },
     ]},
     { label: 'Affichage', submenu: [
       { label: 'Vue', submenu: views.map(([id, name]) => ({

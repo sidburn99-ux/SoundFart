@@ -270,7 +270,7 @@ function modal(title, body, buttons, opts = {}) {
   };
   const onKey = (e) => { if (e.key === 'Escape') close(); };
   document.addEventListener('keydown', onKey);
-  const box = el('div', { class: 'modal' + (opts.wide ? ' wide' : '') },
+  const box = el('div', { class: 'modal' + (opts.wide ? ' wide' : '') + (opts.cls ? ' ' + opts.cls : '') },
     el('h2', { text: title }),
     el('div', { class: 'modal-body' }, body),
     el('div', { class: 'modal-actions' },

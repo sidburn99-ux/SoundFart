@@ -13,7 +13,7 @@
 
 - **Campagne de fiabilisation** (audit → corrections → Quality Gate V2) : voir section dédiée ci-dessous.
 - **Normalisation loudness LUFS** : remplace la normalisation par pic. Mesure BS.1770 **100 % JS** (`SFUtils.loudnessFromPcm`, coefficients exacts validés ~0,05 LU vs ffmpeg ebur128), cible `normLufs` (-18 LUFS défaut, -40 à 0), plafond de pic -1 dBFS, maxGain ×4. Bouton « Tester » (bruit rose calé sur la cible, écoute locale). Fichiers < 400 ms : une seule zone d'énergie. **Aucune dépendance externe** — l'app reste portable.
-- **Réglages audio en 4 onglets** (Périphériques / Niveaux audio / Stockage / Général) + bouton reset « volume 100 % / norm ×1 » pour tous les sons (confirmation 2 clics).
+- **Paramètres style Discord** : panneau élargi (980 px) avec navigation latérale groupée (Audio / Bibliothèque / Général) — sections Sortie audio, Micro & voix, Bibliothèque, Données & stockage, Général, chacune avec description. Remplace les anciens onglets.
 - **Migration config v1→v2** : les anciens `s.norm` (basés pic) sont invalidés à ×1 ; volumes manuels, découpes, favoris, catégories, raccourcis préservés.
 - Correctifs : cible de normalisation persistée dès la saisie, progression de normalisation en ligne dans le panneau (qui reste ouvert), scan de pic exhaustif, **crash fatal corrigé dans `downloadFile`** (`res()` appelait la réponse HTTP au lieu de `resolve` — touchait tous les téléchargements d'outils).
 
@@ -117,6 +117,8 @@ QCM de validation utilisateur (~50 points) : quasi tout OK. Bugs rapportés et t
 - **Voice gate** : `src/voice-gate.js` AudioWorklet (highpass ~80 Hz + downward expander −50 dBFS) sur la voix uniquement + contraintes EC/NS/AGC getUserMedia déjà actives. Réglage `voiceDsp` (défaut actif) dans Réglages → Micro.
 - **Limite de durée par son** : `maxSoundDur` (défaut 45 s, 0 = illimité) — borne la lecture à `[trimStart, +max]`, fichier jamais coupé, toast une fois par fichier, avertissement à l'analyse YouTube. Réglable dans Réglages → Niveaux audio.
 - **Enregistreur** : jauge de niveau temps réel (AnalyserNode sur le mix) + bouton « Écouter » dans la modale de résultat avant ajout.
+- **Imports orphelins** : IPC `imports:list` + entrée « Parcourir les fichiers non ajoutés… » (Paramètres → Bibliothèque) — les fichiers de `imports/` absents de la bibliothèque (downloads YouTube dont la fenêtre a été fermée sans « Ajouter ») sont listés à cocher et ajoutables sans toucher aux fichiers.
+- **Annulation YouTube** : annuler un téléchargement quitte la modale d'import (plus de pseudo-erreur).
 
 ### Preuve forensique
 

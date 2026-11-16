@@ -31,7 +31,7 @@ Pour que Discord entende les sons, il faut un périphérique audio virtuel qui f
 
 ## 3. Configurer SoundFart
 
-Ouvre **⚙ Réglages audio** (barre latérale). Le panneau est organisé en **onglets** : `Périphériques` (sorties et micro), `Niveaux audio` (normalisation), `Stockage` (dossier des fichiers) et `Général` (raccourci STOP, sauvegarde).
+Ouvre **⚙ Paramètres** (barre latérale ou menu). Le panneau est organisé comme dans Discord : une **navigation latérale** à gauche (groupes Audio / Bibliothèque / Général) et des sections détaillées à droite — `Sortie audio` (sorties Discord et écoute locale), `Micro & voix` (micro, mixage, bascule automatique, traitement vocal), `Bibliothèque` (normalisation, durée max, imports non ajoutés), `Données & stockage` (dossier des fichiers) et `Général` (raccourci STOP, sauvegarde).
 
 | Réglage | Quoi choisir |
 |---|---|
@@ -69,7 +69,7 @@ Clique **Appliquer**. Le bandeau en bas de fenêtre affiche les routes actives (
 - **YouTube** : bouton « 📺 YouTube » → colle le lien. **Laisse début/fin vides** pour récupérer l'audio complet, ou précise une timeline (`02:15` ou secondes) pour un extrait. L'extrait est **physiquement découpé en MP3** quand ffmpeg est disponible (téléchargé une fois, ~115 Mo) ; sinon audio complet + découpe logicielle dans l'éditeur.
 - **Couper un son en MP3** : « Modifier » (✎) → règle début/fin → « MP3 de l'extrait » → tu peux remplacer le fichier par le petit MP3.
 - **Enregistreur** : « 🎙 Enregistreur » dans la barre latérale. Tu peux mixer plusieurs sources : **micro**, **audio du PC** (voix Discord, musique — capture système) et **câble SoundFart** (sons + micro mixé). Coche « Audio du PC » pour enregistrer une conversation Discord complète.
-- **Sauvegarde** : ⚙ Réglages → « Exporter la configuration » (récupère tout sauf les fichiers audio ; pour changer de PC, replace les fichiers au même endroit ou utilise « Retrouver le fichier… » sur les cartes marquées).
+- **Sauvegarde** : ⚙ Paramètres → Général → « Exporter la configuration » (récupère tout sauf les fichiers audio ; pour changer de PC, replace les fichiers au même endroit ou utilise « Retrouver le fichier… » sur les cartes marquées).
 
 ## 6. Dépannage
 

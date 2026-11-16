@@ -248,11 +248,10 @@ function settingsModal() {
   } });
   const cableInstallBtn = el('button', { class: 'ghost', text: 'Installer VB-CABLE…', onclick: () => showCableScreen() });
 
-  // Panneau organise en onglets : peripheriques / niveaux / stockage /
-  // general — chaque groupe reste focused et le panneau ne devient pas
-  // une page interminable.
-  const sections = [
-    { label: 'Périphériques', nodes: [
+  // Panneau « Paramètres » style Discord : navigation laterale groupee
+  // par categorie + sections detaillees (titre + description + champs).
+  const groups = [
+    { cat: 'Audio', label: 'Sortie audio', desc: 'Par où sortent les sons de la soundboard : la sortie Discord (câble virtuel VB-CABLE) et ton écoute locale. La voix du micro a son propre chemin — voir « Micro & voix ».', nodes: [
       el('div', { class: 'hint', text: '★ = choix recommandé (bordure rose) · ⚠ = à éviter (bordure rouge). Pour faire fonctionner la soundboard : sortie Discord = CABLE Input, écoute locale = ton casque, micro = ton vrai micro.' }),
       field('Sortie vers Discord (micro virtuel)', el('div', { class: 'row' }, cableSel, cableVerifyBtn, cableInstallBtn),
         cablePresent() ? 'Choisis « CABLE Input ». Dans Discord, mets « CABLE Output » comme micro.'
@@ -260,6 +259,8 @@ function settingsModal() {
       field('Écoute locale (ton casque)', monSel, s.monId && s.monId === s.cableId
         ? '⚠ Écoute locale = sortie Discord : tu risks une boucle/écho — choisis un périphérique différent.'
         : 'Choisis ton casque/écoute habituelle — pas un périphérique « CABLE » (boucle).'),
+    ]},
+    { cat: 'Audio', label: 'Micro & voix', desc: 'Le micro est capté séparément des sons : son volume ne suit PAS le curseur master (réglage Windows/Discord). Le traitement vocal n\'agit que sur ta voix, jamais sur les sons.', nodes: [
       field('Mon micro', micSel, 'Le vrai micro est ★ ; les périphériques virtuels (CABLE Output, Voicemeeter…) sont ⚠ déconseillés ici.'),
       el('label', { class: 'check' }, mix,
         el('span', { text: 'Mixer mon micro dans la sortie Discord (sinon tes potes n\'entendent que les sons). Décoche si tu utilises « Écouter ce périphérique » de Windows.' })),
@@ -272,15 +273,13 @@ function settingsModal() {
           toast('Restauration du micro demandée — si l\'entrée était bloquée sur le câble, elle revient sur ton micro.', 'info');
         } }),
         'À utiliser si ton micro Windows est resté bloqué sur « CABLE Output » (coupure, crash). Ramène l\'entrée sur ton vrai micro.'),
-    ]},
-    { label: 'Voix', nodes: [
       field('Traitement vocal', el('label', { class: 'check' }, voiceDsp,
         el('span', { text: 'Réduction de bruit et écho sur la voix uniquement — n\'affecte pas les sons. Le gain micro reste indépendant du volume general.' })),
         'Agit sur le micro envoyé à Discord : annulation d\'écho, suppression de bruit et filtre passe-bande (coupe les graves de clavier et le souffle). Décoche si ta voix sonne étouffée ou si tu utilises déjà un filtre Discord/Teams.'),
       field('Intensité', el('div', { class: 'row' }, voiceLvl),
         'Léger = peu de coupe · Normal = équilibré · Fort = bruit de clavier/fond très atténué (la voix peut paraître plus compressée).'),
     ]},
-    { label: 'Niveaux audio', nodes: [
+    { cat: 'Bibliothèque', label: 'Bibliothèque', desc: 'Niveaux de lecture des sons : normalisation loudness (mesurée en interne, fichiers jamais modifiés) et durée maximale jouée.', nodes: [
       field('Niveaux audio', el('div', {},
         el('div', { class: 'row' },
           el('span', { class: 'hint', text: 'Cible loudness (LUFS) :' }), normLufsIn, el('span', { class: 'hint', text: 'LUFS' }), normTestBtn, normAllBtn),
@@ -290,36 +289,40 @@ function settingsModal() {
         'Ramène la loudness perçue de chaque son au niveau cible sans dépasser le plafond de pic (-1 dBFS). Mesure 100 % interne (BS.1770), aucun téléchargement — les fichiers ne sont pas modifiés.'),
       field('Réinitialiser', el('div', { class: 'row' }, resetSoundsBtn),
         'Remet chaque son à volume 100 % et normalisation ×1 (cliquer deux fois pour confirmer).'),
-    ]},
-    { label: 'Stockage', nodes: [
-      field('Dossier de stockage', el('div', { class: 'row' }, dirLbl, pickDirBtn, openDirBtn, resetDirBtn),
-        'Dossier par défaut des fichiers créés par SoundFart (imports YouTube, enregistrements, extraits MP3) — un choix de dossier est aussi proposé avant chaque ajout.'),
       field('Imports non ajoutés', orphanBtn2,
         'Fichiers présents dans imports/ mais pas encore dans ta bibliothèque (téléchargements YouTube dont la fenêtre a été fermée sans « Ajouter »).'),
     ]},
-    { label: 'Général', nodes: [
+    { cat: 'Bibliothèque', label: 'Données & stockage', desc: 'Où SoundFart range les fichiers qu\'il crée (imports YouTube, enregistrements, extraits MP3).', nodes: [
+      field('Dossier de stockage', el('div', { class: 'row' }, dirLbl, pickDirBtn, openDirBtn, resetDirBtn),
+        'Dossier par défaut des fichiers créés par SoundFart (imports YouTube, enregistrements, extraits MP3) — un choix de dossier est aussi proposé avant chaque ajout.'),
+    ]},
+    { cat: 'Général', label: 'Général', desc: 'Raccourcis globaux et sauvegarde de la configuration.', nodes: [
       field('Raccourci global STOP', el('div', { class: 'row' }, stopBtn), stopHint),
       field('Sauvegarde', el('div', { class: 'row' }, exportBtn, importBtn),
         'La configuration contient les références aux fichiers, catégories, découpes, raccourcis et favoris — pas les fichiers audio eux-mêmes.'),
     ]},
   ];
-  const tabBar = el('div', { class: 'tabs' });
-  const tabBody = el('div', {});
-  const tabBtns = [];
-  function activateTab(btn, body) {
-    for (const t of tabBtns) { t.b.classList.toggle('on', t.b === btn); t.body.hidden = t.body !== body; }
+  const layout = el('div', { class: 'settings-layout' });
+  const nav = el('div', { class: 'set-nav' });
+  const panes = el('div', { class: 'set-panes' });
+  const paneList = [];
+  let lastCat = null;
+  for (const g of groups) {
+    if (g.cat !== lastCat) { lastCat = g.cat; nav.append(el('div', { class: 'set-nav-cat', text: g.cat })); }
+    const btn = el('button', { class: 'ghost', text: g.label });
+    const pane = el('div', { class: 'set-pane', hidden: true },
+      el('h3', { text: g.label }),
+      el('div', { class: 'hint set-desc', text: g.desc }),
+      ...g.nodes);
+    panes.append(pane); paneList.push({ btn, pane });
+    nav.append(btn);
   }
-  for (const sec of sections) {
-    const body = el('div', {});
-    for (const n of sec.nodes) body.append(n);
-    body.hidden = true;
-    tabBody.append(body);
-    const b = el('button', { class: 'ghost', text: sec.label, onclick: () => activateTab(b, body) });
-    tabBar.append(b); tabBtns.push({ b, body });
-  }
-  if (tabBtns.length) activateTab(tabBtns[0].b, tabBtns[0].body);
+  const activatePane = (i) => paneList.forEach((p, j) => { p.btn.classList.toggle('on', i === j); p.pane.hidden = i !== j; });
+  paneList.forEach((p, i) => { p.btn.onclick = () => activatePane(i); });
+  if (paneList.length) activatePane(0);
+  layout.append(nav, panes);
 
-  const closeSettings = modal('Réglages audio', [tabBar, tabBody], [
+  const closeSettings = modal('Paramètres', [layout], [
     { label: 'Fermer', onclick: (c) => c() },
     { label: 'Appliquer', kind: 'primary', onclick: async (c) => {
       // Enumeration degradee ou liste vide (permission refusee, transitoire) :
@@ -355,5 +358,5 @@ function settingsModal() {
         else if (r && !r.ok) toast('Bascule micro auto impossible : ' + r.err, 'warn');
       }).catch((e) => logErr('audioAutoSetup', e));
     } },
-  ], { onClose: () => { stopCleanup(); if (resetArmTimer) { clearTimeout(resetArmTimer); resetArmTimer = null; resetArmed = false; } } });
+  ], { wide: true, cls: 'settings', onClose: () => { stopCleanup(); if (resetArmTimer) { clearTimeout(resetArmTimer); resetArmTimer = null; resetArmed = false; } } });
 }
