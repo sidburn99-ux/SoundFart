@@ -231,7 +231,9 @@ function settingsModal() {
     const nl = +normLufsIn.value;
     if (Number.isFinite(nl) && nl <= 0) { s.normLufs = Math.max(-40, nl); save(); }
     normAllBtn.disabled = true;
-    try { await normalizeAll(normProg); } finally { normAllBtn.disabled = false; }
+    try { await normalizeAll(normProg); }
+    catch (e) { logErr('normalizeAll', e); toast('Normalisation interrompue : ' + (e && e.message || e), 'warn'); }
+    finally { normAllBtn.disabled = false; }
   } });
   // Reset volume+normalisation : confirmation en deux clics (pas de
   // confirmBox : modal() fermerait le panneau des reglages).

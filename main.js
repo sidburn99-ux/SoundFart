@@ -1178,13 +1178,17 @@ function createWindow() {
     // forger des lignes de log au format timestamp/niveau.
     if ((d.level === 3 || d.level === 'error') && uiLogAllowed('page')) log(`[page] ${String(d.message).replace(/[\r\n\x00-\x1f]/g, ' ').slice(0, 800)} (${d.sourceId}:${d.line})`, 'error');
   });
-  let rendererReloads = 0; // anti-boucle : 1 reload max par session apres crash renderer
+  // Anti-boucle : 1 reload par fenetre de 5 min (avant : 1 reload par
+  // SESSION — un crash des mois apres le premier declenchait app.quit()
+  // au lieu d'un simple reload). Second crash dans la fenetre = zombie.
+  let lastRendererReload = 0;
+  const RELOAD_WINDOW_MS = 5 * 60 * 1000;
   win.webContents.on('render-process-gone', (_e, details) => {
     log('[crash] ' + JSON.stringify(details), 'error');
     // Un renderer mort = fenetre morte : on tente UNE recharge (config/audio
     // repartent proprement) plutot que de laisser une app inutilisable.
-    if (rendererReloads === 0 && win && !win.isDestroyed()) {
-      rendererReloads++;
+    if (Date.now() - lastRendererReload > RELOAD_WINDOW_MS && win && !win.isDestroyed()) {
+      lastRendererReload = Date.now();
       setTimeout(() => { if (win && !win.isDestroyed()) win.webContents.reload(); }, 500);
     } else if (win && !win.isDestroyed()) {
       // Second crash : la fenetre est morte sans diagnostic — on le dit
@@ -1194,6 +1198,11 @@ function createWindow() {
       app.quit();
     }
   });
+  // Renderer gele (boucle infinie JS, decodeAudioData lourd, WASM…) : sans
+  // ce handler l'app reste figee sans aucun diagnostic. Log seul — pas de
+  // kill automatique (un reload sur un simple long calcul serait pire).
+  win.webContents.on('unresponsive', () => log('[renderer] unresponsive (interface gelee)', 'warn'));
+  win.webContents.on('responsive', () => log('[renderer] responsive a nouveau', 'info'));
   win.webContents.on('did-fail-load', (_e, code, desc, url) => {
     log(`[load] ${code} ${desc} ${url}`, 'error');
     dialog.showErrorBox('SoundFart', `Impossible de charger l'interface (${desc}).\n\nVerifie que le dossier « src » (index.html, style.css, app.js) est bien a cote de main.js.`);

@@ -112,7 +112,9 @@ H('media:cut', async (_e, o) => {
   // Reservation atomique du nom (placeholder 'wx') : deux media:cut
   // concurrents sur la meme source ne s'ecrasent plus mutuellement.
   let out = null;
-  for (let i = 0; ; i++) {
+  // Plafond : un dossier cuts/ avec des milliers de base-N.mp3 feraient
+  // des centaines de openSync synchrones sur le thread main.
+  for (let i = 0; i < 1000; i++) {
     const cand = path.join(outDir, i === 0 ? base + '.mp3' : `${base}-${i}.mp3`);
     try {
       const fd = fs.openSync(cand, 'wx');
@@ -124,6 +126,7 @@ H('media:cut', async (_e, o) => {
       throw oe;
     }
   }
+  if (!out) throw new Error('trop d\'extraits existants dans cuts/ — nettoie le dossier');
   // protocol_whitelist file : ffmpeg ne doit pas suivre de playlist/URL externe
   try {
     await execFileTracked(path.join(fdir, 'ffmpeg.exe'),
@@ -172,12 +175,24 @@ function downloadFile(url, dest, onProgress) {
     // jamais et bloquait installYtDlpPromise/ffmpegPromise/
     // ytDownloadBusy jusqu'au restart (SF-REL-0625).
     let curReq = null;
+    let outStream = null; // stream d'ecriture courant : le unlink d'erreur doit attendre sa fermeture (EBUSY/EPERM sinon -> .part residuel)
     const killer = setTimeout(() => { try { if (curReq) curReq.destroy(); } catch {} rej(new Error('téléchargement interrompu : délai total dépassé (15 min)')); }, 15 * 60 * 1000);
     const done = (fn, v) => { clearTimeout(killer); fn(v); };
     // Tout echec apres createWriteStream laisse un fichier PARTIEL sur
     // disque (ffmpeg.zip tronque, .part orphelin) : on le supprime avant
     // de rejeter — unlink sur un chemin pas encore cree est sans effet.
-    const rej = (e) => { try { fs.unlinkSync(dest); } catch {} done(reject, e); };
+    let cleaned = false;
+    const rej = (e) => {
+      if (cleaned) return; cleaned = true;
+      const fin = () => { try { fs.unlinkSync(dest); } catch {} done(reject, e); };
+      if (outStream && !outStream.destroyed) {
+        let fellBack = false;
+        outStream.once('close', () => { if (!fellBack) fin(); });
+        try { outStream.destroy(); } catch { fellBack = true; fin(); }
+        // Garde-fou : si 'close' ne vient jamais, on nettoie quand meme.
+        setTimeout(() => { if (!fellBack) { fellBack = true; fin(); } }, 3000).unref();
+      } else fin();
+    };
     const res = (v) => done(resolve, v);
     const get = (u, n) => {
       // Les redirections ne doivent jamais sortir du HTTPS (anti-downgrade MITM).
@@ -196,7 +211,7 @@ function downloadFile(url, dest, onProgress) {
         // Borne dure : yt-dlp ~100 Mo, ffmpeg.zip ~80 Mo — au-dela c'est anormal.
         if (total > 300 * 1024 * 1024) { res.resume(); return rej(new Error('fichier trop volumineux (' + total + ' octets)')); }
         let got = 0;
-        const out = fs.createWriteStream(dest);
+        const out = outStream = fs.createWriteStream(dest);
         res.on('data', (c) => {
           got += c.length;
           if (got > 300 * 1024 * 1024) { try { out.destroy(); } catch {} req.destroy(new Error('téléchargement trop volumineux')); return; }
@@ -330,7 +345,11 @@ async function doInstallYtDlp(version) {
       onProgress: (f) => { if (getWin() && !getWin().isDestroyed()) { try { getWin().webContents.send('sf:ytprogress', Math.round(f * 100)); } catch {} } },
     });
     fs.renameSync(tmp, ytdlpPath());
-    fs.writeFileSync(ytdlpMetaFile(), JSON.stringify({ version, at: Date.now() }));
+    // Meta atomique (.tmp + rename) comme maybeUpdateYtDlp : un crash
+    // pendant le write laisserait un JSON tronque.
+    const metaTmp = ytdlpMetaFile() + '.tmp';
+    fs.writeFileSync(metaTmp, JSON.stringify({ version, at: Date.now() }));
+    fs.renameSync(metaTmp, ytdlpMetaFile());
     log('[yt] yt-dlp ' + version + ' installe (SHA-256 verifie)');
     return true;
   } catch (e) {
