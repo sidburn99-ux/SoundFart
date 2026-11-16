@@ -257,7 +257,7 @@ function settingsModal() {
   // Panneau « Paramètres » style Discord : navigation laterale groupee
   // par categorie + sections detaillees (titre + description + champs).
   const groups = [
-    { cat: 'Audio', label: 'Sortie audio', desc: 'Par où sortent les sons de la soundboard : la sortie Discord (câble virtuel VB-CABLE) et ton écoute locale. La voix du micro a son propre chemin — voir « Micro & voix ».', nodes: [
+    { cat: 'Audio', icon: '🔊', label: 'Sortie audio', desc: 'Par où sortent les sons de la soundboard : la sortie Discord (câble virtuel VB-CABLE) et ton écoute locale. La voix du micro a son propre chemin — voir « Micro & voix ».', nodes: [
       el('div', { class: 'hint', text: '★ = choix recommandé (bordure rose) · ⚠ = à éviter (bordure rouge). Pour faire fonctionner la soundboard : sortie Discord = CABLE Input, écoute locale = ton casque, micro = ton vrai micro.' }),
       field('Sortie vers Discord (micro virtuel)', el('div', { class: 'row' }, cableSel, cableVerifyBtn, cableInstallBtn),
         cablePresent() ? 'Choisis « CABLE Input ». Dans Discord, mets « CABLE Output » comme micro.'
@@ -266,7 +266,7 @@ function settingsModal() {
         ? '⚠ Écoute locale = sortie Discord : tu risks une boucle/écho — choisis un périphérique différent.'
         : 'Choisis ton casque/écoute habituelle — pas un périphérique « CABLE » (boucle).'),
     ]},
-    { cat: 'Audio', label: 'Micro & voix', desc: 'Le micro est capté séparément des sons : son volume ne suit PAS le curseur master (réglage Windows/Discord). Le traitement vocal n\'agit que sur ta voix, jamais sur les sons.', nodes: [
+    { cat: 'Audio', icon: '🎙', label: 'Micro & voix', desc: 'Le micro est capté séparément des sons : son volume ne suit PAS le curseur master (réglage Windows/Discord). Le traitement vocal n\'agit que sur ta voix, jamais sur les sons.', nodes: [
       field('Mon micro', micSel, 'Le vrai micro est ★ ; les périphériques virtuels (CABLE Output, Voicemeeter…) sont ⚠ déconseillés ici.'),
       el('label', { class: 'check' }, mix,
         el('span', { text: 'Mixer mon micro dans la sortie Discord (sinon tes potes n\'entendent que les sons). Décoche si tu utilises « Écouter ce périphérique » de Windows.' })),
@@ -285,7 +285,7 @@ function settingsModal() {
       field('Intensité', el('div', { class: 'row' }, voiceLvl),
         'Léger = peu de coupe · Normal = équilibré · Fort = clavier/fond atténué · Max = voix très filtrée (bande passante étroite — testez sur Discord).'),
     ]},
-    { cat: 'Bibliothèque', label: 'Bibliothèque', desc: 'Niveaux de lecture des sons : normalisation loudness (mesurée en interne, fichiers jamais modifiés) et durée maximale jouée.', nodes: [
+    { cat: 'Bibliothèque', icon: '📚', label: 'Bibliothèque', desc: 'Niveaux de lecture des sons : normalisation loudness (mesurée en interne, fichiers jamais modifiés) et durée maximale jouée.', nodes: [
       field('Niveaux audio', el('div', {},
         el('div', { class: 'row' },
           el('span', { class: 'hint', text: 'Cible loudness (LUFS) :' }), normLufsIn, el('span', { class: 'hint', text: 'LUFS' }), normTestBtn, normAllBtn),
@@ -298,11 +298,11 @@ function settingsModal() {
       field('Imports non ajoutés', orphanBtn2,
         'Fichiers présents dans imports/ mais pas encore dans ta bibliothèque (téléchargements YouTube dont la fenêtre a été fermée sans « Ajouter »).'),
     ]},
-    { cat: 'Bibliothèque', label: 'Données & stockage', desc: 'Où SoundFart range les fichiers qu\'il crée (imports YouTube, enregistrements, extraits MP3).', nodes: [
+    { cat: 'Bibliothèque', icon: '🗄', label: 'Données & stockage', desc: 'Où SoundFart range les fichiers qu\'il crée (imports YouTube, enregistrements, extraits MP3).', nodes: [
       field('Dossier de stockage', el('div', { class: 'row' }, dirLbl, pickDirBtn, openDirBtn, resetDirBtn),
         'Dossier par défaut des fichiers créés par SoundFart (imports YouTube, enregistrements, extraits MP3) — un choix de dossier est aussi proposé avant chaque ajout.'),
     ]},
-    { cat: 'Général', label: 'Général', desc: 'Raccourcis globaux et sauvegarde de la configuration.', nodes: [
+    { cat: 'Général', icon: '⚙', label: 'Général', desc: 'Raccourcis globaux et sauvegarde de la configuration.', nodes: [
       field('Raccourci global STOP', el('div', { class: 'row' }, stopBtn), stopHint),
       field('Sauvegarde', el('div', { class: 'row' }, exportBtn, importBtn),
         'La configuration contient les références aux fichiers, catégories, découpes, raccourcis et favoris — pas les fichiers audio eux-mêmes.'),
@@ -315,9 +315,10 @@ function settingsModal() {
   let lastCat = null;
   for (const g of groups) {
     if (g.cat !== lastCat) { lastCat = g.cat; nav.append(el('div', { class: 'set-nav-cat', text: g.cat })); }
-    const btn = el('button', { class: 'ghost', text: g.label });
+    const btn = el('button', { class: 'ghost' },
+      el('span', { class: 'set-ico', text: g.icon || '' }), g.label);
     const pane = el('div', { class: 'set-pane', hidden: true },
-      el('h3', { text: g.label }),
+      el('h3', {}, el('span', { class: 'set-ico', text: g.icon || '' }), g.label),
       el('div', { class: 'hint set-desc', text: g.desc }),
       ...g.nodes);
     panes.append(pane); paneList.push({ btn, pane });
