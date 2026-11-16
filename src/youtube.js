@@ -11,7 +11,7 @@ function youtubeModal() {
   const startIn = el('input', { type: 'text', placeholder: '0 ou 02:15', value: '0' });
   const endIn = el('input', { type: 'text', placeholder: '13 ou 02:28', value: '' });
   startIn.style.flex = '1'; endIn.style.flex = '1';
-  const nameIn = el('input', { type: 'text', placeholder: 'Nom du son (titre par défaut)' });
+  const nameIn = el('input', { type: 'text', placeholder: 'Nom du son (titre par défaut)', maxlength: 80 });
   const catSel = el('select', {},
     el('option', { value: '', text: 'Sans catégorie' }),
     sortedCategories().map((c) => el('option', { value: c.id, text: c.name })));
