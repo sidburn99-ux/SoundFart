@@ -16,6 +16,9 @@ const trackChild = (p) => {
   // retrait, un PID mort resterait dans childProcs et taskkill pourrait
   // frapper un PID reutilise par un processus innocent au will-quit.
   p.on('error', () => childProcs.delete(p));
+  // 'exit' precede 'close' : retirer des que le process est mort reduit la
+  // fenetre ou killTree pourrait frapper un PID reutilise par un innocent.
+  p.on('exit', () => childProcs.delete(p));
   return p;
 };
 const killTree = (pid) => { try { execFile('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true }, () => {}); } catch (e) { try { log('[killTree] ' + e.message, 'warn'); } catch {} } };
@@ -24,7 +27,7 @@ function execFileTracked(file, args, opts = {}) {
   return new Promise((resolve, reject) => {
     const p = trackChild(spawn(file, args, { ...opts, windowsHide: true }));
     let out = '', err = '', done = false;
-    const timer = opts.timeout ? setTimeout(() => { if (!done) { done = true; try { killTree(p.pid); } catch {} reject(new Error('délai dépassé')); } }, opts.timeout) : null;
+    const timer = opts.timeout ? setTimeout(() => { if (!done) { done = true; try { killTree(p.pid); } catch {} try { p.kill(); } catch {} reject(new Error('délai dépassé')); } }, opts.timeout) : null;
     if (p.stdout) p.stdout.on('data', (d) => { if (out.length < 4 * 1024 * 1024) out += d; });
     if (p.stderr) p.stderr.on('data', (d) => { if (err.length < 65536) err += d; });
     p.on('error', (e) => { if (!done) { done = true; if (timer) clearTimeout(timer); reject(e); } });
@@ -751,7 +754,9 @@ async function audioRestoreImpl() {
     // on sort les roles coinces sur un virtuel vers le premier non virtuel.
     if (quitting) return; // will-quit gere deja la restauration
     const eps = parseEndpoints(await audioExecP(tool, ['list']));
-    const nameOf = (id) => { const e = eps.find((x) => x.id === id); return e ? e.name : ''; };
+    // flow='capture' comme chooseRestoreIds : un id render/capture
+    // homonyme ne doit pas faire passer un virtuel pour du concret.
+    const nameOf = (id) => { const e = eps.find((x) => x.id === id && x.flow === 'capture'); return e ? e.name : ''; };
     const cur = parseGet(await audioExecP(tool, ['get', 'capture']));
     const stuck = [cur.console, cur.comm, cur.multi].some((id) => id && VIRTUAL_RE_MAIN.test(nameOf(id)));
     if (!stuck || quitting) return;
@@ -1092,6 +1097,12 @@ app.whenReady().then(() => {
     if (win && !win.isDestroyed()) { try { win.webContents.send('sf:powerResume'); } catch (e) { log('[power] send powerResume: ' + (e && e.message), 'warn'); } }
   });
   setInterval(watchdogMic, 30000); // 30 s suffisent : 2 spawn AudioEndpoint toutes les 10 s coutaient ~2 % CPU en continu
+}).catch((e) => {
+  // Sans catch : une exception synchrone dans l'init deviendrait un
+  // unhandledRejection — processus zombie sans fenetre ni window-all-closed.
+  log('[fatal] init whenReady: ' + (e && e.stack || e), 'error');
+  try { dialog.showErrorBox('SoundFart', 'Erreur fatale au démarrage : ' + (e && e.message)); } catch {}
+  app.quit();
 });
 
 app.on('window-all-closed', () => app.quit());
