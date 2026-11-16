@@ -97,7 +97,9 @@ function editSound(s) {
       g.closePath(); g.fill();
     }
   }
-  const timeAt = (e) => { const r = canvas.getBoundingClientRect(); return Math.min(dur, Math.max(0, ((e.clientX - r.left) / r.width) * dur)); };
+  // r.width=0 (canvas pas encore layoute) : (x/0)*dur -> NaN/Infinity qui
+  // se propagerait dans ts/te et ecrirait "NaN" dans les champs.
+  const timeAt = (e) => { const r = canvas.getBoundingClientRect(); if (!r.width) return 0; return Math.min(dur, Math.max(0, ((e.clientX - r.left) / r.width) * dur)); };
   const applyMarker = (t) => {
     if (drag === 'start') ts = Math.min(t, te - 0.05); else te = Math.max(t, ts + 0.05);
     sync(); draw();
@@ -125,6 +127,10 @@ function editSound(s) {
     }
     drag = null;
   });
+  // pointercancel (annulation systeme, perte de contact tactile) : sans
+  // ce reset, drag restait pose et le prochain pointermove — sans bouton
+  // enfonce — deplacait le marqueur de decoupe.
+  canvas.addEventListener('pointercancel', () => { drag = null; });
   startIn.addEventListener('change', () => { if (dur) { ts = Math.min(Math.max(0, +startIn.value || 0), te - 0.05); sync(); draw(); } });
   endIn.addEventListener('change', () => { if (dur) { te = Math.max(Math.min(dur, +endIn.value || dur), ts + 0.05); sync(); draw(); } });
 
@@ -148,7 +154,7 @@ function editSound(s) {
     te = s.trimEnd ? Math.min(s.trimEnd, dur) : dur;
     ts = Math.min(s.trimStart || 0, te - 0.05);
     sync(); draw();
-  }).catch(() => { info.textContent = 'Onde indisponible (fichier introuvable ou illisible).'; });
+  }).catch((e) => { logErr('loadWave', e); info.textContent = 'Onde indisponible (fichier introuvable ou illisible).'; });
   loadWave();
 
   const pvTime = el('div', { class: 'hint pvtime' });
