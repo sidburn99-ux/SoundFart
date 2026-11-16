@@ -8,4 +8,13 @@ if errorlevel 1 (
   exit /b 1
 )
 call npm install
+if errorlevel 1 (
+  pause
+  exit /b 1
+)
 call npm start
+if errorlevel 1 (
+  echo ERREUR : npm start a echoue (voir les messages ci-dessus).
+  pause
+  exit /b 1
+)

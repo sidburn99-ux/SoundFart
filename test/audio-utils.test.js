@@ -41,11 +41,45 @@ test('findCableCapture : noms localises / variantes', () => {
   ];
   assert.equal(U.findCableCapture(eps, 'Entree du cable').id, 'fr'); // via /cable/
   assert.equal(U.findCableCapture(EP, 'Inconnu XYZ').id, 'c2'); // fallback output+cable
-  assert.equal(U.findCableCapture([{ flow: 'capture', id: 'm', name: 'Micro' }], ''), null === undefined ? null : U.findCableCapture([{ flow: 'capture', id: 'm', name: 'Micro' }], ''));
+  assert.equal(U.findCableCapture([{ flow: 'capture', id: 'm', name: 'Micro' }], 'CABLE'), null);
 });
 
 test('findCableCapture : pas de capture -> null', () => {
   assert.equal(U.findCableCapture([{ flow: 'render', id: 'r', name: 'CABLE Input' }], 'CABLE Input'), null);
+});
+
+test('parseEndpoints : lignes malformees ne produisent pas de name undefined', () => {
+  const eps = U.parseEndpoints('capture|{x}\n|\ntexte-sans-separateur\nrender|{r}|OK');
+  for (const e of eps) {
+    assert.equal(typeof e.flow, 'string');
+    assert.equal(typeof e.id, 'string');
+    assert.equal(typeof e.name, 'string'); // findCableCapture fait name.toLowerCase()
+  }
+  // Une sortie AudioEndpoint polluee ne doit pas faire planter findCableCapture.
+  assert.doesNotThrow(() => U.findCableCapture(eps, 'CABLE'));
+});
+
+test('realDevices : placeholders deviceId vide filtres', () => {
+  const placeholders = [
+    { kind: 'audioinput', deviceId: '', label: '' },
+    { kind: 'audiooutput', deviceId: '', label: '' },
+  ];
+  assert.equal(U.realDevices(placeholders).length, 0); // => detection degradee
+  const complete = [
+    { kind: 'audioinput', deviceId: 'abc', label: 'Micro G930' },
+    { kind: 'audiooutput', deviceId: 'def', label: 'CABLE Input' },
+  ];
+  assert.equal(U.realDevices(complete).length, 2);
+  assert.deepEqual(U.realDevices(null), []);
+});
+
+test('safeName : noms reserves Windows prefixes', () => {
+  assert.equal(U.safeName('CON'), '_CON');
+  assert.equal(U.safeName('nul.txt'), '_nul.txt');
+  assert.equal(U.safeName('com1'), '_com1');
+  assert.equal(U.safeName('LPT9.mp3'), '_LPT9.mp3');
+  assert.equal(U.safeName('normal.mp3'), 'normal.mp3');
+  assert.equal(U.safeName('console.mp3'), 'console.mp3'); // pas un nom reserve
 });
 
 test('hasVirtualCable : specifique VB-CABLE, pas Voicemeeter', () => {
@@ -93,6 +127,15 @@ test('restauration : crash (prev ids perimes) -> fallback non virtuel', () => {
   assert.equal(r.commId, 'usb');
 });
 
+test('restauration : id de flux render dans prev -> ignore', () => {
+  const eps = [
+    { flow: 'render', id: 'spk', name: 'Haut-parleurs' },
+    { flow: 'capture', id: 'g930', name: 'Microphone (G930)' },
+  ];
+  const r = U.chooseRestoreIds(eps, { console: 'spk', comm: 'spk' }, { console: '', comm: '', multi: 'g930' });
+  assert.equal(r.consoleId, 'g930'); // jamais l'id render
+});
+
 // ---------- safeName / parseTs / fmtTime ----------
 test('safeName : caracteres interdits, espaces, vide', () => {
   assert.equal(U.safeName('a/b\\c:d*e?f"g<h>i|j'), 'a_b_c_d_e_f_g_h_i_j');
@@ -100,6 +143,12 @@ test('safeName : caracteres interdits, espaces, vide', () => {
   assert.equal(U.safeName(''), 'son');
   assert.equal(U.safeName(null), 'son');
   assert.ok(U.safeName('x'.repeat(200)).length <= 80);
+  // Noms reserves avec espace/point avant extension : Windows normalise
+  // « con .take » en « con.take » -> ERROR_INVALID_NAME sans le prefixe.
+  assert.equal(U.safeName('con .take'), '_con .take');
+  assert.equal(U.safeName('nul .mp3'), '_nul .mp3');
+  // Caracteres de controle 0x00-0x1F filtres (sinon ERR_INVALID_ARG_VALUE).
+  assert.equal(U.safeName('a\x00b\x1fc'), 'a_b_c');
 });
 
 test('parseTs : mm:ss, secondes, invalide', () => {
@@ -109,12 +158,20 @@ test('parseTs : mm:ss, secondes, invalide', () => {
   assert.equal(U.parseTs('1:30.5'), 90.5);
   assert.ok(Number.isNaN(U.parseTs('abc')));
   assert.ok(Number.isNaN(U.parseTs('1:2:3:4')));
+  // Parties non leaders >= 60 : minutes/secondes invalides.
+  assert.ok(Number.isNaN(U.parseTs('1:99')));
+  assert.ok(Number.isNaN(U.parseTs('0:0:90')));
+  assert.equal(U.parseTs('99:59'), 5999); // m:ss legitime : les minutes peuvent depasser 59
+  assert.equal(U.parseTs('1:30:45'), 5445); // h:mm:ss
 });
 
 test('fmtTime : affichage m:ss.d', () => {
   assert.equal(U.fmtTime(0), '0:00.0');
   assert.equal(U.fmtTime(65.25), '1:05.3');
   assert.equal(U.fmtTime(600), '10:00.0');
+  // Arrondi avant split : jamais « 1:60.0 ».
+  assert.equal(U.fmtTime(119.96), '2:00.0');
+  assert.equal(U.fmtTime(3599.99), '60:00.0');
 });
 
 // ---------- expandPaths ----------
@@ -126,9 +183,6 @@ test('expandPaths : audio seulement, profondeur, dossiers', () => {
     fs.writeFileSync(path.join(dir, 'b.txt'), 'x');
     fs.writeFileSync(path.join(dir, 'sub', 'c.wav'), 'x');
     fs.mkdirSync(path.join(dir, 'sub', 'deep', 'deeper'), { recursive: true });
-    fs.writeFileSync(path.join(dir, 'a.mp3'), 'x');
-    fs.writeFileSync(path.join(dir, 'b.txt'), 'x');
-    fs.writeFileSync(path.join(dir, 'sub', 'c.wav'), 'x');
     fs.writeFileSync(path.join(dir, 'sub', 'deep', 'd.flac'), 'x');
     fs.writeFileSync(path.join(dir, 'sub', 'deep', 'e.mp3'), 'x');
     fs.writeFileSync(path.join(dir, 'sub', 'deep', 'deeper', 'f.mp3'), 'x'); // trop profond -> exclu
@@ -138,4 +192,175 @@ test('expandPaths : audio seulement, profondeur, dossiers', () => {
     // inexistants ignores sans exception
     assert.deepEqual(U.expandPaths([path.join(dir, 'nope'), path.join(dir, 'b.txt')]), []);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ---------- expandPathsAsync (meme contrat que expandPaths, non bloquant) ----------
+test('expandPathsAsync : memes resultats que la version synchrone', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-async-'));
+  try {
+    fs.mkdirSync(path.join(dir, 'sub'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'a.mp3'), 'x');
+    fs.writeFileSync(path.join(dir, 'b.txt'), 'x');
+    fs.writeFileSync(path.join(dir, 'sub', 'c.wav'), 'x');
+    const sync = U.expandPaths([dir]).map((p) => path.basename(p)).sort();
+    const asy = (await U.expandPathsAsync([dir])).map((p) => path.basename(p)).sort();
+    assert.deepEqual(asy, sync);
+    assert.deepEqual(asy, ['a.mp3', 'c.wav']);
+    assert.deepEqual(await U.expandPathsAsync([path.join(dir, 'nope')]), []);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ---------- writeRecording (extrait de rec:save, SF-REL-0058) ----------
+test('writeRecording : nom libre, collision -> suffixe, ext invalide -> .webm', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-rec-'));
+  try {
+    const b1 = await U.writeRecording(dir, 'Mon Prise#1', '.webm', Buffer.from('aaa'));
+    assert.equal(path.basename(b1), 'Mon Prise#1.webm'); // safeName : espaces gardes, # autorise
+    assert.equal(fs.readFileSync(b1, 'utf8'), 'aaa');
+    // Collision : meme nom -> -1
+    const b2 = await U.writeRecording(dir, 'Mon Prise#1', '.webm', Buffer.from('bbb'));
+    assert.equal(path.basename(b2), 'Mon Prise#1-1.webm');
+    // Ext non whitelist -> .webm
+    const b3 = await U.writeRecording(dir, 'x', '.exe', Buffer.from('c'));
+    assert.ok(b3.endsWith('.webm'));
+    // Nom vide -> safeName produit un nom non vide
+    const b4 = await U.writeRecording(dir, '   ', '.wav', Buffer.from('d'));
+    assert.ok(path.basename(b4).length > 4);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ---------- tests de proprietes / concurrence ----------
+test('writeRecording : N ecritures concurrentes meme nom -> N fichiers distincts', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-recpar-'));
+  try {
+    const N = 20;
+    const paths = await Promise.all(Array.from({ length: N }, (_, i) =>
+      U.writeRecording(dir, 'prise', '.webm', Buffer.from('data' + i))));
+    assert.equal(new Set(paths.map((p) => p.toLowerCase())).size, N, 'aucun ecrasement');
+    // Tous les fichiers existent et sont non vides
+    for (const p of paths) assert.ok(fs.statSync(p).size > 0);
+    // Aucun .part residuel
+    assert.deepEqual(fs.readdirSync(dir).filter((f) => f.endsWith('.part')), []);
+  } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
+});
+
+test('safeName : jamais de nom Windows invalide, jamais vide', () => {
+  const bad = ['CON', 'con.mp3', 'PRN', 'AUX', 'NUL', 'COM1', 'LPT9', '...', '   ', 'a/b\c:d*e?f"g<h>i|j', 'x'.repeat(200), '', null, undefined];
+  for (const n of bad) {
+    const s = U.safeName(n);
+    assert.ok(s && s.length > 0 && s.length <= 80, 'safeName(' + JSON.stringify(n) + ') -> ' + JSON.stringify(s));
+    assert.ok(!/[\/:*?"<>|]/.test(s.split('.')[0] === s ? s : s), 'chars invalides: ' + s);
+  }
+  // Extreemement long -> tronque a 80
+  assert.ok(U.safeName('y'.repeat(300)).length <= 80);
+  // Points/especes finaux : Windows les retire avant comparaison — le nom
+  // nettoye ne doit ni finir par '.' ni produire un nom vide.
+  for (const n of ['...', 'nom.', '  .  ', '...test...']) {
+    const s = U.safeName(n);
+    assert.ok(s && !/[. ]$/.test(s), 'safeName(' + JSON.stringify(n) + ') -> ' + JSON.stringify(s));
+  }
+  assert.equal(U.safeName('...'), 'son');
+});
+
+test('expandPaths : une string seule est traitee comme un chemin', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-exp-'));
+  try {
+    fs.writeFileSync(path.join(dir, 'a.wav'), 'x');
+    // String : iterees par caractere avant le fix -> resultait en [].
+    assert.deepEqual(U.expandPaths(dir + path.sep + 'a.wav'), [dir + path.sep + 'a.wav']);
+    // String dossier : retourne les audio dedans (profondeur 1).
+    const found = U.expandPaths(dir);
+    assert.equal(found.length, 1);
+    assert.ok(found[0].endsWith('a.wav'));
+  } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
+});
+
+test('parseEndpoints : fuzz — jamais de crash, champs toujours des chaines', () => {
+  const inputs = ['', '\n', '|', '|||', 'a|b', 'render|{1}|Name With | Pipe', 'capture|{2}|', '\r\n\r\n', 'x'.repeat(10000), 'flow|id|nom\x00ctl'];
+  for (const inp of inputs) {
+    const out = U.parseEndpoints(inp);
+    for (const e of out) {
+      assert.equal(typeof e.flow, 'string');
+      assert.equal(typeof e.id, 'string');
+      assert.equal(typeof e.name, 'string');
+    }
+  }
+});
+
+test('chooseRestoreIds : endpoint sans nom jamais choisi comme fallback', () => {
+  // Regression SF-REL-0140 : name='' passait VIRTUAL_RE.test('') ->
+  // un endpoint virtuel sans nom etait traite « non virtuel ».
+  const eps = [
+    { flow: 'capture', id: '{noname}', name: '' },
+    { flow: 'capture', id: '{virt}', name: 'CABLE Output (VB-Audio Virtual Cable)' },
+    { flow: 'capture', id: '{real}', name: 'Micro Realtek' },
+  ];
+  const r = U.chooseRestoreIds(eps, { console: '', comm: '', multi: '' }, { console: '', comm: '', multi: '' });
+  // Le fallback doit etre le vrai micro nomme, pas {noname} ni le cable.
+  const all = [r.consoleId, r.commId, r.multiId, r.fallbackId].filter(Boolean);
+  assert.ok(!all.includes('{noname}'), 'endpoint sans nom choisi');
+  assert.ok(all.includes('{real}'), 'le vrai micro doit etre candidat');
+});
+
+test('parseTs : fuzz bornes et formats', () => {
+  const good = [['90', 90], ['1:30', 90], ['1:02:03', 3723], ['0', 0], ['  45.5 ', 45.5], ['', 0], [null, 0]];
+  for (const [v, exp] of good) assert.equal(U.parseTs(v), exp, v);
+  const bad = ['abc', '1:2:3:4', '-5', '1,5', {}, 'NaN', '1:2:3:4:5'];
+  for (const v of bad) assert.ok(Number.isNaN(U.parseTs(v)), JSON.stringify(v));
+});
+
+test('cbOrNoop : normalise les callbacks (SF-REL-0612/0614)', () => {
+  // Le defaut historique : onProgress undefined/null/non-fonction
+  // provoquait TypeError dans un handler -> mort du process main.
+  for (const v of [undefined, null, 0, 'x', {}, [], true]) {
+    const cb = U.cbOrNoop(v);
+    assert.equal(typeof cb, 'function');
+    assert.doesNotThrow(() => cb(0.5), JSON.stringify(v));
+  }
+  let called = 0;
+  const real = U.cbOrNoop((f) => { called++; assert.equal(f, 0.5); });
+  real(0.5);
+  assert.equal(called, 1);
+});
+
+// SF-REL-0620 : le plafond 5000 comptait les entrees VISITEES — un dossier
+// de >5000 non-audio affamait les sons audio situes apres. n = retenus,
+// v = visites (borne 50000).
+test('expandPaths : les non-audio ne consomment pas le plafond de sons', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-exp-'));
+  try {
+    // 5100 fichiers non-audio AVANT les sons : l'ancien code (n++ par
+    // entree visitee) s'arretait a 5000 -> 0 son retourne.
+    for (let i = 0; i < 5100; i++) fs.writeFileSync(path.join(dir, 'f' + i + '.txt'), 'x');
+    fs.writeFileSync(path.join(dir, 'son1.mp3'), 'x');
+    fs.writeFileSync(path.join(dir, 'son2.wav'), 'x');
+    const out = await U.expandPathsAsync([dir]);
+    assert.equal(out.length, 2, 'les 2 sons audio doivent etre trouves malgre 5100 non-audio');
+    assert.ok(out.every((p) => /\.(mp3|wav)$/.test(p)));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ---------- isUsablePath (normalizeCfg : champs de chemins) ----------
+test('isUsablePath : chemins absolus valides acceptes (retrocompat)', () => {
+  for (const p of [
+    'C:\\Users\\Sidbu\\Sounds\\fart.mp3',
+    'C:/Users/Sidbu/Sounds/fart.mp3',
+    '\\\\NAS\\partage\\son avec espaces et accents é.mp3',
+    '\\\\?\\C:\\long\\path.mp3',
+    '\\\\?\\UNC\\serveur\\partage\\son.mp3',
+    'Z:\\Reseau\\son.mp3',
+    '/mnt/son.mp3',
+    '\\Windows\\Temp\\son.mp3',
+    'D:\\dossier avec \'apostrophe\\f.wav',
+  ]) assert.equal(U.isUsablePath(p), true, p);
+});
+
+test('isUsablePath : valeurs invalides rejetees', () => {
+  for (const p of [
+    '', '   ', 'relatif\\son.mp3', 'son.mp3', 'C:fart.mp3',
+    'C:\\ok\\puis\ninjection.mp3', 'C:\\ctrl\x07.mp3',
+    null, undefined, 42, {}, [], 'file:///C:/son.mp3',
+  ]) assert.equal(U.isUsablePath(p), false, JSON.stringify(p));
 });

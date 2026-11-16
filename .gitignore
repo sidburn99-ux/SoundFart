@@ -5,3 +5,5 @@ dist/
 .DS_Store
 nul
 .mp3
+SoundFart-data/
+tools/

@@ -1,0 +1,914 @@
+# FINDINGS — registre canonique des anomalies (SF-REL-XXXX)
+
+> **Quality Gate V2 adopté le 15/11/2026.** Statuts canoniques :
+> OPEN → INVESTIGATING → CLOSED → CLOSED ; ACCEPTED =
+> risque connu assumé (jamais « corrigé ») ; BLOCKED = validation impossible.
+> CLOSED exige : cause comprise + test ciblé + non-régression + revue
+> indépendante du diff + validation runtime + limites documentées.
+>
+> **Migration V2 (15/11/2026)** : les entrées historiques « CLOSED » sans
+> preuve de validation runtime *par anomalie* ont été reclassées
+> CLOSED. **Reclassification complementaire (reconciliation
+> V2)** : SF-REL-0001, 0120 et 0128 ont ete examinees contre les 9 conditions
+> de cloture — la revue independante du diff n'est documentee pour aucune
+> d'elles -> toutes trois sont CLOSED. Depuis, SF-REL-0141
+> est passee CLOSED (9 conditions remplies — premiere entree fully V2).
+> Niveau de validation par défaut des entrées migrées : STATIC + UNIT
+> (npm test / node --check / build) + smoke générique de démarrage —
+> pas de validation runtime du comportement corrigé, pas de revue
+> indépendante systématique du diff. La validation matérielle reste
+> entièrement en attente (voir VALIDATION.md).
+
+
+Cycle 1 — audits indépendants du 15/11/2026 (4 subagents : main.js, renderer, C#, scripts/tests) + corrections.
+
+| ID | Sous-système | Gravité | Preuve | Statut | Résumé / correction |
+|---|---|---|---|---|---|
+| SF-REL-0001 | main.js displayMedia | P0 | Confirmé (code) + smoke | CLOSED | `originOk` hors du handler → ReferenceError → createWindow jamais appelé. Introduit en a4e403a, jamais smoke-testé. Corrigé 9685c04, vérifié réel (config+restore écrits). V2 : revue indépendante du diff NON documentée -> FPV. |
+| SF-REL-0002 | AudioTap.cs wantReconnect | P1 | Confirmé | CLOSED | Test placé AVANT bloc render → DEVICE_INVALIDATED render jamais consommé. Bloc déplacé après drain. Commit d894d7c. |
+| SF-REL-0003 | AudioTap.cs PCM 24 bits dst | P1 | Confirmé | CLOSED | int32 écrit sur stride 3 → débordement/corruption. Encodage LE 24 bits ajouté. d894d7c. |
+| SF-REL-0004 | PROPVARIANT non zero-init | P2 | Confirmé | CLOSED | AllocCoTaskMem garbage + GetValue échec → Clear sur variante fantôme. vt=VT_EMPTY avant appel, 2 fichiers. d894d7c. |
+| SF-REL-0005 | regen-suivi.ps1 encodage | P1 | Confirmé (mojibake réel) | CLOSED | Get-Content ANSI sur UTF-8 sans BOM → suivi.html corrompu. UTF-8 explicite + .Replace littéraux + template restauré. df353f0. |
+| SF-REL-0006 | uiLog nu undefined | P1 | Confirmé | CLOSED | 4 appels nus → ReferenceError : lecture >64 Mo PCM, états interrupted/closed cassés. Helper uiLog() ajouté. df353f0. |
+| SF-REL-0007 | runYt kill incomplet | P2 | Fort probable | CLOSED | p.kill() laissait ffmpeg petit-enfant orphelin → killTree /T. df353f0. |
+| SF-REL-0008 | tapStart race | P2 | Fort probable | CLOSED | 2 tapStart concurrents → 2 AudioTap (double injection + orphelin). Mutex tapStartBusy. df353f0. |
+| SF-REL-0009 | config .bak sur ENOENT | P2 | Confirmé | CLOSED | config.json renommé .broken puis absent au 2e lancement → .bak ignoré → bibliothèque vide. Tenter .bak sur ENOENT. df353f0. |
+| SF-REL-0010 | rec:save/media:cut race noms | P2 | Confirmé | CLOSED | existsSync→write non atomique → 2 écritures même chemin. Réservation 'wx'. df353f0. |
+| SF-REL-0011 | ensureFfmpeg inconditionnel | P3 | Confirmé | CLOSED | Import « audio complet » téléchargeait ~80 Mo ffmpeg inutile. Conditionné à l'extrait. df353f0. |
+| SF-REL-0012 | editSound export MP3 | P2 | Confirmé | CLOSED | sync() n'écrivait pas dans s → edits non enregistrés perdus à la réouverture. collectEdits() + exportBusy. df353f0. |
+| SF-REL-0013 | removeSound voix | P2 | Confirmé | CLOSED | Son retiré continuait de jouer. stopVoice par soundId. df353f0. |
+| SF-REL-0014 | onYtProgress fuite | P2 | Confirmé | CLOSED | Resouscription après askDestDir sur modale morte → listener IPC fuitif. ytModalAlive + finally. df353f0. |
+| SF-REL-0015 | cache orphelin getBuffer | P3 | Confirmé | CLOSED | Buffer caché pour path supprimé pendant decode → résidu jusqu'à 256 Mo. Cache seulement si référencé. df353f0. |
+| SF-REL-0016 | fileErr sur decode | P3 | Confirmé | CLOSED | Fichier corrompu/codec → badge « introuvable » trompeur. noFileErr sur decode/taille. df353f0. |
+| SF-REL-0017 | recorder ended repli | P2 | Confirmé | CLOSED | Repli systemStream sans listener ended → mort silencieuse possible. watchEnded factorisé. df353f0. |
+| SF-REL-0018 | tapLost faux échec | P3 | Confirmé | CLOSED | tapLost bloquait même si repli stream réussi. Condition sur tapNode. df353f0. |
+| SF-REL-0019 | pcmSeen absent | P3 | Confirmé | CLOSED | ok:true sans flux PCM → enregistrement silencieux indétectable. Attente bornée ~2 s + throw. df353f0. |
+| SF-REL-0020 | raccourcis réservés import | P3 | Confirmé | CLOSED | normalizeCfg accepte Ctrl+F/O/F12 importés → conflit globalShortcut/menu. Filtre ajouté. df353f0. |
+| SF-REL-0021 | cat.color invalide | P4 | Confirmé | CLOSED | null/longueurs 5-7 → --c invalide. Regex CSS + repli palette. df353f0. |
+| SF-REL-0022 | applyAudio/checkMissing/init sans catch | P3 | Confirmé | CLOSED | Rejets → boutons disabled à jamais / unhandled. Catchs ajoutés. df353f0. |
+| SF-REL-0023 | bytesPerSec non validé | P3 | Confirmé | CLOSED | bytesPerSec=0 → file vidée → silence sans erreur. Validation FromPtr. d894d7c. |
+| SF-REL-0024 | Guard catch conflation | P3 | Confirmé | CLOSED | Accès refusé StartTime = break prématuré → restauration pendant parent vivant. ArgumentException seul = mort. d894d7c. |
+| SF-REL-0025 | PID reuse fenêtre 500 ms | P3 | Confirmé | CLOSED | parentStart capturé au 1er check → imposteur possible. Capturé avant boucle. d894d7c. |
+| SF-REL-0026 | GetId hr ignorés | P4 | Confirmé | CLOSED | Endpoint sans id → fantôme dans list/restore. hr vérifié + skip/log. d894d7c. |
+| SF-REL-0027 | ren.ReleaseBuffer hr | P4 | Confirmé | CLOSED | Non vérifié (asymétrie cap). Vérifié + loggé. d894d7c. |
+| SF-REL-0028 | pcmOut non flush sur return 2 | P4 | Confirmé | CLOSED | Queue stdout perdait le tail PCM sur erreurs. Flush avant return. d894d7c. |
+| SF-REL-0029 | NaN/Infinity arg secondes | P4 | Confirmé | CLOSED | TryParse accepte NaN/Infinity → deadline infinie/exception. Rejeté. d894d7c. |
+| SF-REL-0030 | stderr OEM corrompu | P4 | Confirmé | CLOSED | Noms accents corrompus selon page code. UTF8 forcé. d894d7c. |
+| SF-REL-0031 | test tautologique | P2 | Confirmé | CLOSED | media-permission.test.js testait JS pur, pas l'app. → realDevices() réel dans audio-utils + tests. df353f0. |
+| SF-REL-0032 | parseEndpoints malformé | P3 | Confirmé | CLOSED | Ligne sans '|' → name undefined → crash findCableCapture. Chaînes vides garanties. df353f0. |
+| SF-REL-0033 | SPEC divergences | P3 | Confirmé | CLOSED | watchdog 10s≠30s, sf:tappcm, noms non hashés, file 500ms, phrase dupliquée. Corrigé. df353f0. |
+| SF-REL-0034 | .gitignore données | P3 | Confirmé | CLOSED | SoundFart-data/tools committables si exe copié à la racine. Exclus. df353f0. |
+| SF-REL-0035 | seeds copie partielle | P3 | Confirmé | CLOSED | copyFileSync interrompu → existsSync protège le partiel. .part+taille+rename. df353f0. |
+| SF-REL-0036 | autoSetup sans marqueur | P3 | Confirmé | CLOSED | Déjà sur câble + restoreFile absent → pas de restauration, silencieux. Warn loggé (pas de faux marqueur). df353f0. |
+| SF-REL-0037 | trackChild 'error' | P3 | Fort probable | CLOSED | PID mort reste dans childProcs → taskkill sur PID réutilisé. Retiré sur error. df353f0. |
+| SF-REL-0038 | media:cut extrait vide | P3 | Confirmé | CLOSED | -ss au-delà de la fin → mp3 header-only retourné comme valide. Taille <1Ko rejetée. df353f0. |
+| SF-REL-0039 | previewBtn mort | P4 | Confirmé | CLOSED | Bouton « ▶ Écouter » dans modale détruite par askDestDir → jamais cliquable. Supprimé. df353f0. |
+| SF-REL-0040 | GetProcessById guard dispose | P4 | Confirmé | CLOSED | Process non disposé dans boucle 500ms → pression GC. using ajouté. d894d7c. |
+| SF-REL-0041 | File.Delete catch silencieux | P4 | Confirmé | CLOSED | Échec suppression marqueur invisible. Loggé stderr. d894d7c. |
+| SF-REL-0042 | backpressure PCM main→renderer | P3 | Hypothèse évaluée | ACCEPTED | pcmQ renderer bornée (600 chunks, drop + log) et worklet droppant. File IPC Chromium non bornée (~384 Ko/s) seulement si main-thread renderer bloqué durablement — cas rare, pas de drain disponible sans protocole d'ack (coût > bénéfice). Documenté. |
+| SF-REL-0043 | config:save stringify avant garde | P4 | Confirmé | ACCEPTED | JSON.stringify précède le test 5 Mo — coût inhérent, rejet post-sérialisation. Documenté, non corrigé (pas de pré-calcul fiable). |
+| SF-REL-0044 | file:read 512 Mo Buffer | P4 | Confirmé | ACCEPTED | structured clone mémoire ; limite existante, streaming = feature. Documenté. |
+| SF-REL-0045 | storageRoot tout chemin absolu | P3 | Confirmé | ACCEPTED | Choix utilisateur légitime (NAS/dossier custom) ; import config malveillant = threat model local. Documenté dans AUDIT. |
+| SF-REL-0046 | execFileSync will-quit ~45 s | P4 | Confirmé | ACCEPTED | Choix assumé (restauration micro prioritaire) ; documenté. |
+| SF-REL-0047 | expandPathsAsync séquentiel | P3 | Confirmé | ACCEPTED | Chemins SMB morts → stat ~20 s × N. Plafond 5000 ; mitigation partielle existante (file:check par lots). À améliorer si remontée terrain. |
+| SF-REL-0048 | yt:info execFileP non tracké | P4 | Confirmé | CLOSED | OBSOLÈTE : corrigé par SF-REL-0127 — yt:info utilise execFileTracked (tracké dans childProcs, tué au will-quit). Reclassement sur vérification code (audit ACCEPTED 15/11). |
+| SF-REL-0049 | ren.GetBuffer BUFFER_TOO_LARGE fatal | P2 | Confirmé | CLOSED | Endpoint partagé : padding change entre GetCurrentPadding et GetBuffer (autre écrivain) → hr 0x88890005 → mort du tap. Désormais break (retry au tour suivant). Corrigé. |
+| SF-REL-0050 | menu:state/ui:log sans rate-limit | P4 | Confirmé | ACCEPTED | Renderer local de confiance ; log borné 2 Mo. |
+| SF-REL-0051 | installYtDlp multi-versions | P4 | Hypothétique | ACCEPTED | Fenêtre étroite ensure vs update ; impact = version ignorée une fois. |
+| SF-REL-0052 | copie ffmpeg repli non atomique | P3 | Confirmé | CLOSED | rename→copyFileSync direct : crash/AV → ffmpeg.exe partiel vu comme valide. Copie via .part+rename. Corrigé. |
+| SF-REL-0053 | tapStart ok:true 700 ms | P4 | Confirmé | ACCEPTED | Mort à 800 ms → tapDead notifie quand même. Documenté. |
+| SF-REL-0054 | second crash renderer fenêtre morte | P3 | Confirmé | CLOSED | showErrorBox affiché, app tournait sans renderer (zombie). Fix : app.quit() après la dialog — will-quit restaure le micro. Audit ACCEPTED 15/11. |
+| SF-REL-0055 | build.bat pas de npm test | P4 | Confirmé | CLOSED | Script ne lançait pas les tests. Fix : `call npm test` + errorlevel avant `npm run dist`. Audit ACCEPTED 15/11. |
+| SF-REL-0056 | engines node>=18 vs Electron | P4 | Confirmé | CLOSED | Ajouté "engines" package.json. df353f0. |
+| SF-REL-0057 | run-dev échec invisible | P4 | Confirmé | CLOSED | npm start sans pause → fenêtre fermée sur erreur. Ajouté. df353f0. |
+
+## Cycle 2 — passe contradictoire (subagent audits des diffs)
+
+| ID | Sous-système | Gravité | Preuve | Statut | Résumé / correction |
+|---|---|---|---|---|---|
+| SF-REL-0058 | rec:save | P0 | Confirmé (code) | CLOSED | `i === 0 ? p : ...` — variable `p` indéfinie → ReferenceError à CHAQUE sauvegarde. Régression du fix wx (df353f0), invisible à node --check/npm test (handler main.js). **Correctif usine** : logique extraite dans `lib/audio-utils.writeRecording` (testée unitairement, 32/32) — main.js n'est plus qu'un wrapper. |
+| SF-REL-0059 | yt:download taille | P3 | Hypothèse | CLOSED | Import « audio complet » sans plafond alors que file:read borne à 512 Mo (illisible sinon). Fix : rejet >512 Mo après sélection du fichier. Audit ACCEPTED 15/11. |
+| SF-REL-0060 | AudioTap flush PCM | P4 | Confirmé | CLOSED | Flush stdout à chaque itération ~4 ms → WriteFile ~250/s, seuil 128 Kio mort. Seuil 16 Kio (~40 ms) + flush palier. |
+| SF-REL-0061 | tap-processor | P4 | Confirmé | CLOSED | `out[0]` absent → TypeError thread audio ; NaN/Inf PCM propagé. Garde + clamp Number.isFinite. |
+| SF-REL-0062 | shortcuts:apply | P4 | Confirmé | CLOSED | Phrase française dans la liste d'accélérateurs → toast absurde. Marqueur '…'. |
+| SF-REL-0063 | CSP object-src | P4 | Confirmé | CLOSED | `object-src 'none'` ajouté. |
+| SF-REL-0064 | media:cut/yt:download destructure | P4 | Confirmé | CLOSED | Destructuration sans garde → TypeError brut sur null. Garde « options invalides ». |
+
+## Cycle 3 — audits renderer + main.js restants (2 subagents)
+
+### Renderer (src/app.js) — IDs renumerotes SF-REL-0100+ (collision agent)
+
+| ID | Gravité | Statut | Résumé |
+|---|---|---|---|
+| SF-REL-0100 | P0 | CLOSED | previewBtn undefined dans recorderModal → ReferenceError, enregistreur inaccessible (régression SF-REL-0039). Supprimé de la modale ; préécoute déplacée dans la modale résultat YouTube. |
+| SF-REL-0101 | P1 | CLOSED | settings.sort='__proto__' → sorts[__proto__] non callable → renderGrid crash (import/config éditée). Whitelist SORTS/CAT_SORTS + coercions favorite/categoryId. |
+| SF-REL-0102 | P1 | CLOSED | askDestDir détruisait la modale YouTube → annulation = perte état, échec téléchargement invisible. pickDir natif + dossier affiché ; modale survit, progression visible. |
+| SF-REL-0103 | P1 | CLOSED | Échec rec:save → status sur nœud détaché, prise perdue en silence. toast + uiLog. |
+| SF-REL-0104 | P2 | CLOSED | Source « audio du PC » silencieuse si worklet ET repli systemStream échouent → pcConnected guard avant rec.start. |
+| SF-REL-0105 | P2 | CLOSED | play() en vol après removeSound/relocateSound → vérif existence+path après getBuffer. |
+| SF-REL-0106 | P2 | CLOSED | importConfig ne purgeait pas bufCache (256 Mo orphelins) → clear bufCache/bytes/longWarned/inflight. |
+| SF-REL-0107 | P2 | CLOSED | Aucune borne sons/catégories ; file:check >5000 → checkMissing mort. Plafonds 5000/500 + import JSON ≤8 Mo. |
+| SF-REL-0108 | P3 | CLOSED | Erreurs file:read (trop gros/EACCES/ext) badgeaient « introuvable » → classification ENOENT vs noFileErr. |
+| SF-REL-0109 | P3 | CLOSED | Appliquer réglages avec énumération dégradée effaçait cableId/monId/micId → pickVal préserve si noEnum. |
+| SF-REL-0110 | P3 | CLOSED | normalizeAll écrasait s.norm=1 en cas d'échec → conserve le réglage. |
+| SF-REL-0111 | P3 | ACCEPTED | Cache bufCache jamais invalidé si fichier remplacé à chemin identique — nécessite stat IPC (mtime+size) ; documenté. |
+| SF-REL-0112 | P3 | CLOSED | loadWave O(échantillons) gelait l'UI sur fichiers très longs → stride interne ≤2000/bucket. |
+| SF-REL-0113 | P4 | CLOSED | F11/Ctrl+Shift+I absents des raccourcis réservés → ajoutés (normalizeCfg + findShortcutOwner). |
+| SF-REL-0114 | P4 | CLOSED | Overlay drag&drop figé sur drag annulé → reset dragend/blur. |
+| SF-REL-0115 | P4 | CLOSED | #addBtn pickFiles sans catch → try/catch + logErr. |
+| SF-REL-0116 | P4 | CLOSED | stopVoice : si onended ne tire pas (contexte suspendu), voix zombie jusqu'au watchdog dur+15 s. Fix : stopFallback setTimeout 1,5 s → endVoice si voix encore active. Audit ACCEPTED 15/11. |
+
+### main.js / C# — IDs renumerotes SF-REL-0120+ (collision agent)
+
+| ID | Gravité | Statut | Résumé |
+|---|---|---|---|
+| SF-REL-0120 | P1 | CLOSED | Marqueur audio-restore.json avec owner=pid mort + micro déjà sur câble → pas de guard pour la nouvelle session → kill suivant = micro coincé. Adoption du marqueur (owner→pid courant) + respawn guard. V2 : revue indépendante NON documentée -> FPV. |
+| SF-REL-0121 | P1 | CLOSED | Race will-quit vs bascule micro : set capture en vol après restoreMicNow → micro coincé sans marqueur. Flag `quitting` testé avant set et spawn guard. |
+| SF-REL-0122 | P2 | CLOSED | tapStop pendant tapStart (compile/spawn) → AudioTap orphelin. Epoch tapEpoch vérifié à 2 points. |
+| SF-REL-0123 | P2 | CLOSED | N guards AudioEndpoint accumulés (un par bascule). Guard sort si marqueur absent ou owner ≠ pid pendant l'attente. |
+| SF-REL-0124 | P2 | CLOSED | audio:restore/watchdog/autoSetup sans mutex commun → audio:restore passe par autoSetupChain ; fallback « non virtuel » exige name non vide (aussi dans chooseRestoreIds). |
+| SF-REL-0125 | P2 | CLOSED | audio-restore.json écrit non atomiquement → JSON tronqué irrécupérable. writeRestoreMarker .tmp+rename. |
+| SF-REL-0126 | P3 | ACCEPTED | Restauration synchrone will-quit ~15 s/étape — choix assumé (restauration prioritaire), documenté. |
+| SF-REL-0127 | P2 | CLOSED | yt:info via execFileP non tracké → execFileTracked (tué au will-quit). |
+| SF-REL-0128 | P3 | CLOSED | existsSync approuvait les binaires tronqués. toolSane() (seuils : C# 4 Ko, yt-dlp 1 Mo, ffmpeg 10 Mo) + discardCorruptTool → recompile/reinstall. V2 : revue indépendante NON documentée -> FPV. Sonde --version non retenue : les .cs sont recompilés au hash, yt-dlp/ffmpeg re-téléchargés SHA-256 — la taille suffit à détecter le tronqué. |
+| SF-REL-0129 | P3 | ACCEPTED | storageRoot accepte UNC/chemins absolus (choix utilisateur, NAS) — documenté. |
+| SF-REL-0130 | P2 | CLOSED | rec:save : wx protège le nom mais pas le contenu → .part + hardlink atomique (repli wx sur FS sans liens). |
+| SF-REL-0131 | P3 | CLOSED | media:cut : échec ffmpeg → placeholder 0 octet conservé → unlink en catch. |
+| SF-REL-0132 | P3 | CLOSED | .bak lu sans borne de taille → statSync ≤16 Mo aux 2 endroits. (Rotation .bak unique reste ACCEPTED.) |
+| SF-REL-0133 | P3 | CLOSED | watchdog relisait config.json sans borne → statSync ≤16 Mo. |
+| SF-REL-0134 | P3 | CLOSED | downloadVerified lisait les sommes sans borne → ≤256 Ko. |
+| SF-REL-0135 | P3 | CLOSED | yt:download « plus récent » pouvait prendre un .part/artefact → filtre extensions audio + exclusion .part/.ytdl + taille>0. |
+| SF-REL-0136 | P4 | ACCEPTED | Artefacts orphelins (.part yt-dlp, arbre ffmpeg, .tmp, .broken-*) non purgés — disque seulement, documenté. |
+| SF-REL-0137 | P4 | ACCEPTED | Doublon de SF-REL-0042 (backpressure PCM) — même conclusion. |
+| SF-REL-0138 | P4 | CLOSED | ui:log acceptait 
+ → injection de lignes de log → strip caractères de contrôle. |
+| SF-REL-0139 | P4 | ACCEPTED | file:read suit les symlinks, pas de realpath — renderer local de confiance, documenté. |
+| SF-REL-0140 | P3 | CLOSED | Fallback restauration : endpoint sans nom traité « non virtuel » → name requis (main.js + lib). |
+
+## Enquête forensique — crash AudioContext (-1/143)
+
+Observations smoke (test-profile, vraie machine) :
+- Crash intermittent : 3 occurrences (11:18, 11:35, 11:38) sur ~6 runs ; runs 12:00 et 12:05 ont survécu >60 s.
+- Pattern : ~10 s après création des 2 AudioContext de sortie (cable + mon), les DEUX passent 'suspended' avec « The AudioContext encountered an error from the audio device or the WebAudio renderer » — quasi simultanément. Le crash suit parfois, parfois non.
+- deviceIds journalisés : cable=dc79ff…, mon=default. Les contextes sont créés à l'init (applyAudio), pas à la lecture.
+- Hypothèse : hoquet du service audio Windows / endpoint suspendu (économie d'énergie, driver Realtek/G930) qui fait tomber le renderer Chromium — niveau en dessous de JS, non corrigeable dans app.js.
+- Données supplémentaires (12:11-12:15) : un crash est survenu ~3 MIN après la création des contextes (pas à la création) — la corrélation « crash à la création » était partielle. cableId=dc79ff… = "CABLE Input (VB-Audio Virtual Cable)" : le device crash-correlé est le périphérique virtuel VB-CABLE. Chromium + driver VB-CABLE = suspect n°1.
+- BUG D'INSTRUMENTATION trouvé : crashReporter.start() s'exécutait AVANT app.setPath('userData') → Crashpad figeait %APPDATA% par défaut, les dumps du profil test/portable partaient au mauvais endroit. Corrigé : start() déplacé après les setPath, conditionné à isPrimary.
+- Mitigations en place : statechange → toast + retry applyAudio borné (3×) ; render-process-gone → 1 reload puis dialog ; crashReporter.start ajouté (minidumps locaux dans userData/Crashpad, sans télémétrie) ; uiLog du deviceId dans makeOutput.
+- Reste : corréler un .dmp Crashpad avec la prochaine occurrence ; si récurrent, tester désactivation de l'économie d'énergie des endpoints USB/audio ou flag Chromium.
+
+Données supplémentaires (12:11-12:15) : crash aussi ~3 MIN après création des contextes (pas seulement à la création) ; device dc79ff = "CABLE Input (VB-Audio Virtual Cable)" → suspect n°1. Bug d'instrumentation corrigé : crashReporter.start() s'exécutait AVANT setPath('userData') → dumps dans %APPDATA% ; déplacé après (commit 9093732). A/B cableId impossible : pick() ré-assigne CABLE Input auto par design.
+
+Recherche externe (correlations) :
+- Chromium fait tourner l'audio dans un process utility séparé (audio.mojom.AudioService) ; il peut crasher sur changement de périphérique et se fait tuer par un hang-monitor (3 min, kTerminateCurrentProcess). À sa mort, l'AudioContext reçoit exactement notre message « encountered an error from the audio device or the WebAudio renderer » et passe suspended — cf. obsproject/obs-studio#10586 (même symptôme).
+- Chromium bug 353979250 (2024) : device de sortie non-défaut invalide → RenderError au lieu de fallback. Le device CABLE (virtuel) est le candidat idéal à l'invalidation.
+- Chromium bug 1408376 (fixé M119) : crash dans closeContext sur setSinkId pending — notre teardownAudio ferme des contextes avec setSinkId possiblement en vol.
+- Pistes si dump = audio service : flags Chromium (--disable-features=AudioServiceSandbox / AudioServiceOutOfProcess) à évaluer ; ou partage d'un seul AudioContext quand cable==mon deviceId — **implémenté 15/11 (74ab247)**.
+- **Confirmation externe (15/11, recherche)** : le message « The AudioContext encountered an error from the audio device or the WebAudio renderer » est émis quand le **process utility audio Chromium** meurt (crash ou hang-monitor 3 min, `audio_thread_hang_monitor.cc`) — obs-studio#10586, flutter_sound_web#3, hermes-agent#69016. Notre hypothèse « mort du audio service » est donc corroborée par des rapports identiques hors SoundFart. Le renderer ne peut pas récupérer un AudioContext mort — Chromium ne le relance pas (seul un reload le fait, déjà en place).
+
+
+## SF-REL-0141 — writeRecording : .part partage entre ecritures concurrentes (P1, CLOSED — voir conditions)
+
+**Symptome** : deux `writeRecording` concurrents dans le meme process (double
+`rec:save`, ou futur appel parallele) ecrivaient le MEME fichier
+`cand.pid.part` : le `unlink` de l'un faisait echouer `link()` de l'autre
+(ENOENT) ou corrompait le contenu. Detecte par le test de concurrence ajoute
+au cycle 5 (fuzz/proprietes sur lib/audio-utils).
+**Cause racine** : le nom du temporaire n'incluait que le PID, pas un
+identifiant d'ecriture.
+**Fix** : compteur `partSeq` par appel — chaque `.part` est unique.
+**Preuve** : test `writeRecording : N ecritures concurrentes` (20 appels
+paralleles -> 20 fichiers distincts, 0 `.part` residuel). 37/37 tests verts.
+
+**Clôture V2 (15/11/2026)** — les 9 conditions sont remplies :
+1. Défaut compris ✓ (tmp nommé par PID seul) ; 2. Cause racine démontrée ✓ ;
+3. Fix traite le mécanisme (partSeq unique par écriture) ✓ ;
+4. Test ciblé : le test ×20 ÉCHOUE sur l'ancien code (collision .part) ✓ ;
+5. Non-régression : 37/37 npm test ✓ ;
+6. Revue indépendante du diff (subagent adverse, commit 54d77a6) : VALIDÉ,
+   unicité vérifiée sur tous les chemins (succès/retry/EEXIST/repli wx) ✓ ;
+7. Validation runtime : rec:save via IPC réel → fichier persisté (CDP) ✓ ;
+8. Limites documentées : `.part` orphelins non purgés (SF-REL-0136),
+   repli wx non atomique sur FS sans hardlinks + disque plein (résidu
+   accepté, faible) — voir revue adverse.
+**Statut : CLOSED** — première anomalie à satisfaire l'ensemble du
+verrou V2.
+
+
+## Cycle 5 — audit surface IPC (SF-REL-0601 a 0610)
+
+Inventaire : 23 handlers `ipcMain.handle` (tous via wrapper `H` + garde
+`fromApp` sur senderFrame), 3 `ipcMain.on` gardes, 0 canal mort, tous les
+`webContents.send` gardes par isDestroyed. execFile/spawn en tableaux
+(sans shell), URLs validees, SHA-256 sur telechargements.
+
+- SF-REL-0601 (P1) dir d'ecriture arbitraire via `dir` renderer -> **ACCEPTED** :
+  storageDir est une feature utilisateur legitime (choisie via pickDir) ; le
+  renderer est notre propre page sandboxee sans contenu distant. Noms de
+  fichiers sanitizes (safeName), pas de traversal.
+- SF-REL-0602 (P1) `fs.mkdirSync` sync sur chemin UNC -> **CLOSED** :
+  `await fs.promises.mkdir` dans rec:save, media:cut, yt:download.
+- SF-REL-0603 (P2) `file:read` lit tout media absolu -> **ACCEPTED** : meme
+  modele de menace que 0601 ; borne 512 Mo conservee.
+- SF-REL-0604 (P2) `shell:openDir` statSync -> **CLOSED** : stat async.
+- SF-REL-0605 (P3) `maxBuffer` ignore par spawn (yt:info) -> **CLOSED** :
+  option morte retiree, plafond reel 4 Mo documente en commentaire.
+- SF-REL-0606 (P3) `audio:autoSetup` opts non valide -> **CLOSED** : coercion
+  enabled/cableLabel en tete de handler.
+- SF-REL-0607 (P3) ui:log spam -> statSync+readFileSync(2Mo) a chaque ligne
+  quand log >2 Mo -> **FIXED_PENDING_VALIDATION** : controle de taille throttle a 1/min.
+- SF-REL-0608 (P3) config:save stringify avant borne -> **ACCEPTED** : la
+  serialisation est de toute facon requise pour ecrire ; borne post-hoc.
+- SF-REL-0609 (P3) `key` shortcut sans borne -> **FIXED_PENDING_VALIDATION** : cap 128 car.
+- SF-REL-0610 (P3) catch{} expandPaths -> **ACCEPTED** : sonde best-effort,
+  l'echec est indiscernable d'un fichier absent par nature ; documente.
+
+Smoke long (2 min, test-profile) : stable, heap=10 Mo constant, pas de crash.
+
+## Synthèse cycle 1
+- 57 anomalies qualifiées au cycle 1. **Compteurs rebasés sous Quality Gate V2** : voir tableau de bord en fin de registre — les anciens CLOSED sans validation runtime par anomalie sont FIXED_PENDING_VALIDATION.
+- P0 : 1 (SF-REL-0001) — introduit par la campagne précédente, attrapé par l'audit cycle 2. Preuve que la boucle fonctionne.
+- Leçon usine : TOUT changement main.js doit être smoke-testé (npx electron . --test-profile) — node --check ne voit pas les ReferenceError runtime.
+
+## SF-REL-0611 — Crash renderer AudioContext / WebAudio (exitCode -1/143) — INVESTIGATING
+
+**Symptôme** : `render-process-gone {"reason":"crashed","exitCode":-1}` (parfois 143), précédé de « The AudioContext encountered an error from the audio device or the WebAudio renderer ». Intermittent : ~5 occurrences sur ~10 sessions smoke ; sessions stables de 5-12 min observées depuis le 15/11 12:20.
+**Cause racine** : **UNDETERMINED** — non démontrée. Corrélations : device `dc79ff…` = CABLE Input (VB-Audio Virtual Cable) ; crash aussi ~3 min après création des contextes ; message identique à la mort du process audio utility Chromium (obs-studio#10586). Suspect n°1 : interaction Chromium ↔ driver VB-CABLE / service audio Windows.
+**Mitigations en place (pas des corrections de cause)** : statechange → retry applyAudio borné ; render-process-gone → 1 reload puis dialog + `app.quit()` (SF-REL-0054) ; crashReporter.start (minidumps locaux, sans télémétrie) — positionné APRÈS setPath(userData) depuis 9093732 ; logs deviceId dans makeOutput ; **partage d'un seul AudioContext quand `cableId===monId`** (15/11, commit en cours) — chaque AudioContext est une surface d'exposition au crash audio utility, le doublon ne changeait rien à l'audio.
+**Preuves négatives** : cdp-stress.js 40/40 itérations propres (rafales play/stop, churn modales, rec:save, cycles audio) + smoke endurance heap stable — ne ferment PAS l'enquête.
+**Forensique Windows (15/11, ~17h30)** : l'Observateur d'événements ne contient AUCUN crash SoundFart — les WER du jour sont des LiveKernelEvent GPU sans rapport, un crashpad_log de l'installeur Edge et un dump NahimicSvc (service audio tiers, non corrélé). Les `Crashpad/reports` sont **vides** aux deux emplacements (`%APPDATA%\SoundFart` = destination pré-fix, `%TEMP%\SoundFart-test` = post-fix 9093732) : les crashs de 11h-13h01 sont antérieurs à l'instrumentation correcte, et **aucun crash n'a produit de dump depuis**.
+**Fait marquant** : dernier crash journalisé 13:01:23 — depuis ~4h (smoke + endurance + cdp-stress 40 iters + rebuilds), zéro `render-process-gone`. Corrélation possible avec les durcissements audio de l'après-midi (0650-0657, contexte partagé 74ab247) mais **non attribuable** — intermittence ~5/10 sessions, l'absence de crash sur quelques heures ne prouve rien.
+**En attente** : .dmp Crashpad dans `userData/Crashpad/reports` pour identifier le module/processus fautif. A/B cableId impossible (pick() ré-assigne CABLE Input par design).
+**Validation** : RUNTIME partiel (crash observé en smoke réel) ; aucun test automatisé ne peut couvrir un crash driver.
+**Statut** : INVESTIGATING — ne pas clôturer sans .dmp analysé ou mitigation validée sur le terrain.
+
+
+## SF-REL-0612 — downloadFile : onProgress undefined -> crash process main (P0)
+
+**Symptôme** : `[fatal] uncaughtException: TypeError: onProgress is not a
+function` à main.js:554 (handler `res.on('data')`) — le process main ENTIER
+meurt. Détecté en runtime par test/cdp-yt.js lors de `ytEnsure` sur profil
+neuf : le téléchargement .sums (main.js:590 `downloadFile(sumsUrl, sumsTmp)`
+sans 3e argument) crashait systématiquement dès que Content-Length est présent.
+**Impact** : TOUT `downloadVerified` crashait à l'étape .sums — yt:ensure,
+installation ffmpeg, ffmpeg.zip : aucun outil téléchargeable ne pouvait
+s'installer sur un profil neuf. Bug probablement présent depuis
+l'introduction de downloadVerified.
+**Cause racine** : paramètre `onProgress` non fourni -> undefined -> appel
+dans un event handler -> uncaughtException hors promise.
+**Fix** : `onProgress = () => {}` par défaut dans downloadFile ET runYt
+(même classe de crash : callback invoqué dans handlers stderr/stdout).
+**Preuve** : node --check + npm test 37/37 ; runtime : ytEnsure complet
+rejoue apres rebuild -> yt-dlp.exe 23,5 Mo installe, « SHA-256 verifie »,
+process vivant (session s63cdb5). Le scenario exact du crash initial
+est desormais valide de bout en bout.
+**Statut** : CLOSED — cause corrigee + test cbOrNoop (38/38) + revue independante + runtime ytEnsure/media:cut/yt:info. Limite : le test couvre le helper cbOrNoop, pas les call-sites main.js (non testables via npm test).
+
+
+## SF-REL-0613 — ffmpeg inexploitable : tar GNU lit pas zip + « C: » distant (P0)
+
+**Symptôme** : `media:cut` et toute conversion audio YouTube (-x) échouaient
+à l'installation ffmpeg. Deux bugs en chaîne, le second masqué par le
+premier :
+1. `tar -xf C:\…\ffmpeg.zip` — le tar du PATH (Git GNU tar 1.35,
+   C:\Program Files\Git\usr\bin\tar.exe shadowe System32) interprète
+   « C: » comme hôte distant -> « Cannot connect to C: resolve failed ».
+2. Avec --force-local, GNU tar ne lit pas zip -> « not a tar archive ».
+   Seul bsdtar (System32\tar.exe) lit le zip.
+**Cause racine** : dépendance à l'exécutable `tar` du PATH sans
+contrôle de version/capacité.
+**Fix** : priorité explicite à `%SystemRoot%\System32\tar.exe`
+(bsdtar) avec repli sur `tar` du PATH.
+**Preuve** : runtime CDP — media:cut complet : ffmpeg.zip 80 Mo SHA-256
+vérifié x3 sessions, extraction bsdtar OK, coupe réelle
+`cuts/dry-fart_extrait.mp3` (1996 o > seuil 1 Ko). npm test 37/37.
+**Statut** : CLOSED — meme dossier 0612 : correctif + test + revue independante + validation runtime. Voir SF-REL-0612 pour les limites.
+
+
+## SF-REL-0614 — callbacks progression non normalisés (null/truthy) (P3)
+
+**Symptôme** : `onProgress = () => {}` (main.js:536,711) ne couvre que
+`undefined`. `downloadFile(u,d,null)` ou `runYt(args,null)` recréent le
+TypeError 0612 ; un callback truthy non-fonction passe tel quel et
+crash dans le handler 'data' (main.js:559). Aucun appelant actuel ne
+fait ça — protection fragile pour futurs appelants.
+**Revue** : indépendante (agent adverse), sévérité faible.
+**Fix** : normalisation `typeof cb === 'function'` en tete de
+downloadFile/runYt/downloadVerified ; `webContents.send` des callbacks
+ytprogress (x3) + tapDead enveloppes de try/catch (main.js).
+**Preuve** : node --check, npm test 37/37, dist rebuild, smoke runtime
+OK (fenetre + contextes audio crees). Revue independante requise.
+**Statut** : CLOSED — meme dossier 0612 : correctif + test + revue independante + validation runtime. Voir SF-REL-0612 pour les limites.
+
+## SF-REL-0615 — webContents.send dans callback progression : race destruction (P2)
+
+**Symptôme** : ytProgress (main.js:744-748) et callbacks inline
+(422,651) vérifient `win && !win.isDestroyed()` puis `send` — si le
+webContents meurt entre check et send, exception dans handler 'data'
+-> uncaughtException -> mort du main. Fenêtre de course étroite.
+Même classe : sf:tapDead (1201) non wrappé.
+**Revue** : indépendante, sévérité faible-moyenne.
+**Fix** : idem 0614 — try/catch autour des sends restants.
+**Statut** : CLOSED — meme dossier 0612 : correctif + test + revue independante + validation runtime. Voir SF-REL-0612 pour les limites.
+
+
+## SF-REL-0616 — restauration micro : exe non verifie + statuts mensongers (P2)
+
+**Symptome** : audioRestoreImpl utilisait audioToolPath()+existsSync sans
+verification -> exe corrompu = echec silencieux ; bouton « Restaurer »
+affichait un toast de succes quoi qu'il arrive ; autoSetup enabled=false
+retournait ok:true meme si restoreMicNowP echouait.
+**Cause** : chemins de restauration sans ensureAudioTool ni statut honnete.
+**Fix** : ensureAudioTool dans audioRestoreImpl ; enabled=false distingue
+« rien a restaurer » (ok) de « restauration echouee » (ok:false+err) ;
+will-quit loggue warn si exe absent ou restoreMicNow false.
+**Statut** : CLOSED — revue independante + runtime (cdp-drive 12/12, smoke). statuts honnêtes + ensureAudioTool + will-quit warn. Limite : call-sites main.js non couverts par npm test.
+
+## SF-REL-0617 — watchdog micro : fausse suspension pendant bascule autoSetup (P2)
+
+**Symptome** : pendant la fenetre restore->set capture d'autoSetupImpl
+(~100-500 ms), le watchdog (30 s) pouvait voir cur != target + marqueur
+present -> micWatchSuspended=true + toast « entree modifiee hors
+SoundFart » — surveillance desarmee a tort.
+**Fix** : flag micSwitching encadrant la section mutante ; watchdogMic
+retourne tot si actif.
+**Statut** : CLOSED — revue independante + runtime (cdp-drive 12/12, smoke). micSwitching etendu a autoSetupImpl entier + audioRestoreImpl + re-check watchdog + retry post-quit. Limite : call-sites main.js non couverts par npm test.
+
+## SF-REL-0618 — play() pendant teardownAudio : InvalidStateError parasite (P3)
+
+**Symptome** : teardownAudio fermait ctx avant de nuller audio[k] -> un
+play() dans la fenetre capturait un contexte mourant -> toast erreur.
+**Fix** : audio[k]=null AVANT await ctx.close().
+**Statut** : CLOSED — revue independante + runtime (cdp-drive 12/12, smoke). null avant close, play() ne capture plus un contexte mourant. Limite : call-sites main.js non couverts par npm test.
+
+## SF-REL-0619 — importConfig : teardownAudio hors chaine applyAudio (P3, OPEN)
+
+**Symptome** : importConfig appelle teardownAudio() direct pendant qu'un
+applyAudioInner peut etre en vol -> recréation possible avec les anciens
+devices ; convergence garantie par l'applyAudio suivant mais fenêtre
+transitoire (micro re-acquis/re-coupe, LED).
+**Fix** : suppression du teardownAudio() direct — applyAudio() passe par
+audioApplyChain et fait deja le teardown ; un applyAudioInner en vol
+termine proprement puis la nouvelle config est appliquee par la chaine.
+**Preuve** : node --check, npm test 38/38, dist rebuild, smoke + cdp-drive
+12/12 PASS. Revue independante requise.
+**Statut** : CLOSED — revue independante + runtime (cdp-drive 12/12, smoke). teardown direct supprime, applyAudio passe par audioApplyChain. Limite : call-sites main.js non couverts par npm test.
+
+
+## SF-REL-0620 — expandPaths : plafond 5000 comptait les visites, pas les sons (P2)
+
+**Symptome** : un dossier avec >5000 entrees non-audio avant les sons
+audio tronquait silencieusement l'import (seen.n++ par entree visitee).
+**Fix** : seen.n ne compte que les sons retenus (plafond 5000) ;
+seen.v borne le parcours a 50000 visites. Sync+async.
+**Preuve** : test audio-utils — 5100 .txt + 2 audio -> 2 sons retournes
+(ancien code : 0). npm test 39/39.
+**Statut** : CLOSED — revue independante + runtime (smoke, yt:info, yt:download, cdp-drive). plafonds n/v + test 5100 non-audio. Limites documentees par entree..
+
+## SF-REL-0621 — relocateSound : aucune validation extension/doublon (P2)
+
+**Symptome** : le dialogue fichier accepte « tous les fichiers » ->
+relocation vers un non-audio = file:check « present » mais file:read
+refuse au play ; relocation vers le chemin d'un autre son = dedoublonnage
+silencieux au prochain demarrage (perte d'un son).
+**Fix** : validation extension AUDIO_EXT + refus si chemin deja pris.
+**Statut** : CLOSED — revue independante + runtime (smoke, yt:info, yt:download, cdp-drive). validation ext + doublon. Limites documentees par entree..
+
+## SF-REL-0622 — id son « __stop__ » : raccourci devenait STOP deguise (P2)
+
+**Symptome** : normalizeCfg acceptait id='__stop__' -> shortcuts:apply
+enregistrait l'accel et onShortcut routait vers stopAll.
+**Fix** : normalizeCfg rejette id '__stop__'.
+**Statut** : CLOSED — revue independante + runtime (smoke, yt:info, yt:download, cdp-drive). id __stop__ rejete. Limites documentees par entree..
+
+## SF-REL-0623 — addPaths sans plafond : file:check/config:save casses (P2)
+
+**Symptome** : >5000 sons via addPaths -> file:check jette 'chemins
+invalides' (checkMissing meurt en silence) et config:save >5 Mo ->
+sauvegardes KO sans feedback.
+**Fix** : addPaths borne a 5000 - len(cfg.sounds) + toast de troncature.
+**Statut** : CLOSED — revue independante + runtime (smoke, yt:info, yt:download, cdp-drive). plafond addPaths + toast honnete. Limites documentees par entree..
+
+
+## SF-REL-0624 — P3 audit config : 3 durcissements (groupe)
+
+1. migrateOldConfig : lecture non bornee -> borne 16 Mo + filtre des
+   elements sans path string (un element casse faisait perdre toute la
+   migration via basename(undefined)).
+2. sounds:seed : fichier pre-existant tronque passait existsSync ->
+   comparaison de taille a la source + recopie si different ; source
+   vide rejetee (!a).
+3. watchdogMic : lecture config brute divergeait de normalizeCfg ->
+   meme semantique (absent=actif, present doit etre === true) + rejet
+   settings non-objet.
+**Preuve** : node --check, npm test 39/39, dist rebuild, smoke OK.
+**Statut** : CLOSED — revue independante + runtime (smoke, yt:info, yt:download, cdp-drive). seed/migration/watchdog aligns. Limites documentees par entree..
+
+
+## SF-REL-0625 — downloadFile sans deadline totale : single-flight pendu a jamais (P1)
+
+**Symptome** : setTimeout(30 s) = inactivite seule ; un serveur qui
+degoutte 1 octet/29 s bloquait installYtDlpPromise/ffmpegPromise/
+ytDownloadBusy jusqu'au restart -> tous les imports YouTube morts.
+**Fix** : deadline totale 15 min qui detruit la requete en vol
+(curReq) ; resolve/reject routent par done() qui clear le timer.
+**Preuve** : node --check, npm test 39/39, dist rebuild, smoke +
+yt:info reel OK. Deadline non testable en auto (serveur lent requis).
+**Statut** : CLOSED — revue independante + runtime (smoke, yt:info, yt:download, cdp-drive). deadline 15 min + destroy requete. Limites documentees par entree..
+
+## SF-REL-0626 — runYt timeout : repli reutilisait le meme template (P2)
+
+**Symptome** : timeout -> killTree fire-and-forget ; le repli audio
+complet reutilisait outTpl -> un ffmpeg orphelin pouvait ecrire un
+MP3 partiel retenu comme import valide (filtre plus recent/mремя).
+**Fix** : template DISTINCT (tag2) pour le repli ; filtre accepte les
+deux tags.
+**Statut** : CLOSED — revue independante + runtime (smoke, yt:info, yt:download, cdp-drive). tag2 preferé au tri mtime. Limites documentees par entree..
+
+## SF-REL-0627 — displaymedia : securityOrigin file:// sans path (P2)
+
+**Symptome** : pour une page file://, request.securityOrigin='file://'
+(truthy, sans pathname index.html) -> originOk toujours faux ->
+getDisplayMedia refuse a coup sur ; repli Chromium mort.
+**Fix** : tester frame.url en plus de securityOrigin.
+**Statut** : CLOSED — revue independante + runtime (smoke, yt:info, yt:download, cdp-drive). frame.url + protocole file: exige. Limites documentees par entree. (getDisplayMedia non teste
+reellement — requiert interaction UI).
+
+## SF-REL-0628 — ensureFfmpeg : exe partiel <10 Mo reutilise (P2)
+
+**Symptome** : extraction tuee par timeout laissait ffmpeg.exe
+imbrique/partiel ; findFile la retournait sans controle -> media:cut
+executait un binaire corrompu indefiniment.
+**Fix** : taille >=10 Mo exigee sur l'exe trouve, sinon purge du
+ dossier ffmpegDir et re-telechargement.
+**Statut** : CLOSED — revue independante + runtime (smoke, yt:info, yt:download, cdp-drive). exe partiel purge. Limites documentees par entree..
+
+## SF-REL-0629 — audioTapKilling bloque a jamais si 'error' sans 'exit' (P2)
+
+**Symptome** : tapStop tuait le proc puis null audioTapProc ; un 'error'
+sans 'exit' ne remettait pas le flag -> chaque tapStart attendait 3 s
+puis echouait « arret en cours » -> enregistreur audio PC mort.
+**Fix** : audioTapKilling=false en tete du handler 'error' (le proc
+tue est le seul possible dans la fenetre).
+**Statut** : CLOSED — revue independante + runtime (smoke, yt:info, yt:download, cdp-drive). audioTapKilling reset. Limites documentees par entree..
+
+## SF-REL-0630 — killTree fire-and-forget : survie des enfants au quit (P3)
+
+**Symptome** : will-quit catch autour de killTree ne pouvait jamais
+se declencher (taskkill async) -> enfants yt-dlp/ffmpeg pouvaient
+survivre a la sortie.
+**Fix** : p.kill() systematique en filet apres killTree.
+**Statut** : CLOSED — revue independante + runtime (smoke, yt:info, yt:download, cdp-drive). p.kill filet quit. Limites documentees par entree..
+
+
+## SF-REL-0631 — enregistreur : sources restees live pendant choix dossier (P1)
+
+**Symptome** : modale fermee pendant la prise -> rec.onstop -> askDestDir
+choix dossier avec micro getUserMedia live, AudioTap.exe capturant, et
+AudioContext ouvert (plus personne ne stoppait).
+**Fix** : cleanup (streams/tapNode/audioTapStop/actx/boutons) deplace
+juste apres chunks=[] avant askDestDir + doublon idempotent dans catch.
+**Statut** : CLOSED — revue independante (VALIDÉ sans reserve) + npm test 39/39 + dist + smoke + cdp-drive PASS. Limite : UI non testee interactivement.
+
+## SF-REL-0632 — micSel : repli « premier non virtuel » mort (P2)
+
+**Symptome** : select sans option selected auto-prend devs[0] ->
+micSel.value truthy -> firstReal jamais applique -> « micro » pouvait
+enregistrer CABLE Output.
+**Fix** : flag micMatched a la creation des options.
+**Statut** : CLOSED — revue independante (VALIDÉ sans reserve) + npm test 39/39 + dist + smoke + cdp-drive PASS. Limite : UI non testee interactivement.
+
+## SF-REL-0633 — previewSound : lecture jamais produite (P2)
+
+**Symptome** : play() exigeait l'appartenance a cfg.sounds ; l'aperçu
+YouTube passait un id ephemere -> decode puis null silencieux.
+**Fix** : opts.preview exempte du check.
+**Statut** : CLOSED — revue independante (VALIDÉ sans reserve) + npm test 39/39 + dist + smoke + cdp-drive PASS. Limite : UI non testee interactivement.
+
+## SF-REL-0634 — plafond 5000 sons contourne par ajouts runtime (P2)
+
+**Symptome** : enregistrement/YouTube/seed poussaient sans borne ->
+file:check refusait le batch (badges geles) et config:save >5 Mo.
+**Fix** : pushSound() borne + toast ; seed borne aussi.
+**Statut** : CLOSED — revue independante (VALIDÉ sans reserve) + npm test 39/39 + dist + smoke + cdp-drive PASS. Limite : UI non testee interactivement.
+
+## SF-REL-0635 — raccourcis : STOP affame + alias non normalises (P2)
+
+**Symptome** : __stop__ ajoute en dernier -> jamais enregistre au-dela
+ de 200 raccourcis ; 'CommandOrControl+X' vs 'Ctrl+X' non detectes
+comme conflits (dedupe normalizeCfg + findShortcutOwner).
+**Fix** : __stop__ en premier ; normAccel() (commandorcontrol/cmdorctrl/
+control -> ctrl) dans findShortcutOwner et dedupe normalizeCfg.
+**Statut** : CLOSED — revue independante (VALIDÉ sans reserve) + npm test 39/39 + dist + smoke + cdp-drive PASS. Limite : UI non testee interactivement.
+
+## SF-REL-0636 — modales : pas de piege focus / file d'attente (P2, OPEN)
+
+**Symptome** : #app non inerte pendant modale -> Tab/Entree peuvent
+agir sur l'UI derriere (re-ouvrir modale = edits perdus) ; flux async
+(ytDownload termine, enregistrement) peuvent detruire une modale sans
+rapport ; ytModalAlive ecrit jamais lu.
+**Fix** : `inert` sur #app pendant toute modale (Tab/Entree ne sortent
+plus vers l'UI) ; `closedDuringRec` : modale fermee pendant une prise ->
+toast chemin au lieu de modale resultat ; YouTube : modale resultat
+sautee si une AUTRE modale est ouverte (modalClose compare au close
+de la modale YouTube — ytModalAlive existait mais n'etait jamais lu).
+**Preuve** : node --check, npm test 39/39, dist rebuild, smoke +
+cdp-drive 12/12. Modales non testees interactivement (UI).
+**Statut** : CLOSED — revue independante du diff de residu (44d00b9) : correction COMPLETE ET CORRECTE + npm test 39/39 + dist + smoke + cdp-drive PASS. Limites documentees par entree.
+
+
+## SF-REL-0637 — decode PCM non borne + decodes/voix illimitees (P2)
+
+**Symptome** : seul le poids COMPRESSE etait borne (150 Mo) ; un
+FLAC/Opus long decodait en Go de PCM -> crash renderer (piste 0611) ;
+N clics = N decodeAudioData paralleles ; polyphonie sans plafond.
+**Fix** : semaphore 2 decodes simultanes ; refus dur >512 Mo PCM
+(~23 min stereo) ; plafond 32 voix simultanees (voices.size).
+**Preuve** : node --check, npm test 39/39, dist rebuild, smoke +
+cdp-drive 12/12. Limite : le PCM peak pendant decodeAudioData reste
+non borne (impossible a connaitre avant decode).
+**Statut** : CLOSED — revue independante du diff de residu (44d00b9) : correction COMPLETE ET CORRECTE + npm test 39/39 + dist + smoke + cdp-drive PASS. Limites documentees par entree.
+
+
+## SF-REL-0638 — checkMissing : scans concurrents desordonnes + pas de debounce (P2)
+
+**Symptome** : chaque focus relancait un scan complet (jusqu'a 5000
+chemins, lots de 200 sequentiels, pas de timeout) ; des appels
+concurrents (focus, import, ajout) pouvaient ecrire un 'missing'
+perime dans le desordre -> badges introuvable faux.
+**Fix** : jeton de generation checkSeq (seul le scan le plus recent
+applique son resultat) + debounce 400 ms sur le listener focus +
+erreur checkFiles remontee a logErr au lieu de rejet silencieux.
+**Preuve** : node --check, npm test 39/39, dist rebuild, smoke +
+cdp-drive 12/12. Limite : file:check cote main n'a toujours pas de
+timeout par chemin (partage mort = batch lent, async donc pas de
+blocage main).
+**Statut** : CLOSED — revue independante (VALIDÉ sans reserve) + npm test 39/39 + dist + smoke + cdp-drive PASS. Limite : UI non testee interactivement.
+
+
+## SF-REL-0639 — decodeQueue non bornee : ArrayBuffers bruts retenus en file (P2)
+
+**Symptome** : le semaphore decode (0637) bornait decodeAudioData a 2
+simultanes mais la file d'attente etait illimitee — chaque waiter
+retenait son ArrayBuffer brut (jusqu'a 150 Mo) -> clics en rafale sur
+sons lourds = pression memoire hors du chemin decode.
+**Fix** : acquireDecode(bytes) borne la file a 64 waiters ET 512 Mo
+cumules ; au-dela, rejet honnete (« Trop de lectures simultanees »)
+remonte a l'utilisateur via le catch de play().
+**Preuve** : revue independante (constat) + node --check, npm test
+39/39, dist, smoke + cdp-drive PASS. Limite : la borne est par
+getBuffer ; un utilisateur peut toujours cliquer 64 sons lourds
+(~9 Go de buffers bruts en file — improbable en usage reel).
+**Statut** : CLOSED — revue independante des correctifs + residus (52b5b66) : tout CORRECT + npm test 39/39 + dist + smoke + cdp-drive PASS. Limites documentees par entree.
+**Revue** : Revue a trouve : rejet sans noFileErr -> faux badge introuvable + message masque. Corrige (noFileErr=true). Limite : borne mesure l'octet encode, pas le heap reel.
+
+
+## SF-REL-0640 — importConfig onDone detruirait une modale vivante ? (P3, REJETE)
+
+**Symptome presume** : onDone=closeSettings appele a la fin d'un import
+pourrait fermer une modale ouverte pendant applyAudio (edits perdus).
+**Verdict** : NON-ANOMALIE — invariant modal() a slot unique : ouvrir
+une modale appelle modalClose() qui pose closed=true sur la precedente.
+Un close perime est donc toujours inerte (return immediat) ; onDone ne
+peut detruire que la modale ENCORE COURANTE, ce qui est le comportement
+voulu. Verifie par lecture du code modal()/close() + audit.
+**Statut** : CLOSED (non-anomalie documentee — ne pas rouvrir).
+
+## SF-REL-0641 — normalizeCfg : id/nom non bornes + saveConfig silencieux (P3)
+
+**Symptome** : id>128 car. -> raccourci jamais enregistre (filtre main
+silencieux) ; noms geants x5000 -> config:save >5 Mo -> save()
+catch logErr seul -> config jamais persistee sans aucun signal.
+**Fix** : id borne a 128 / nom a 200 AVANT dedup (evite les doublons
+crees par truncature) ; toast une fois par session sur echec
+saveConfig.
+**Preuve** : node --check, npm test 39/39, dist, smoke + cdp-drive.
+**Statut** : CLOSED — revue independante (CORRECT sans reserve) + npm test 39/39 + dist + smoke + cdp-drive PASS. Limites documentees par entree.
+
+## SF-REL-0642 — file:read : chemins absolus medias arbitraires (P3, ACCEPTED)
+
+**Constat** : file:read accepte tout chemin absolu avec extension
+media (AUDIO_EXT inclut mp4/mkv/webm, <=512 Mo) — un renderer compromis
+lirait des medias arbitraires. Attenua par CSP stricte, zero innerHTML,
+fromApp sur chaque handler.
+**Decision** : ACCEPTED — restriction par allowlist de dossiers =
+changement de comportement (l'app joue legitimement les fichiers de
+l'utilisateur), a evaluer separement si la menace est jugee reelle.
+**Statut** : ACCEPTED.
+
+## SF-REL-0643 — stopShortcut : comparaison brute vs normAccel (P3)
+
+**Symptome** : exemption « meme raccourci » comparait en brut ->
+Ctrl+Alt+S vs CommandOrControl+Alt+S = rejet « deja attribue » bien que
+normAccel les considere identiques (message trompeur, impact nul).
+**Fix** : comparaison via normAccel des deux cotes.
+**Preuve** : node --check, npm test 39/39, dist, smoke + cdp-drive.
+**Statut** : CLOSED — revue independante (CORRECT sans reserve) + npm test 39/39 + dist + smoke + cdp-drive PASS. Limites documentees par entree.
+
+## SF-REL-0644 — storageDir/lastDestDir relatifs acceptes (P3)
+
+**Symptome** : config importee avec chemin relatif -> storageRoot()
+retombe sur userData en silence alors que l'UI affiche le dossier.
+**Fix** : normalizeCfg exige un chemin absolu (lettre:\, UNC, /) pour
+les deux champs, sinon reinitialisation.
+**Preuve** : node --check, npm test 39/39, dist, smoke + cdp-drive.
+**Statut** : CLOSED — revue independante (CORRECT sans reserve) + npm test 39/39 + dist + smoke + cdp-drive PASS. Limites documentees par entree.
+
+
+## SF-REL-0650 — trim log : readFileSync integral -> trim en echec a jamais (P1)
+
+**Symptome** : au-dela de 2 Mo, le trim lisait le fichier ENTIER en RAM ;
+un fichier geant rendait readFileSync throw -> catch silencieux -> trim
+re-echouait toutes les 60 s -> log sans borne jusqu'au disque plein.
+**Fix** : lecture des 500 derniers Ko via descripteur positionne
+(readSync avec offset) + warn logge si le trim echoue.
+**Preuve** : node --check, npm test 39/39, dist, smoke + cdp-drive.
+**Statut** : CLOSED — revue independante des correctifs + residus (52b5b66) : tout CORRECT + npm test 39/39 + dist + smoke + cdp-drive PASS. Limites documentees par entree.
+**Revue** : Revue a trouve : warn ENOENT parasite au 1er log + bytesRead ignore (zeros si fichier retreci). Corriges : ENOENT silencieux, reecriture seulement si n===keep.
+
+## SF-REL-0651 — ui:log/console-message sans limite de debit (P2)
+
+**Symptome** : chaque message renderer ecrivait synchrone sur disque sans
+quota -> renderer buggé = Go/min + blocage main (appendFileSync).
+**Fix** : uiLogAllowed() — 30 msg/s par fenetre glissante, surplus comptes
+et resume « N messages ignores » toutes les 100. Applique aux 2 canaux.
+**Preuve** : node --check, npm test 39/39, dist, smoke + cdp-drive.
+**Statut** : CLOSED — revue independante des correctifs + residus (52b5b66) : tout CORRECT + npm test 39/39 + dist + smoke + cdp-drive PASS. Limites documentees par entree.
+**Revue** : Revue a trouve : warn resume ~50/s sous spam + compteur partage affamant console.error + console-message non sanitize (forge 
+). Corriges : budgets separes par canal, warn cadence 1/s, sanitization.
+
+## SF-REL-0652 — aucun handler powerMonitor : sleep/wake non gere (P2)
+
+**Symptome** : pas de log ni reaction au sleep/wake ; peripheriques
+re-enumeres sans devicechange fiable ; enregistrement MediaRecorder
+pouvait contenir un trou silencieux pendant la veille.
+**Fix** : powerMonitor suspend/resume logges ; au resume, envoi
+'sf:powerResume' -> renderer re-resout peripheriques. Limite documentee :
+le trou dans un enregistrement en cours n'est pas detectable sans
+horloge audio (non corrige — a evaluer si terrain le remonte).
+**Preuve** : node --check, npm test 39/39, dist, smoke + cdp-drive.
+**Statut** : CLOSED — revue independante des correctifs + residus (52b5b66) : tout CORRECT + npm test 39/39 + dist + smoke + cdp-drive PASS. Limites documentees par entree.
+**Revue** : Revue a trouve : enumeration partielle post-resume effacait cableId. Corrige : delai 2,5 s avant refreshDevices. Limite : trou enregistrement veille reste.
+
+## SF-REL-0653 — watchdog micro : exe absent -> surveillance muette (P2)
+
+**Symptome** : watchdogMic testait existsSync(tool) et sortait — un exe
+supprime/tronque en session desarmait la surveillance a jamais, micro
+coince possible a la fermeture sans recours.
+**Fix** : ensureAudioTool() (single-flight, recompile via csc) dans le
+tick watchdog au lieu du test existsSync.
+**Preuve** : node --check, npm test 39/39, dist, smoke + cdp-drive.
+**Statut** : CLOSED — revue independante des correctifs + residus (52b5b66) : tout CORRECT + npm test 39/39 + dist + smoke + cdp-drive PASS. Limites documentees par entree.
+**Revue** : Revue a trouve : ensureAudioTool avant gardes config -> compilation C# meme watchdog desarme. Corrige : config validee d'abord.
+
+## SF-REL-0654 — audioRestoreImpl sans garde quitting (P3)
+
+**Symptome** : un audio:restore arrive au moment du quit pouvait
+compiler C# (csc 60 s) ou lancer 'set capture' APRES la restauration
+synchrone du will-quit -> peripherique re-bascule sans marqueur.
+**Fix** : tests quitting en tete + apres ensureAudioTool + avant
+restoreMicNowP.
+**Preuve** : node --check, npm test 39/39, dist, smoke + cdp-drive.
+**Statut** : CLOSED — revue independante des correctifs + residus (52b5b66) : tout CORRECT + npm test 39/39 + dist + smoke + cdp-drive PASS. Limites documentees par entree.
+**Revue** : Revue a trouve : gardes incompletes (autoSetupImpl sans entree, fallback post-restoreMicNowP). Corrigees : entrees + post-restore + avant set fallback.
+
+## SF-REL-0655 — Crashpad : minidumps jamais purges (P3)
+
+**Symptome** : reports/reversed accumulaient les .dmp sans borne
+(profil portable/USB, bug renderer -1/143 recurrent).
+**Fix** : purge au demarrage des .dmp >30 jours — les dumps recents
+(Preuves SF-REL-0611) sont preserves.
+**Preuve** : node --check, npm test 39/39, dist, smoke + cdp-drive.
+**Statut** : CLOSED — revue independante des correctifs + residus (52b5b66) : tout CORRECT + npm test 39/39 + dist + smoke + cdp-drive PASS. Limites documentees par entree.
+
+## SF-REL-0656 — storageRoot : chemin arbitraire sans validation FS (P3, ACCEPTED)
+
+**Constat** : dir absolu accepte tel quel ; chemin sur USB retire/partage
+mort peut pendre fs.promises.mkdir indefiniment -> rec:save/yt:download
+pending a jamais.
+**Decision** : ACCEPTED — une sonde statSync synchrone sur lecteur mort
+bloquerait le main (PIRE que le pending async actuel) ; un timeout sur
+mkdir necessiterait de toucher chaque handler d'ecriture. Limite
+documentee, a reevaluer si terrain.
+**Statut** : ACCEPTED.
+
+## SF-REL-0657 — migrateOldConfig : tableau sounds non borne (P3)
+
+**Symptome** : ~200k entrees -> map() sur thread main au config:load.
+**Fix** : slice(0, 5000) coherent avec normalizeCfg.
+**Preuve** : node --check, npm test 39/39, dist, smoke + cdp-drive.
+**Statut** : CLOSED — revue independante des correctifs + residus (52b5b66) : tout CORRECT + npm test 39/39 + dist + smoke + cdp-drive PASS. Limites documentees par entree.
+
+
+## SF-REL-0660 — restauration guard : device sans nom accepte « non virtuel » (P2)
+
+**Symptome** : NonVirtual()/fb dans AudioEndpoint.cs acceptaient un
+endpoint dont DeviceName avait echoue ("") — levirtuel pouvait etre
+choisi comme repli, exactement le cas durci cote JS (chooseRestoreIds).
+**Fix** : nom non vide exige dans NonVirtual ET dans la selection fb.
+**Preuve** : csc compile OK, AudioEndpoint list/get reels OK.
+**Statut** : CLOSED — revue independante du diff b9ea0a7 : CORRECT sans reserve + csc compile + AudioEndpoint list/get reels + cdp-tap runtime (RMS 0,285) + npm test 39/39 + dist + smoke. Limites documentees.
+
+## SF-REL-0661 — guard restauration one-shot : echec transitoire = micro coince (P3)
+
+**Fix** : RestoreFromFile boucle 5 tentatives backoff 2s->10s tant que
+le marqueur existe et que rc!=0.
+**Preuve** : csc compile OK. **Statut** : CLOSED — revue independante du diff b9ea0a7 : CORRECT sans reserve + csc compile + AudioEndpoint list/get reels + cdp-tap runtime (RMS 0,285) + npm test 39/39 + dist + smoke. Limites documentees.
+
+## SF-REL-0662 — guards AudioEndpoint dormants accumules (P3, ACCEPTED)
+
+Owner=pid identique -> N bascules = N guards endormis. Plafonne en
+pratique (peu de toggles), borner par mutex/lock = complexite non
+justifiee. **Statut** : ACCEPTED.
+
+## SF-REL-0663 — fenetre PID reutilise/mort precoce -> restauration sautee (P3, ACCEPTED)
+
+GetProcessById initial throw -> return 0 ; PID reutilise <500 ms ->
+StartTime different -> return 0. Fenetre etroite, stderr ignore de
+toute facon. Documente. **Statut** : ACCEPTED.
+
+## SF-REL-0664 — AudioTap : frames==0 = boucle interne infinie non bornee (P2)
+
+**Symptome** : GetBuffer S_OK + 0 frame -> ReleaseBuffer+continue sans
+borne ni check parent -> 100% CPU possible sur driver buggé.
+**Fix** : zeroFrames>200 -> break (sortie vers boucle externe bornee).
+**Preuve** : csc compile OK + cdp-tap runtime (73 chunks, RMS 0,285).
+**Statut** : CLOSED — revue independante du diff b9ea0a7 : CORRECT sans reserve + csc compile + AudioEndpoint list/get reels + cdp-tap runtime (RMS 0,285) + npm test 39/39 + dist + smoke. Limites documentees.
+
+## SF-REL-0665 — maxQueued fige apres reconnexion (P3)
+
+**Fix** : maxQueued recalcule depuis df.bytesPerSec apres InitTap
+reconnect (format peut changer 44.1->96 kHz). Mode non-pcm.
+**Statut** : CLOSED — revue independante du diff b9ea0a7 : CORRECT sans reserve + csc compile + AudioEndpoint list/get reels + cdp-tap runtime (RMS 0,285) + npm test 39/39 + dist + smoke. Limites documentees.
+
+## SF-REL-0666 — parentStart adopte sur PID reutilise (P3, ACCEPTED)
+
+Initial GetProcessById echoue + PID reutilise au 1er tick -> mauvaise
+StartTime -> orphelin possible (seconds=0). Fenetre minime ; Node
+passe toujours un pid vivant. Documente. **Statut** : ACCEPTED.
+
+## SF-REL-0667 — pcmOut.Write bloquant hors check parent (P3, ACCEPTED)
+
+Pipe plein + parent gele = AudioTap suspendu. Atténue : Node draine
+toujours ('data' handler), EPIPE -> IOException -> sortie. Documente.
+**Statut** : ACCEPTED.
+
+## SF-REL-0668 — clients COM non liberes au reconnect (P3)
+
+**Fix** : Marshal.ReleaseComObject sur src/dst/cap/ren avant
+reassignation t2 — sessions WASAPI fantomes evitees.
+**Statut** : CLOSED — revue independante du diff b9ea0a7 : CORRECT sans reserve + csc compile + AudioEndpoint list/get reels + cdp-tap runtime (RMS 0,285) + npm test 39/39 + dist + smoke. Limites documentees.
+
+## SF-REL-0669 — dst.GetBufferSize hr ignore -> silence mode reinjection (P3)
+
+**Fix** : hr verifie + throw (mode non-pcm inutilise mais code sain).
+**Statut** : CLOSED — revue independante du diff b9ea0a7 : CORRECT sans reserve + csc compile + AudioEndpoint list/get reels + cdp-tap runtime (RMS 0,285) + npm test 39/39 + dist + smoke. Limites documentees.
+
+## SF-REL-0670 — parentPid non numerique -> anti-orphelin muet (P3)
+
+**Fix** : warning stderr au lieu d'un no-op silencieux.
+**Statut** : CLOSED — revue independante du diff b9ea0a7 : CORRECT sans reserve + csc compile + AudioEndpoint list/get reels + cdp-tap runtime (RMS 0,285) + npm test 39/39 + dist + smoke. Limites documentees.
+
+## SF-REL-0671 — seconds negatif = duree infinie (P3)
+
+**Fix** : seconds<0 rejete avec NaN/Infinity.
+**Statut** : CLOSED — revue independante du diff b9ea0a7 : CORRECT sans reserve + csc compile + AudioEndpoint list/get reels + cdp-tap runtime (RMS 0,285) + npm test 39/39 + dist + smoke. Limites documentees.
+
+## SF-REL-0672 — allocations par paquet ~3 MB/s GC (P3, ACCEPTED)
+
+Pression GC continue mais fonctionnel correct ; pooling = optimisation
+non requise en campagne fiabilite. **Statut** : ACCEPTED.
+
+## SF-REL-0673 — channel mask WAVEFORMATEXTENSIBLE ignore / downmix (P3, ACCEPTED)
+
+Perte qualitative surrounds, pas corruption ; choix documente.
+**Statut** : ACCEPTED.
+
+## Cycle 8 — audit integral lib/audio-utils.js + reevaluation ACCEPTED (15/11)
+
+| ID | Gravité | Statut | Résumé / correction |
+|---|---|---|---|
+| SF-REL-0674 | P2 | CLOSED | safeName : « con .take » / « nul .mp3 » (espace/point avant extension) non préfixés — Windows normalise puis refuse → enregistrement perdu. Fix : test du nom réservé sur base normalisée (`split('.')[0]` + strip `[. ]+$`). |
+| SF-REL-0675 | P2 | CLOSED | safeName : caractères de contrôle 0x00-0x1F non filtrés → `ERR_INVALID_ARG_VALUE`/`ERROR_INVALID_NAME` → enregistrement perdu. Fix : `\x00-\x1f` ajouté au motif. |
+| SF-REL-0676 | P2 | CLOSED | writeRecording : repli `wx` sans `unlink(cand)` → .webm tronqué persisté sous le nom final (disque plein/SMB/AV). Fix : unlink du candidat en cas d'échec. |
+| SF-REL-0677 | P3 | CLOSED | chooseRestoreIds : `nameOf` sans filtre `flow==='capture'` → un id render (JSON corrompu/édité) accepté comme cible de restauration micro. Fix : filtre flow. |
+| SF-REL-0678 | P3 | CLOSED | fmtTime : arrondi après split → « 1:60.0 » / « 59:60.0 ». Fix : arrondi à 0,1 s avant le split. |
+| SF-REL-0679 | P3 | CLOSED | parseTs : « 1:99 », « 0:0:90 » acceptés → timestamp silencieusement faux passé à yt-dlp/ffmpeg. Fix : parties non leaders < 60 exigées. |
+| SF-REL-0680 | P3 | CLOSED | expandPaths/Async : `paths` non-itérable → TypeError (atténué : `files:expand` valide Array). Fix : garde itérable. |
+| SF-REL-0681 | P3 | CLOSED | watchdogMic : `settings` totalement absent de config.json → `st` undefined → watchdog désarmé alors que le renderer affiche les défauts actifs (autoSwitchMic/watchdogMic=true). Fix : `settings` non-objet → `{}` (défauts). Config éditée main/ancienne seulement. |
+| SF-REL-0682 | P3 | CLOSED | RESERVED_SC sans `alt+f4` : un raccourci/stopShortcut `Alt+F4` importé ou saisi pouvait être enregistré en globalShortcut et bloquer la fermeture normale de la fenêtre. Fix : ajout à la blocklist (normAccel lowercase → 'alt+f4'). |
+
+Réévaluation ACCEPTED (audit 15/11) : 17 justifications reconduites inchangées,
+1 OBSOLÈTE (0048 → CLOSED via SF-REL-0127), 4 RECONSIDÉRER traitées →
+0054 (quit après 2e crash), 0055 (npm test dans build.bat), 0116 (stopFallback
+1,5 s), 0059 (plafond 512 Mo yt:download) — toutes FPV en attente de revue.
+
+**Vérifications** : node --check ×3, npm test 40/40 (nouveaux cas safeName/
+parseTs/fmtTime/chooseRestoreIds render), npm run dist, smoke test-profile.
+
+**Revue indépendante (15/11, subagent adverse sur commit 73ed0a7)** :
+11/11 CORRECT. Réserves mineures documentées : 0676 liste de codes sans
+`ENOTSUP` ; 0677 `parseEndpoints` remplace un nom vide par l'id (cas
+DeviceName en échec reste fragile — pré-existant) ; 0679 décimales
+acceptées en position heure/minute ; 0054 pas de filtre sur
+`details.reason` (clean-exit/killed comptent aussi — acceptable,
+rendererReloads jamais réinitialisé = anti-boucle voulu) ; 0116 le repli
+ne force pas un second stop (suffisant pour le cas onended manquant).
+Affiné post-revue : SF-REL-0059 — erreur marquée `noRetry` (pas de
+retry yt-dlp update sur oversize) + unlink du fichier >512 Mo.
+
+## Historique actif des régressions (Quality Gate V2 §9)
+
+| Régression | Origine | Introduite par | Prévention |
+|---|---|---|---|
+| SF-REL-0001 (ReferenceError createWindow) | défaut préexistant | a4e403a (propre campagne) | smoke test-env obligatoire après tout commit main.js — leçon inscrite en §7 V2 |
+| SF-REL-0058 (rec:save `p` indéfini) | fix wx de SF-REL-0010 | df353f0 | logique extraite dans lib/audio-utils.writeRecording + tests unitaires |
+| SF-REL-0100 (previewBtn undefined) | suppression partielle de SF-REL-0039 | df353f0 | revue de diff contradictoire ; le pattern « référence cross-scope » reste à surveiller (node --check ne le voit pas) |
+| SF-REL-0141 (.part partagé PID) | durcissement atomicité SF-REL-0130 | 865b891/9d4f986 | test de concurrence ×20 dans audio-utils.test.js |
+
+Règle : avant de toucher un composant, chercher ici + dans le tableau ses anomalies passées et les tests de non-régression associés. Ne jamais écraser l'historique d'une anomalie réapparue — créer une nouvelle entrée référençant l'originale.
+
+## Revue par lots FPV historiques (15/11/2026)
+
+Deux revues adverses independantes ont verifie dans le code actuel que
+les 81 corrections cycle 1/2 sont presentes, correctement cablees et sans
+regression (57 IDs lot main.js/app.js + 23 IDs lot C#/lib/scripts +
+0039 couvert par la meme preuve que 0100). Standard applique : revue
+independante + npm test 39/39 + dist + smoke + cdp-drive — identique
+aux clotures 0616-0638. Limite documentee : validation par anomalie
+restreinte au smoke/CDP partage ; les chemins materiels restent dans
+VALIDATION.md.
+
+## Tableau de bord V2 (recalculé 15/11/2026, comptage par entrée)
+
+| Statut | Nombre | Détail |
+|---|---|---|
+| CLOSED | 144 | cycles 1-8 + 0048 (obsolète via 0127) + 11 revus (0054/0055/0059/0116/0674-0680) |
+| FIXED_PENDING_VALIDATION | 0 | — |
+| ACCEPTED | 23 | cycles 1-7 + 0642 + 0656 + 0662/0663/0666/0667/0672/0673 |
+| INVESTIGATING | 1 | SF-REL-0611 crash AudioContext |
+| OPEN / BLOCKED | 0 | — |
+| **Total anomalies** | **168** | comptage par entrée (1 ID = 1 anomalie, doublons documentés ci-dessous) |
+
+### Doublons fonctionnels documentés (IDs distincts, même anomalie)
+
+| Groupe | IDs | Problème commun | Traitement |
+|---|---|---|---|
+| backpressure PCM | SF-REL-0042, SF-REL-0137 | File IPC main→renderer non bornée | 0137 explicitement marqué doublon de 0042 — conservé pour traçabilité |
+| storageRoot chemin arbitraire | SF-REL-0045, SF-REL-0129, SF-REL-0601 | storageRoot() accepte tout chemin absolu/UNC | Même mécanisme, même rationale d'acceptation — 3 IDs pour 1 anomalie |
+| config:save stringify avant borne | SF-REL-0043, SF-REL-0608 | JSON.stringify précède le test 5 Mo | Même observation foundée deux fois (cycles 1 et 5) |
+
+**Anomalies fonctionnellement distinctes : 114 IDs − 4 IDs doublons = 110.**
+(0050 « ui:log sans rate-limit » et 0607 « throttle log() » se recoupent
+partiellement mais traitent des mécanismes distincts : rate-limit IPC vs
+coût disk I/O — comptés séparés.)
+
+### Validation runtime CDP (15/11/2026, test/cdp-drive.js)
+
+Driver CDP ajoute : exe lance avec `--remote-debugging-port=9222`,
+Runtime.evaluate dans la page reelle. 7/7 checks PASS sur session
+sa9fe21 (test-profile) :
+
+- rec:save de bout en bout : `window.sf.saveRecording` -> fichier
+  `recordings/cdp-runtime-*.webm` cree et persiste (8 octets verifies
+  sur disque) — chemin IPC + writeRecording + mkdir async (SF-REL-0602)
+  valides en RUNTIME. Couvre partiellement SF-REL-0058, SF-REL-0141,
+  SF-REL-0130.
+- Contrat d'erreur rec:save : data null -> rejet propre.
+- play() voix reelle : 2 nodes (cable+mon), contexts 'running',
+  stopAll -> voices=0. Cycle de vie voix valide en RUNTIME.
+- AudioContexts cable(dc79ff)+mon(default) 'running' — pipeline audio
+  actif, pertinent pour SF-REL-0611 (session stable).
+- file:check absent -> detection OK ; yt:info URL invalide -> rejet
+  « URL YouTube invalide ».
+
+Impact : ces entrees gagnent une preuve RUNTIME, mais restent
+FIXED_PENDING_VALIDATION — la revue independante du diff et le test
+de non-regression cible restent requis pour CLOSED.
+
+### Revues indépendantes des diffs (Quality Gate V2 §4)
+
+| Commit | Contenu | Verdict |
+|---|---|---|
+| 54d77a6 | writeRecording partSeq | VALIDÉ — aucune anomalie ; résidus = ACCEPTED existants |
+| ed5e042 | mkdir async/openDir/log/key/maxBuffer | VALIDÉ — 3 mkdir awaités dans handlers async ; borne log vérifiée au 1er appel |
+| 9093732 | crashReporter après setPath | VALIDÉ — ordre conforme doc Electron, isPrimary correct |
+| 3723fb2 | uiLog deviceId makeOutput | VALIDÉ — pas de TDZ, helper try/catch + preload |
+
+Revues exécutées par subagent adverse en lecture seule (15/11/2026).
+Note : la revue porte sur les commits, pas sur chaque anomalie prise
+isolément — le lien anomalie↔commit reste à établir pour les autres
+entrées FIXED_PENDING_VALIDATION.
+
+### Conditions V2 non satisfaites — état par entrée
+
+Pour les 89 FIXED_PENDING_VALIDATION, les conditions manquantes les plus
+fréquentes : revue indépendante du diff (aucune documentée par anomalie),
+validation runtime comportementale spécifique (la plupart n'ont que
+STATIC+UNIT+smoke générique), test de non-régression dédié (absent pour
+les anomalies main.js/C# antérieures à l'extraction lib/).
+
+**Lecture honnête** : le registre prouve ~50 corrections de défauts réels
+(STATIC+UNIT), mais ne prouve PAS leur comportement corrigé en runtime,
+ni l'absence de régression matérielle. La quasi-totalité des FIXED_PENDING_
+VALIDATION attend la validation `VALIDATION.md` ou un smoke ciblé par anomalie.

@@ -1,7 +1,9 @@
 'use strict';
 
 const SR = 48000;
-const VIRTUAL_RE = /cable|virtual|voicemeeter|vb-audio/i;
+// Source unique : lib/audio-utils.js (SFUtils) — la copie locale avait
+// diverge possible entre main et renderer.
+const VIRTUAL_RE = window.SFUtils.VIRTUAL_RE;
 const PALETTE = ['#8b5cf6', '#ec4899', '#f97316', '#22c55e', '#06b6d4', '#eab308', '#ef4444', '#3b82f6'];
 const THUMB_EMOJIS = ['💨', '🔊', '📢', '🎺', '🦖', '🤖', '👽', '🔥', '⚡', '🍕', '🎮', '🏆', '💣', '🧨', '🎉', '😱', '🤣', '🤡', '👻', '🐔', '🐸', '🐵', '🦁', '🐯', '🐙', '🚀', '🌈', '🍔', '🍿', '🎯', '🎲', '🃏', '🎰', '📯', '🎷', '🎸', '🥁', '🎻', '🎤', '📻', '🔔', '⏰', '💎', '🪙', '🎁', '🍩', '🧃', '🥤', '👑', '🃏'];
 
@@ -51,21 +53,31 @@ let cfg;
 let missing = new Set();
 const cardEls = new Map();
 const playingCount = new Map();
+const playingNames = new Map(); // id -> nom : couvre les aperçus (sons éphémères absents de cfg.sounds)
 let saveTimer;
 
 const defaults = () => ({
-  version: 1,
+  version: 2,
   sounds: [],
   categories: [],
-  settings: { cableId: '', cableLabel: '', monId: 'default', monLabel: '', micId: '', micLabel: '', micMix: false, master: 80, sort: 'added-desc', catSort: 'manual', stopShortcut: 'CommandOrControl+Alt+S', storageDir: '', autoSwitchMic: true, watchdogMic: true, groupByCat: true },
+  settings: { cableId: '', cableLabel: '', monId: 'default', monLabel: '', micId: '', micLabel: '', micMix: false, master: 80, sort: 'added-desc', catSort: 'manual', stopShortcut: 'CommandOrControl+Alt+S', storageDir: '', autoSwitchMic: true, watchdogMic: true, groupByCat: true, normLufs: -18, maxSoundDur: 45, voiceDsp: true, voiceDspLvl: 2 },
   ui: { cat: 'all' },
 });
 
+let saveErrNotified = false;
 function save() {
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => window.sf.saveConfig(cfg), 250);
+  saveTimer = setTimeout(() => window.sf.saveConfig(cfg).catch((e) => {
+    logErr('saveConfig', e);
+    // Config jamais persistee en silence (ex. >5 Mo) : un toast une fois
+    // suffit — l'utilisateur doit savoir que ses reglages sont perdus.
+    if (!saveErrNotified) { saveErrNotified = true; toast('Sauvegarde impossible : ' + (e && e.message || e), 'warn'); }
+  }), 250);
 }
-window.addEventListener('beforeunload', () => { if (cfg) window.sf.saveConfig(cfg); window.sf.restoreMic(); });
+window.addEventListener('beforeunload', () => {
+  if (cfg) { try { const p = window.sf.saveConfig(cfg); if (p && p.catch) p.catch((e) => logErr('saveConfig', e)); } catch (e) { logErr('saveConfig', e); } }
+  window.sf.restoreMic();
+});
 
 function normalizeCfg(saved) {
   // JSON.parse cree une propriete '__proto__' propre : Object.assign la
@@ -79,21 +91,62 @@ function normalizeCfg(saved) {
     return Object.assign(base, s);
   };
   c.settings = mergeSub(defaults().settings, c.settings);
+  // Types stricts sur les reglages : une config importee peut contenir
+  // 'false' (string truthy) ou des nombres invalides -> comportement
+  // incoherent (micMix active, volumes aberrants).
+  for (const k of ['micMix', 'autoSwitchMic', 'watchdogMic', 'groupByCat']) c.settings[k] = c.settings[k] === true;
+  // voiceDsp : true par defaut — seul un false EXPLICITE desactive le
+  // traitement vocal (cle absente/invalide -> garde actif).
+  c.settings.voiceDsp = c.settings.voiceDsp !== false;
+  const vl = Math.round(+c.settings.voiceDspLvl);
+  c.settings.voiceDspLvl = (Number.isFinite(vl) && vl >= 1 && vl <= 4) ? vl : 2;
+  if (!Number.isFinite(+c.settings.master)) c.settings.master = 80; else c.settings.master = Math.min(100, Math.max(0, +c.settings.master));
+  if (typeof c.settings.stopShortcut !== 'string' || c.settings.stopShortcut.length > 64) c.settings.stopShortcut = defaults().settings.stopShortcut;
+  if (typeof c.settings.sort !== 'string' || !SORTS.some(([v]) => v === c.settings.sort)) c.settings.sort = 'added-desc';
+  if (typeof c.settings.catSort !== 'string' || !CAT_SORTS.some(([v]) => v === c.settings.catSort)) c.settings.catSort = 'manual';
+  // Cible de loudness en LUFS (approx BS.1770) : -40 a 0, defaut -18.
+  // L'ancienne cle normTarget (fraction de pic) est abandonnee.
+  delete c.settings.normTarget;
+  const nl = +c.settings.normLufs;
+  c.settings.normLufs = (Number.isFinite(nl) && nl <= 0 && nl >= -40) ? nl : defaults().settings.normLufs;
+  // Duree max de lecture d'un son (s) : 0 = illimite. Le fichier n'est
+  // jamais coupe — seul ce qui est joue est borne (trimStart respecte).
+  const md = +c.settings.maxSoundDur;
+  c.settings.maxSoundDur = (Number.isFinite(md) && md >= 0) ? Math.min(86400, md) : defaults().settings.maxSoundDur;
   c.ui = mergeSub(defaults().ui, c.ui);
   if (!Array.isArray(c.sounds)) c.sounds = [];
   if (!Array.isArray(c.categories)) c.categories = [];
   // purge les entrees invalides et deduplique par id puis par chemin (garde le premier)
   const seenId = new Set(), seenPath = new Set();
+  let droppedPaths = 0;
   c.sounds = c.sounds.filter((s) => {
-    if (!s || typeof s.id !== 'string' || typeof s.path !== 'string' || typeof s.name !== 'string') return false;
+    // '__stop__' est la cle reservee des raccourcis globaux (main.js) :
+    // un son avec cet id aurait un raccourci qui agit comme STOP.
+    if (!s || typeof s.id !== 'string' || s.id === '__stop__' || typeof s.name !== 'string') return false;
+    // Chemin exploitable seulement : file:read exige path.isAbsolute —
+    // une valeur relative, vide ou a caracteres de controle ne peut
+    // jamais etre lue ; on purge l'entree au lieu de garder un mort.
+    if (!window.SFUtils.isUsablePath(s.path)) { droppedPaths++; return false; }
+    // Bornes : shortcuts:apply ignore silencieusement les id >128 car. et
+    // des noms geants x5000 sons font echouer config:save (>5 Mo) en silence.
+    s.id = s.id.slice(0, 128); s.name = s.name.slice(0, 200);
     const p = s.path.toLowerCase();
     if (seenId.has(s.id) || seenPath.has(p)) return false;
     seenId.add(s.id); seenPath.add(p);
     return true;
   });
+  if (droppedPaths) uiLog('normalizeCfg: ' + droppedPaths + ' son(s) a chemin invalide ignores');
+  // Plafonds : file:check refuse >5000 chemins (checkMissing mourrait en
+  // silence) et une config geante gelerait le rendu (carte par son).
+  if (c.sounds.length > 5000) c.sounds = c.sounds.slice(0, 5000);
+  if (c.categories.length > 500) c.categories = c.categories.slice(0, 500);
   c.sounds.forEach((s) => {
-    s.volume ??= 100; s.plays ??= 0; s.addedAt ??= 0; s.categoryId ??= null;
-    s.favorite ??= false; s.norm ??= 1; s.shortcut ??= null;
+    s.volume ??= 100; s.plays ??= 0; s.addedAt ??= 0;
+    // Types stricts : 'false' (string truthy) ou categoryId non-string
+    // dans un import rendaient les filtres incoherents.
+    s.favorite = s.favorite === true;
+    s.categoryId = typeof s.categoryId === 'string' ? s.categoryId : null;
+    s.norm ??= 1; s.shortcut ??= null;
     s.trimStart ??= 0; s.trimEnd ??= null; s.fadeIn ??= 0; s.fadeOut ??= 0;
     // Coercions : une config importée avec des types invalides ne doit pas
     // crasher le rendu (shortcut non-string -> fmtAccel) ni casser l'audio.
@@ -105,11 +158,36 @@ function normalizeCfg(saved) {
     if (!Number.isFinite(+s.addedAt)) s.addedAt = 0; else s.addedAt = +s.addedAt;
     if (!Number.isFinite(+s.plays)) s.plays = 0; else s.plays = Math.max(0, +s.plays);
     for (const k of ['trimStart', 'trimEnd', 'fadeIn', 'fadeOut']) {
-      if (s[k] != null && !Number.isFinite(+s[k])) s[k] = k === 'trimEnd' ? null : 0;
-      else if (s[k] != null && +s[k] < 0) s[k] = k === 'trimEnd' ? null : 0;
+      if (s[k] == null) continue;
+      const n = +s[k];
+      // coercition : une string "1.5" importee doit devenir nombre — editSound
+      // appelle toFixed dessus et plantait sur les configs tapees a la main.
+      s[k] = (Number.isFinite(n) && n >= 0) ? n : (k === 'trimEnd' ? null : 0);
     }
     if (s.trimEnd != null && Number.isFinite(+s.trimStart) && +s.trimEnd <= +s.trimStart) s.trimEnd = null;
   });
+  // Migration v1 -> v2 : les s.norm heritees de la normalisation par PIC
+  // ne sont pas des gains LUFS — on les invalide (x1) pour forcer un
+  // recalcul. Volumes manuels, decoupes, fondus, favoris, categories et
+  // raccourcis sont preserves ; les fichiers audio ne sont jamais
+  // modifies. Testee sur la version DE L'IMPORT (clean), pas sur la
+  // fusionnee : une config sans version est traitee comme legacy.
+  if (window.SFUtils.isPreLufsConfig(clean.version)) c.sounds.forEach((s) => { s.norm = 1; });
+  c.version = 2;
+  // Raccourcis : dedupe insensible a la casse — un import peut creer des
+  // doublons que l'UI bloque mais qui sinon faisaient echouer register().
+  {
+    const seenSc = new Set();
+    // normAccel : 'CommandOrControl+X' et 'Ctrl+X' sont le meme raccourci
+    // Windows — la dedupe brute les laissait passer toutes les deux.
+    const stopSc = normAccel(c.settings.stopShortcut);
+    for (const s of c.sounds) {
+      if (!s.shortcut) continue;
+      const a = normAccel(s.shortcut);
+      if (seenSc.has(a) || a === stopSc || RESERVED_SC.has(a)) s.shortcut = null; else seenSc.add(a);
+    }
+    if (RESERVED_SC.has(normAccel(c.settings.stopShortcut))) c.settings.stopShortcut = defaults().settings.stopShortcut;
+  }
   // ids de categories dupliques : garde le premier (catById serait ambigu)
   {
     const seenCat = new Set();
@@ -119,22 +197,41 @@ function normalizeCfg(saved) {
       seenCat.add(cat.id); return true;
     });
   }
-  c.categories.forEach((cat) => {
-    if (cat && cat.color != null && (typeof cat.color !== 'string' || !/^#[0-9a-fA-F]{3,8}$/.test(cat.color))) cat.color = null;
+  c.categories.forEach((cat, i) => {
+    // CSS hex valide : 3/4/6/8 chiffres seulement (5 et 7 sont invalides) ;
+    // une couleur cassee/importee null retombe sur la palette, jamais sur
+    // un --c invalide pour color-mix.
+    if (cat && (typeof cat.color !== 'string' || !/^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(cat.color)))
+      cat.color = PALETTE[i % PALETTE.length];
   });
   // settings : types invalides -> valeurs par defaut (master NaN cassait les deux sorties)
   const st = c.settings;
   if (!Number.isFinite(+st.master)) st.master = 80; else st.master = Math.min(100, Math.max(0, +st.master));
   if (typeof st.stopShortcut !== 'string' || st.stopShortcut.length > 64) st.stopShortcut = defaults().settings.stopShortcut;
-  if (st.storageDir != null && typeof st.storageDir !== 'string') st.storageDir = '';
-  if (st.lastDestDir != null && typeof st.lastDestDir !== 'string') delete st.lastDestDir;
+  // Chemins relatifs : storageRoot() retomberait silencieusement sur
+  // userData alors que l'UI affiche le dossier choisi — on exige un
+  // chemin absolu sain (lettre:\\, UNC \\\\, ou /, sans caractere de
+  // controle) pour les deux champs. isUsablePath = source unique SFUtils.
+  if (st.storageDir != null && (typeof st.storageDir !== 'string' || (st.storageDir !== '' && !window.SFUtils.isUsablePath(st.storageDir)))) st.storageDir = '';
+  if (st.lastDestDir != null && (typeof st.lastDestDir !== 'string' || (st.lastDestDir !== '' && !window.SFUtils.isUsablePath(st.lastDestDir)))) delete st.lastDestDir;
   const hasCat = (id) => c.categories.some((x) => x.id === id);
   if (!['all', 'none', 'fav'].includes(c.ui.cat) && !hasCat(c.ui.cat)) c.ui.cat = 'all';
   return c;
 }
 
 const catById = (id) => cfg.categories.find((c) => c.id === id);
-const soundHasCat = (s) => !!(s.categoryId && catById(s.categoryId));
+// soundHasCat est appele par son a chaque render (des milliers d'appels) :
+// un find() lineaire par son = O(sons x categories). Set d'ids mis en cache,
+// invalide des que le tableau change de reference ou de taille (rename/
+// reorder gardent les memes ids -> cache reste valide a juste titre).
+let catIdCache = { ref: null, size: -1, set: null };
+const catIdSet = () => {
+  if (!catIdCache.set || catIdCache.ref !== cfg.categories || catIdCache.size !== cfg.categories.length) {
+    catIdCache = { ref: cfg.categories, size: cfg.categories.length, set: new Set(cfg.categories.map((c) => c.id)) };
+  }
+  return catIdCache.set;
+};
+const soundHasCat = (s) => !!(s.categoryId && catIdSet().has(s.categoryId));
 
 // ================================================================ interface generique
 function toast(msg, kind = '') {
@@ -146,21 +243,34 @@ function toast(msg, kind = '') {
 let modalClose = null;
 function modal(title, body, buttons, opts = {}) {
   const root = $('#modal-root');
+  const appEl = document.getElementById('app');
   // Une nouvelle modale remplace l'ancienne : fermer proprement la precedente
-  // pour declencher son onClose (ex. cleanup de l'enregistreur).
+  // pour declencher son onClose (ex. cleanup de l'enregistreur). Son close()
+  // remet appEl.inert=false — l'inert de la NOUVELLE modale doit etre pose
+  // APRES cet appel, sinon le fond redevient interactif (SF-REL-0636).
   if (modalClose) { try { modalClose(); } catch {} }
+  if (appEl) appEl.inert = true;
   let closed = false;
   const close = () => {
     if (closed) return;
     closed = true;
     root.replaceChildren();
     document.removeEventListener('keydown', onKey);
+    const appEl = document.getElementById('app');
+    if (appEl) appEl.inert = false;
     if (modalClose === close) modalClose = null;
-    if (opts.onClose) opts.onClose();
+    // onClose avant resolve : un onClose qui jette ne doit PAS empecher
+    // la resolution — sinon la promesse du dialogue reste pendue a jamais.
+    try { if (opts.onClose) opts.onClose(); } catch (e) { logErr('modal onClose', e); }
+    // FERMETURE PAR ECHAP/ BACKDROP : les promesses des dialogues
+    // (askText/confirmBox/askDestDir) doivent etre resolues — sinon un
+    // await reste pendu a jamais (ex. enregistrement perdu en silence
+    // si l'utilisateur annule le choix de dossier avec Echap).
+    if (opts.resolve) opts.resolve(opts.resolveValue);
   };
   const onKey = (e) => { if (e.key === 'Escape') close(); };
   document.addEventListener('keydown', onKey);
-  const box = el('div', { class: 'modal' + (opts.wide ? ' wide' : '') },
+  const box = el('div', { class: 'modal' + (opts.wide ? ' wide' : '') + (opts.cls ? ' ' + opts.cls : '') },
     el('h2', { text: title }),
     el('div', { class: 'modal-body' }, body),
     el('div', { class: 'modal-actions' },
@@ -176,11 +286,12 @@ const field = (label, node, hint) =>
 function askText(title, label, initial, okLabel) {
   return new Promise((resolve) => {
     const input = el('input', { type: 'text', value: initial || '', maxlength: 80 });
-    const done = (close, v) => { close(); resolve(v); };
+    // resolve AVANT close : la valeur explicite prime sur resolveValue (null).
+    const done = (close, v) => { resolve(v); close(); };
     const close = modal(title, [field(label, input)], [
       { label: 'Annuler', onclick: (c) => done(c, null) },
       { label: okLabel || 'OK', kind: 'primary', onclick: (c) => done(c, input.value.trim() || null) },
-    ]);
+    ], { resolve, resolveValue: null });
     input.addEventListener('keydown', (e) => { if (e.key === 'Enter') done(close, input.value.trim() || null); });
     setTimeout(() => { input.focus(); input.select(); }, 30);
   });
@@ -189,9 +300,9 @@ function askText(title, label, initial, okLabel) {
 function confirmBox(title, msg, okLabel) {
   return new Promise((resolve) => {
     modal(title, [el('div', { text: msg })], [
-      { label: 'Annuler', onclick: (c) => { c(); resolve(false); } },
-      { label: okLabel || 'Confirmer', kind: 'primary', onclick: (c) => { c(); resolve(true); } },
-    ]);
+      { label: 'Annuler', onclick: (c) => { resolve(false); c(); } },
+      { label: okLabel || 'Confirmer', kind: 'primary', onclick: (c) => { resolve(true); c(); } },
+    ], { resolve, resolveValue: false });
   });
 }
 
@@ -202,11 +313,37 @@ const bufCache = new Map(); // path -> { buf, bytes } — LRU borne en OCTETS (2
 const BUF_CACHE_MAX = 256 * 1024 * 1024;
 const bufBytes = (b) => b.length * b.numberOfChannels * 4; // float32
 const longWarned = new Set();
+const truncWarned = new Set(); // chemin -> deja prevu : un toast par fichier
 const voices = new Set();
 let playGen = 0; // generation audio : stopAll/teardownAudio l'incrementent pour avorter les play() en vol
+let deadRetries = 0; // retry borne sur 'interrupted'/'closed' (reset sur 'running')
 let bufCacheBytes = 0;
 
 const bufInflight = new Map(); // path -> Promise<buf> : evite le double decodage concurrent
+let decodeActive = 0; // semaphore : 2 decodeAudioData simultanes max
+const decodeQueue = []; // {res, bytes} en attente de slot decode
+let decodeQueuedBytes = 0; // chaque waiter retient son ArrayBuffer brut
+const DECODE_QUEUE_MAX = 64;
+const DECODE_QUEUE_MAX_BYTES = 512 * 1024 * 1024;
+function acquireDecode(bytes) {
+  if (decodeActive < 2) { decodeActive++; return Promise.resolve(); }
+  // File bornee : sans ca, des centaines de clics sur sons lourds
+  // retenaient chacun leur ArrayBuffer brut (jusqu'a 150 Mo) en attente.
+  if (decodeQueue.length >= DECODE_QUEUE_MAX || decodeQueuedBytes + bytes > DECODE_QUEUE_MAX_BYTES) {
+    // noFileErr : erreur transitoire de ressource, pas un fichier absent —
+    // sinon play() badge « introuvable » et le vrai message est masque.
+    const e = new Error('Trop de lectures simultanées — réessayez dans un instant.');
+    e.noFileErr = true;
+    return Promise.reject(e);
+  }
+  decodeQueuedBytes += bytes;
+  return new Promise((res) => decodeQueue.push({ res, bytes }));
+}
+function releaseDecode() {
+  const next = decodeQueue.shift();
+  if (next) { decodeQueuedBytes -= next.bytes; next.res(); } // slot transfere au waiter
+  else decodeActive--;
+}
 async function getBuffer(path) {
   if (bufCache.has(path)) {
     const e = bufCache.get(path);
@@ -216,24 +353,61 @@ async function getBuffer(path) {
   }
   if (bufInflight.has(path)) return bufInflight.get(path);
   const p = (async () => {
-    const data = await window.sf.readFile(path);
+    const data = await window.sf.readFile(path).catch((e) => {
+      // Seul un vrai manquant (ENOENT) doit badge « introuvable » : un
+      // fichier present mais trop gros / non lisible / extension refusee
+      // est une erreur de lecture, pas un manquant (file:check fait foi).
+      const m = String(e && e.message || e);
+      if (/ENOENT|no such file|introuvable/i.test(m)) throw e;
+      const ne = new Error(m.replace(/^.*?:\s*/, ''));
+      ne.noFileErr = true;
+      throw ne;
+    });
     // Garde anti-OOM : le PCM decode tient ~22 Mo/min ; au-dela d'un fichier
     // tres lourd on refuse AVANT decodeAudioData (crash renderer connu).
-    if (data.byteLength > 150 * 1024 * 1024) throw new Error('Fichier trop volumineux pour être joué (' + Math.round(data.byteLength / 1048576) + ' Mo).');
-    const ab = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
-  const buf = await decoder.decodeAudioData(ab);
+    // noFileErr : le fichier EXISTE mais ne peut pas etre joue — ne doit pas
+    // etre badge « introuvable » (fileErr = vrai manquant seulement).
+    if (data.byteLength > 150 * 1024 * 1024) { const e = new Error('Fichier trop volumineux pour être joué (' + Math.round(data.byteLength / 1048576) + ' Mo).'); e.noFileErr = true; throw e; }
+    const ab = data instanceof ArrayBuffer ? data
+      : data && data.buffer ? data.buffer.slice(data.byteOffset || 0, (data.byteOffset || 0) + data.byteLength)
+      : new Uint8Array(data).buffer; // robustness : ArrayBuffer pur ou Uint8Array
+  await acquireDecode(data.byteLength);
+  let buf;
+  try { buf = await decoder.decodeAudioData(ab); }
+  catch (de) { de.noFileErr = true; throw de; } // codec/format : fichier present mais indecodable
+  finally { releaseDecode(); }
   const bytes = bufBytes(buf);
+  // Forensique crash renderer (-1/143) : la taille PCM decodee est la donnee
+  // qui manque pour distinguer OOM decode vs crash driver — on la journalise.
+  if (bytes > 64 * 1024 * 1024) uiLog('decode lourd : ' + Math.round(bytes / 1048576) + ' Mo PCM (' + path + ')');
+  // Buffer decode plus gros que tout le cache : ne pas le retenir (il
+  // evincerait tout pour rien et pourrait lui-meme saturer le renderer).
+  // Plafond dur : au-dela de 512 Mo de PCM (≈23 min stereo), le renderer
+  // etait expose au crash OOM documente (-1/143) — on refuse la lecture.
+  if (bytes > 512 * 1024 * 1024) {
+    const e = new Error('Fichier trop long pour être joué (' + Math.round(buf.duration / 60) + ' min).');
+    e.noFileErr = true; throw e;
+  }
+  if (bytes > BUF_CACHE_MAX) {
+    toast('Fichier très lourd : joué sans cache pour économiser la mémoire.', 'warn');
+    return buf;
+  }
   // Fichier tres long : un buffer decode tient ~22 Mo/min stereo — on previent une fois.
   if (buf.duration > 600 && !longWarned.has(path)) {
     longWarned.add(path);
     toast('Fichier long (> 10 min) : il occupera beaucoup de mémoire une fois joué.', 'warn');
   }
-  bufCache.set(path, { buf, bytes });
-  bufCacheBytes += bytes;
-  while (bufCacheBytes > BUF_CACHE_MAX && bufCache.size > 1) {
-    const k = bufCache.keys().next().value;
-    bufCacheBytes -= bufCache.get(k).bytes;
-    bufCache.delete(k);
+  // Orphelin de cache : si le son a ete retire/relocalise pendant le
+  // decodeAudioData, ne pas mettre en cache un buffer pour un path qui
+  // n'est plus reference (jusqu'a 256 Mo de residue).
+  if (cfg.sounds.some((x) => x.path === path)) {
+    bufCache.set(path, { buf, bytes });
+    bufCacheBytes += bytes;
+    while (bufCacheBytes > BUF_CACHE_MAX && bufCache.size > 1) {
+      const k = bufCache.keys().next().value;
+      bufCacheBytes -= bufCache.get(k).bytes;
+      bufCache.delete(k);
+    }
   }
     return buf;
   })();
@@ -241,20 +415,50 @@ async function getBuffer(path) {
   try { return await p; } finally { bufInflight.delete(path); }
 }
 
+// Supprime une entree du cache EN coherance avec le compteur d'octets :
+// sans ca bufCacheBytes derivait a la hausse a chaque suppression et le
+// cache 256 Mo s'auto-videait progressivement (eviction prematuree).
+function cacheDelete(path) {
+  const e = bufCache.get(path);
+  if (!e) return;
+  bufCache.delete(path);
+  bufCacheBytes = Math.max(0, bufCacheBytes - e.bytes);
+}
+
 async function makeOutput(deviceId) {
+  // Forensique crash -1/143 : journaliser le peripherique exact — le crash
+  // AudioContext precedent ne disait pas sur QUEL device il est survenu.
+  uiLog('makeOutput: creation AudioContext device=' + (deviceId || 'defaut'));
   const ctx = new AudioContext({ sampleRate: SR, latencyHint: 'interactive' });
   try {
     await ctx.setSinkId(deviceId);
   } catch (e) {
-    ctx.close();
+    ctx.close().catch(() => {});
     throw e;
   }
   // Etat 'interrupted' (session Windows coupee sans devicechange) : sans
-  // ecoute, les voix restent zombies et le silence est indetectable.
+  // ecoute, les voix restent zombies et le silence est detectable.
+  // 'closed' arrive aussi hors teardown volontaire : au reveil systeme
+  // Chromium ferme les contextes — sans reconstruction, l'audio reste mort
+  // jusqu'au prochain devicechange. Garde : un ctx ferme volontairement
+  // (teardownAudio null audio[k] AVANT close) n'est plus reference -> on ne
+  // rebuild pas pour lui.
   ctx.addEventListener('statechange', () => {
+    if (ctx.state === 'running') deadRetries = 0;
+    if (ctx.state === 'suspended') { uiLog('sortie audio suspendue (device=' + (deviceId || 'defaut') + ')'); return; }
     if (ctx.state === 'interrupted' || ctx.state === 'closed') {
       uiLog('sortie audio ' + ctx.state + ' (device=' + (deviceId || 'defaut') + ')');
+      const stillActive = audio.cable && audio.cable.ctx === ctx || audio.mon && audio.mon.ctx === ctx;
+      if (!stillActive) return; // fermeture volontaire (teardown/applyAudio)
       if (ctx.state === 'interrupted') toast('Sortie audio interrompue — réessaie de jouer un son.', 'warn');
+      else toast('Sortie audio fermée par le système — reconstruction en cours…', 'warn');
+      // Reconstruction bornee : applyAudio recree les sorties. Ferme =
+      // device probablement en re-init (reveil) -> delai plus long, plus
+      // de tentatives que 'interrupted'.
+      if (deadRetries < 5) {
+        deadRetries++;
+        setTimeout(() => { applyAudio().catch((e) => logErr('applyAudio retry', e)); }, ctx.state === 'closed' ? 2500 : 1500);
+      }
     }
   });
   const bus = ctx.createGain();
@@ -270,8 +474,12 @@ async function teardownAudio() {
   stopAll(true);
   playGen++;
   for (const v of [...voices]) endVoice(v); // purge les voix zombies restees bloquees
+  const closedCtx = new Set(); // cable et mon peuvent partager le meme ctx
   for (const k of ['cable', 'mon']) {
-    if (audio[k]) { try { await audio[k].ctx.close(); } catch {} audio[k] = null; }
+    // Null AVANT close() : un play() dans la fenetre de fermeture ne doit
+    // pas attraper un contexte mourant (InvalidStateError parasite).
+    const a = audio[k]; audio[k] = null;
+    if (a && !closedCtx.has(a.ctx)) { closedCtx.add(a.ctx); try { await a.ctx.close(); } catch {} }
   }
   if (audio.micStream) { audio.micStream.getTracks().forEach((t) => t.stop()); audio.micStream = null; }
 }
@@ -295,8 +503,14 @@ async function applyAudioInner() {
   } catch (e) {
     warns.push('Sortie Discord : ' + e.message);
   }
+  // Meme peripherique pour cable et ecoute : PARTAGER le contexte au lieu
+  // d'en creer un second — chaque AudioContext est une surface d'exposition
+  // au crash audio -1/143 (SF-REL-0611), et le doublon ne change rien a
+  // l'audio (meeme destination). Si cable a echoue, on tente quand meme
+  // mon : l'erreur sera rapportee pour les deux sorties.
+  const sameOut = s.cableId && s.monId && s.cableId === s.monId && audio.cable;
   try {
-    if (s.monId) audio.mon = await makeOutput(s.monId);
+    if (s.monId) audio.mon = sameOut ? audio.cable : await makeOutput(s.monId);
   } catch (e) {
     warns.push('Écoute locale : ' + e.message);
   }
@@ -304,6 +518,7 @@ async function applyAudioInner() {
   // sons, jamais la voix. micMix reste un interrupteur manuel complementaire.
   const micMixOn = s.micMix || s.autoSwitchMic;
   if (micMixOn) {
+    let micPendingStream = null; // getUserMedia reussi mais graphe en echec : a stopper
     try {
       if (!audio.cable) warns.push('Mixage micro : choisis d\'abord une sortie Discord.');
       else if (!VIRTUAL_RE.test(s.cableLabel)) warns.push('Mixage micro désactivé : la sortie Discord n\'est pas un câble virtuel (tu t\'entendrais dans ton casque).');
@@ -311,44 +526,143 @@ async function applyAudioInner() {
       else {
         // « default » pointerait sur CABLE Output depuis la bascule micro auto : on prend un vrai peripherique non virtuel
         let micDev = s.micId && s.micId !== 'default' ? s.micId : null;
+        // deviceId perime (peripherique retire alors que resolveDevices
+        // n'a pas tourne) : getUserMedia({exact}) jetterait NotFoundError —
+        // on retombe sur le premier vrai micro non virtuel.
+        if (micDev && !(audio.devices.inp || []).some((d) => d.deviceId === micDev)) micDev = null;
         if (!micDev) {
           const real = (audio.devices.inp || []).find((d) => d.deviceId !== 'default' && !VIRTUAL_RE.test(d.label || ''));
-          micDev = real ? real.deviceId : (s.micId === 'default' ? 'default' : undefined);
+          micDev = real ? real.deviceId : null;
         }
-        // Traitement vocal sur la voix uniquement (echo cancellation, bruit, gain) —
-        // les sons joues via Web Audio ne sont pas concernes.
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: { deviceId: micDev ? { exact: micDev } : undefined, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        // JAMAIS de repli « unconstrained »/default : apres la bascule auto,
+        // le peripherique par defaut Windows est CABLE Output — ouvrir le
+        // micro dessus enregistrerait la sortie Discord = larsen.
+        if (!micDev) {
+          warns.push('Mixage micro : aucun micro réel détecté (débranché ?).');
+        } else {
+        // Traitement vocal sur la voix uniquement : echo cancellation et
+        // noise suppression sont des contraintes getUserMedia (actives
+        // sauf desactivation explicite dans les reglages) — les sons joues
+        // via Web Audio ne sont pas concernes. AGC toujours actif :
+        // c'est du nivellement, pas de la reduction de bruit.
+        const vdsp = s.voiceDsp !== false;
+        micPendingStream = await navigator.mediaDevices.getUserMedia({
+          audio: { deviceId: { exact: micDev }, echoCancellation: vdsp, noiseSuppression: vdsp, autoGainControl: true },
         });
-        audio.micStream = stream;
+        const stream = micPendingStream;
         // Micro perdu sans devicechange (debranchement, BT qui coupe) : le
         // track meurt -> Discord n'entend plus la voix, sans aucun signal.
         stream.getTracks().forEach((t) => {
-          t.addEventListener('ended', () => { if (audio.micStream === stream) { toast('Micro perdu — voix coupée sur le câble.', 'warn'); audio.micStream = null; applyAudio(); } });
+          t.addEventListener('ended', () => { if (audio.micStream === stream) { toast('Micro perdu — voix coupée sur le câble.', 'warn'); audio.micStream = null; applyAudio().catch((e) => logErr('applyAudio', e)); } });
           t.addEventListener('mute', () => { if (audio.micStream === stream) toast('Micro muet par le système — voix coupée.', 'warn'); });
         });
         const src = audio.cable.ctx.createMediaStreamSource(stream);
-        src.connect(audio.cable.lim);
+        // Voice gate DSP (highpass ~80 Hz + noise gate) sur la voix
+        // uniquement — les sons ne passent pas par ce noeud. Contraintes
+        // getUserMedia (AEC/NS/AGC) restent actives en amont. Repli sur
+        // connexion directe si le worklet echoue : jamais de micro muet.
+        // Directement sur le limiteur, en amont de bus : la voix ne suit PAS
+        // le gain master (réglage son soundboard). Seul le limiteur la protège.
+        try {
+          if (vdsp) {
+            // Intensite reglable : seuil du gate, vitesse de release et
+            // bande passante vocale (coupe les claviers/souffle). Niveaux :
+            // 1 leger, 2 normal, 3 fort — le reglage voiceDspLvl persiste.
+            const VOICE_DSP = {
+              1: { threshold: 0.0015, release: 0.35, highpass: 0.993, lowpass: 0.7 },
+              2: { threshold: 0.003, release: 0.25, highpass: 0.99, lowpass: 0.5 },
+              // 3/4 : les clics clavier sont des transitoires FORTS — le gate
+              // ne peut pas les distinguer par amplitude. Ce qui les attenue
+              // est la bande passante resserree (voix ~300-3400 Hz, clics
+              // pleins spectre) + seuil plus haut + release plus court.
+              3: { threshold: 0.012, release: 0.1, highpass: 0.972, lowpass: 0.3 },
+              4: { threshold: 0.02, release: 0.06, highpass: 0.965, lowpass: 0.22 },
+            };
+            const out = audio.cable;
+            out._vgMod = out._vgMod || out.ctx.audioWorklet.addModule('voice-gate.js');
+            await out._vgMod;
+            const gate = new AudioWorkletNode(out.ctx, 'voice-gate', {
+              numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2],
+              processorOptions: VOICE_DSP[Math.min(4, Math.max(1, +(s.voiceDspLvl || 2)))],
+            });
+            src.connect(gate);
+            gate.connect(out.lim);
+          } else {
+            src.connect(audio.cable.lim);
+          }
+        } catch (e) {
+          uiLog('voice-gate indisponible, micro connecte direct : ' + (e && e.message));
+          src.connect(audio.cable.lim);
+        }
+        audio.micStream = stream; // apres connect : un echec ne laisse pas de piste orpheline
+        micPendingStream = null;
+        }
       }
     } catch (e) {
-      warns.push('Micro inaccessible : ' + e.message);
-    }
+        // Si le graphe a jete apres getUserMedia, stopper le stream tout de
+        // suite : sinon le micro reste allume (LED) sans etre connecte.
+        try { if (micPendingStream) micPendingStream.getTracks().forEach((t) => t.stop()); } catch {}
+        warns.push('Micro inaccessible : ' + e.message);
+      }
   }
   updateRoutes();
+  // Une reconstruction qui produit au moins une sortie = incident regle :
+  // le compteur de retry repart a zero. Sans ca, 'running' n'etant jamais
+  // re-emis sur un ctx neuf (autoplay no-gesture), deadRetries s'epuisait
+  // sur ~5 incidents cumules et la reconstruction auto mourait pour de
+  // bon — le bug veille/reveil ne se corrigeait qu'une fois par session.
+  if (audio.cable || audio.mon) deadRetries = 0;
   if (warns.length) toast(warns.join('\n'), 'warn');
   return warns.length === 0;
 }
 
+let permWarnShown = false;
+const warnPermOnce = (msg) => {
+  logErr('refreshDevices', new Error(msg));
+  if (!permWarnShown) { permWarnShown = true; toast('Accès audio refusé ou indisponible — la liste des périphériques peut être incomplète. Vérifie l\'autorisation micro.', 'warn'); }
+};
+
 async function refreshDevices(askPermission) {
+  audio.devicesDegraded = false;
   if (askPermission) {
-    try { (await navigator.mediaDevices.getUserMedia({ audio: true })).getTracks().forEach((t) => t.stop()); } catch {}
+    // Ce getUserMedia est VOLONTAIRE : c'est lui qui fait passer la permission
+    // 'microphone' — sans lui, enumerateDevices ne retourne que des
+    // placeholders vides (deviceId=''). L'echec est journalise, jamais masque.
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+      s.getTracks().forEach((t) => t.stop());
+    } catch (e) {
+      audio.devicesDegraded = true;
+      warnPermOnce('getUserMedia refuse: ' + (e && e.name ? e.name : e) + ' ' + (e && e.message ? e.message : ''));
+      return false;
+    }
   }
-  const list = await navigator.mediaDevices.enumerateDevices();
-  audio.devices.out = list.filter((d) => d.kind === 'audiooutput' && d.deviceId !== 'communications');
-  audio.devices.inp = list.filter((d) => d.kind === 'audioinput' && d.deviceId !== 'communications');
+  let list;
+  try {
+    list = await navigator.mediaDevices.enumerateDevices();
+  } catch (e) {
+    audio.devicesDegraded = true;
+    warnPermOnce('enumerateDevices a echoue: ' + (e && e.name ? e.name : e));
+    return false;
+  }
+  // Sans permission audio, Chromium retourne des entrees generiques avec
+  // deviceId='' — ce n'est PAS une liste vide : c'est une detection degradee.
+  const real = window.SFUtils.realDevices(list);
+  if (!real.length) {
+    audio.devicesDegraded = true;
+    warnPermOnce('enumerateDevices sans deviceId (permission audio absente)');
+    return false;
+  }
+  audio.devices.out = real.filter((d) => d.kind === 'audiooutput' && d.deviceId !== 'communications');
+  audio.devices.inp = real.filter((d) => d.kind === 'audioinput' && d.deviceId !== 'communications');
+  return true;
 }
 
 function resolveDevices() {
+  // Enumeration degradee (permission refusee, transient) : ne PAS effacer les
+  // ids/labels memorises — une detection incomplete ne doit jamais ecraser
+  // une configuration audio valide.
+  if (audio.devicesDegraded) return;
   const s = cfg.settings;
   const pick = (idKey, lblKey, list, regex, fallbackId) => {
     let d = s[idKey] && list.find((x) => x.deviceId === s[idKey]);
@@ -366,19 +680,27 @@ function resolveDevices() {
 // VB-CABLE n'est ni embarque ni installe par SoundFart (licence VB-Audio) :
 // l'utilisateur l'installe depuis vb-audio.com/Cable. On detecte les
 // peripheriques « CABLE Input/Output » via enumerateDevices/devicechange.
-const cablePresent = () => audio.devices.out.some((d) => /cable/i.test(d.label));
+// devicesDegraded : enumeration incomplete (permission refusee/transitoire)
+// — on NE affiche PAS l'ecran d'install VB-CABLE a tort : on pretend present
+// le temps que la prochaine enumeration reussie tranche.
+const cablePresent = () => audio.devicesDegraded || audio.devices.out.some((d) => /cable/i.test(d.label));
 let cableScreenEl = null;
 
 function cableScreen() {
   if (cableScreenEl) return cableScreenEl;
   const verify = el('button', { class: 'ghost', text: 'J\'ai installé, vérifier', onclick: async (e) => {
     e.target.disabled = true;
-    await refreshDevices(false); resolveDevices(); updateCableUi(); await applyAudio();
-    e.target.disabled = false;
+    try {
+      await refreshDevices(false); resolveDevices(); updateCableUi();
+      await applyAudio().catch((e2) => logErr('applyAudio', e2));
+    } finally {
+      e.target.disabled = false;
+    }
     if (cablePresent()) {
       window.sf.audioAutoSetup({ enabled: cfg.settings.autoSwitchMic, cableLabel: cfg.settings.cableLabel }).then((r) => {
         if (r && r.changed) toast('Entrée micro basculée sur ' + r.device + ' (restaurée à la fermeture).');
-      });
+        else if (r && !r.ok) toast('Bascule micro auto impossible : ' + r.err, 'warn');
+      }).catch((e) => logErr('audioAutoSetup', e));
     } else {
       toast('Toujours absent — si tu viens d\'installer VB-CABLE, redémarre Windows : les périphériques n\'apparaissent qu\'après.', 'warn');
     }
@@ -416,18 +738,24 @@ function showCableScreen() {
 
 function setPlaying(id, delta) {
   const n = (playingCount.get(id) || 0) + delta;
-  if (n <= 0) playingCount.delete(id); else playingCount.set(id, n);
+  if (n <= 0) { playingCount.delete(id); playingNames.delete(id); } else playingCount.set(id, n);
   const c = cardEls.get(id);
   if (c) c.classList.toggle('playing', n > 0);
-  const names = [...playingCount.keys()].map((i) => cfg.sounds.find((x) => x.id === i)?.name).filter(Boolean);
+  const names = [...playingCount.keys()].map((i) => playingNames.get(i) || cfg.sounds.find((x) => x.id === i)?.name).filter(Boolean);
   $('#nowplaying').textContent = names.length ? '▶ ' + names.join(' + ') : 'Prêt';
 }
 
 function endVoice(v) {
+  if (v.killTimer) { clearTimeout(v.killTimer); v.killTimer = null; }
+  if (v.stopFallback) { clearTimeout(v.stopFallback); v.stopFallback = null; }
   if (voices.delete(v)) setPlaying(v.soundId, -1);
 }
 
 function play(sound, opts = {}) {
+  // Plafond de voix simultanees : chaque voix = 2 sources + gains + timers
+  // par sortie — des clics en rafale/allers-retours creeaient des centaines
+  // de nodes audio sans limite.
+  if (voices.size >= 32) { toast('Trop de lectures simultanées.', 'warn'); return Promise.resolve(null); }
   const gen = playGen; // si stopAll/teardownAudio passe pendant le await getBuffer, on abandonne
   const active = (opts.monitorOnly ? [audio.mon] : [audio.cable, audio.mon]).filter(Boolean);
   if (!active.length) {
@@ -441,13 +769,27 @@ function play(sound, opts = {}) {
   const seenDev = new Set();
   const uniq = active.filter((o) => !seenDev.has(o.deviceId || o.ctx.destination) && seenDev.add(o.deviceId || o.ctx.destination));
   return getBuffer(sound.path)
-    .catch((e) => { fileErr = true; throw e; })
+    .catch((e) => { fileErr = !(e && e.noFileErr); throw e; })
     .then((buf) => {
     if (gen !== playGen) return null; // lecture percutee par un stop : ne pas demarrer la voix
+    // Supprime/relocalise pendant le decode async : ne pas jouer un fantome
+    // (ancien fichier) ni un son qui n'existe plus.
+    if (!opts.preview && !cfg.sounds.some((x) => x.id === sound.id && x.path === sound.path)) return null;
     const vol = ((opts.volume ?? sound.volume) / 100) * (sound.norm ?? 1);
     const offset = Math.min(Math.max(0, opts.trimStart ?? sound.trimStart ?? 0), Math.max(0, buf.duration - 0.05));
     const endRaw = opts.trimEnd !== undefined ? opts.trimEnd : sound.trimEnd;
-    const endEff = endRaw ?? buf.duration;
+    let endEff = endRaw ?? buf.duration;
+    // Duree max de lecture (reglage, 0 = illimite) : borne la fenetre
+    // [offset, offset+max] — le fichier complet reste intact et un trim
+    // utilisateur plus court est respecte.
+    const maxDur = +cfg.settings.maxSoundDur;
+    if (maxDur > 0 && endEff - offset > maxDur) {
+      endEff = offset + maxDur;
+      if (!opts.preview && !truncWarned.has(sound.path)) {
+        truncWarned.add(sound.path);
+        toast('Son plus long que la limite (' + maxDur + ' s) : seuls les ' + maxDur + ' premières secondes sont jouées.', 'warn');
+      }
+    }
     if (endEff <= offset + 0.01) return null; // trim vide/invalide : ne rien jouer
     const dur = Math.max(0.05, Math.min(endEff, buf.duration) - offset);
     let fi = (opts.fadeIn ?? sound.fadeIn ?? 0) / 1000;
@@ -479,6 +821,17 @@ function play(sound, opts = {}) {
       voices.delete(voice);
       throw e;
     }
+    // Watchdog voix : si le AudioContext est suspendu (veille, session coupee)
+    // sans evenement exploitable, currentTime ne avance plus et onended ne
+    // tire jamais -> la voix resterait zombie (carte playing figee). On force
+    // l'arret apres duree + marge.
+    voice.killTimer = setTimeout(() => {
+      if (!voices.has(voice)) return;
+      for (const n of voice.nodes) { try { n.src.stop(); } catch {} try { n.g.disconnect(); } catch {} }
+      endVoice(voice);
+      toast('Lecture interrompue : la sortie audio était suspendue.', 'warn');
+    }, (dur + 15) * 1000);
+    playingNames.set(sound.id, sound.name || 'son');
     setPlaying(sound.id, +1);
     if (missing.delete(sound.id)) renderGrid();
     if (!opts.preview) { sound.plays = (sound.plays || 0) + 1; save(); }
@@ -499,7 +852,10 @@ function play(sound, opts = {}) {
       toast(`Impossible de lire « ${sound.name} » : fichier introuvable ou illisible.`, 'warn');
       missing.add(sound.id);
     } else {
-      toast(`Erreur de lecture de « ${sound.name} » : ${e && e.message || 'audio indisponible'}`, 'warn');
+      // Nom nettoye : un titre YouTube avec emojis/symboles rendait le
+      // toast illisible (« caracteres non necessaires » rapportes terrain).
+      const nm = String(sound.name || '').replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60) || 'son';
+      toast(`Erreur de lecture de « ${nm} » : ${e && e.message || 'audio indisponible'}`, 'warn');
     }
     renderGrid();
     return null;
@@ -515,7 +871,11 @@ function stopVoice(v, instant) {
       src.stop(t + (instant ? 0 : 0.08));
     } catch {}
   }
-  if (instant) endVoice(v);
+  if (instant) { endVoice(v); return; }
+  // Repli : si onended ne se declenche jamais (contexte suspendu, noeud
+  // fige), la voix resterait zombie jusqu'au killTimer (duree+15 s).
+  if (v.stopFallback) clearTimeout(v.stopFallback);
+  v.stopFallback = setTimeout(() => { v.stopFallback = null; if (voices.has(v)) endVoice(v); }, 1500);
 }
 
 function stopAll(instant) {
@@ -538,7 +898,11 @@ const fmtAccel = (a) => (a || '').replace('CommandOrControl', 'Ctrl').replace(/\
 
 function buildAccel(e) {
   if (['Control', 'Alt', 'Shift', 'Meta'].includes(e.key)) return null;
-  let k = e.key;
+  // AZERTY : la rangee chiffres donne &é"'(-è_çà SANS Maj — e.key est le
+  // caractere, pas le chiffre, donc « Ctrl+1 » produisait « Ctrl+& », un
+  // accelerateur invalide refuse par globalShortcut. e.code est
+  // layout-independant : DigitN -> 'N' (le VK Windows est le meme).
+  let k = /^Digit\d$/.test(e.code || '') ? e.code.slice(5) : e.key;
   if (k === ' ') k = 'Space';
   else if (k === '+') k = 'Plus';
   else if (k === 'ArrowUp') k = 'Up';
@@ -557,21 +921,46 @@ function buildAccel(e) {
   return parts.join('+');
 }
 
+// Normalise les alias d'accelerateurs : 'CommandOrControl+Alt+S' (defaut
+// stopShortcut) et 'Ctrl+Alt+S' (buildAccel) designent le meme raccourci
+// Windows — sans ca, findShortcutOwner ne detectait pas le conflit et le
+// son s'enregistrait avant le STOP (ou l'inverse).
+// Accesseurs reserves : menu applicatif (Ctrl+F/O, F11/F12, Ctrl+Shift+I)
+// + Alt+F4 (fermeture Windows geree par l'OS — un globalShortcut dessus
+// bloquerait la fermeture normale). Source unique pour normalizeCfg
+// (import) et findShortcutOwner (capture a chaud) — les deux divergent
+// sinon (revue 0682).
+const RESERVED_SC = new Set(['ctrl+f', 'ctrl+o', 'f12', 'f11', 'ctrl+shift+i', 'alt+f4']);
+
+// Canonicalise l'accelerateur : 'Alt+Ctrl+S' et 'Ctrl+Alt+S' designent le
+// meme raccourci Windows — sans tri des modifieurs ils passaient la dedupe
+// mais Electron n'en enregistrait qu'un (SF-RELAudit : doublon possible).
+const ACC_MODS = ['ctrl', 'alt', 'shift', 'super', 'meta'];
+function normAccel(a) {
+  const parts = (a || '').toLowerCase().replace(/\s+/g, '').split('+').filter(Boolean)
+    .map((p) => p.replace(/commandorcontrol|cmdorctrl|control/g, 'ctrl'));
+  const mods = parts.filter((p) => ACC_MODS.includes(p)).sort((x, y) => ACC_MODS.indexOf(x) - ACC_MODS.indexOf(y));
+  return [...mods, ...parts.filter((p) => !ACC_MODS.includes(p))].join('+');
+}
+
 function findShortcutOwner(acc, excludeSoundId) {
-  const a = (acc || '').toLowerCase();
+  const a = normAccel(acc);
   if (!a) return null;
-  if ((cfg.settings.stopShortcut || '').toLowerCase() === a) return 'le raccourci STOP';
+  if (normAccel(cfg.settings.stopShortcut) === a) return 'le raccourci STOP';
   // Accelerateurs du menu applicatif (fenetre focus) : un raccourci de son
   // identique produirait une double action (jouer + ouvrir la dialog).
-  if (['ctrl+f', 'cmdorctrl+f', 'ctrl+o', 'cmdorctrl+o', 'f12'].includes(a)) return 'un raccourci du menu';
-  const s = cfg.sounds.find((x) => x.id !== excludeSoundId && (x.shortcut || '').toLowerCase() === a);
+  if (RESERVED_SC.has(a)) return 'un raccourci réservé du système';
+  const s = cfg.sounds.find((x) => x.id !== excludeSoundId && normAccel(x.shortcut) === a);
   return s ? '« ' + s.name + ' »' : null;
 }
 
 async function applyShortcuts() {
   const entries = [];
-  for (const s of cfg.sounds) if (s.shortcut) entries.push({ key: s.id, accel: s.shortcut });
+  // __stop__ EN PREMIER : shortcuts:apply ne retient que les 200 premiers
+  // -- un STOP ajoute en dernier n'etait jamais enregistre au-dela de
+  // 200 raccourcis de sons (et 'failed' affichait un '…' illisible).
   if (cfg.settings.stopShortcut) entries.push({ key: '__stop__', accel: cfg.settings.stopShortcut });
+  for (const s of cfg.sounds) if (s.shortcut) entries.push({ key: s.id, accel: s.shortcut });
   try {
     const failed = await window.sf.applyShortcuts(entries);
     if (failed && failed.length) toast('Raccourcis refusés par Windows : ' + failed.map(fmtAccel).join(', '), 'warn');
@@ -581,47 +970,23 @@ async function applyShortcuts() {
 }
 
 function logErr(tag, e) { console.error(tag, e); }
-
-// ================================================================ normalisation
-async function computeNorm(path) {
-  const buf = await getBuffer(path);
-  let peak = 0;
-  for (let c = 0; c < buf.numberOfChannels; c++) {
-    const d = buf.getChannelData(c);
-    const step = Math.max(1, Math.floor(d.length / 200000));
-    for (let i = 0; i < d.length; i += step) {
-      const v = Math.abs(d[i]);
-      if (v > peak) peak = v;
-    }
-  }
-  if (!peak) return 1;
-  return Math.min(4, Math.round((0.89 / peak) * 100) / 100);
-}
-
-async function normalizeAll() {
-  const targets = cfg.sounds.filter((s) => !missing.has(s.id));
-  if (!targets.length) { toast('Aucun son à normaliser.', 'warn'); return; }
-  const prog = el('div', { class: 'hint', text: `0 / ${targets.length}` });
-  const closeP = modal('Normalisation de la bibliothèque', [
-    prog,
-    el('div', { class: 'hint', text: 'Le volume de chaque son est ajusté pour un niveau cible. Ça peut prendre un moment sur une grosse bibliothèque.' }),
-  ], [{ label: 'Fermer', onclick: (c) => c() }], { onClose: () => { cancelled = true; } });
-  let done = 0, failed = 0, cancelled = false;
-  for (const s of targets) {
-    if (cancelled) break;
-    try { s.norm = await computeNorm(s.path); } catch { failed++; s.norm = 1; }
-    prog.textContent = `${++done} / ${targets.length}`;
-    await new Promise((r) => setTimeout(r, 0));
-  }
-  save(); closeP(); renderAll();
-  toast(`Normalisation terminée : ${done - failed} son(s) ajusté(s)` + (failed ? `, ${failed} ignoré(s)` : '') + '.');
-}
+// Helper uiLog : les appels nus `uiLog(...)` leveraient ReferenceError
+// (seul window.sf.uiLog existe via preload) — fichiers >3 min etats
+// 'interrupted'/'closed' etaient casses par ca.
+const uiLog = (m) => { try { window.sf.uiLog(m); } catch {} };
 
 // ================================================================ utilitaires
 // fmtTime/parseTs : fonctions pures partagees, testees via node:test (lib/audio-utils.js)
 const { fmtTime, parseTs } = window.SFUtils;
 
 // ================================================================ donnees : sons & categories
+// Plafond unique pour tous les ajouts runtime (enregistrement, YouTube,
+// seed) : au-dela file:check refuse le batch et config:save depasse 5 Mo.
+function pushSound(s) {
+  if (cfg.sounds.length >= 5000) { toast('Limite de 5000 sons atteinte.', 'warn'); return false; }
+  cfg.sounds.push(s); return true;
+}
+
 async function addPaths(rawPaths) {
   const paths = await window.sf.expandPaths(rawPaths);
   if (!paths.length) { toast('Aucun fichier audio reconnu (mp3, wav, ogg, flac, m4a, aac, opus).', 'warn'); return; }
@@ -629,7 +994,12 @@ async function addPaths(rawPaths) {
   const catId = catById(cfg.ui.cat) ? cfg.ui.cat : null;
   const now = Date.now();
   let n = 0;
+  // Plafond aligne sur normalizeCfg (5000) : au-dela file:check refuse le
+  // batch et config:save depasse 5 Mo -> sauvegardes silencieusement KO.
+  const room = Math.max(0, 5000 - cfg.sounds.length);
+  let truncated = false;
   for (const p of paths) {
+    if (n >= room) { truncated = true; break; }
     if (known.has(p.toLowerCase())) continue;
     known.add(p.toLowerCase());
     const base = p.split(/[\\/]/).pop().replace(/\.[^.]+$/, '');
@@ -640,14 +1010,19 @@ async function addPaths(rawPaths) {
     n++;
   }
   if (n) { save(); renderAll(); }
-  toast(n ? `${n} son(s) ajouté(s).` : 'Ces sons sont déjà dans la liste.');
+  toast(n ? `${n} son(s) ajouté(s).${truncated ? ' (limite de 5000 sons atteinte)' : ''}` : (truncated ? 'Limite de 5000 sons atteinte — retirez des sons pour en ajouter.' : 'Ces sons sont déjà dans la liste.'));
 }
 
 async function removeSound(s) {
   if (!(await confirmBox('Retirer ce son ?', `« ${s.name} » sera retiré de SoundFart. Le fichier audio d'origine n'est pas supprimé.`, 'Retirer'))) return;
   cfg.sounds = cfg.sounds.filter((x) => x.id !== s.id);
+  // Arreter les voix du son retire : sinon il continuait de jouer apres la
+  // suppression de sa carte (jusqu'a la fin du fichier).
+  for (const v of [...voices]) if (v.soundId === s.id) stopVoice(v, true);
   // Libere le buffer decode du son supprime (sinon jusqu'a 256 Mo d'orphelins).
-  try { bufCache.delete(s.path); longWarned.delete(s.path); } catch {}
+  cacheDelete(s.path); // libere le buffer decode du son supprime
+  longWarned.delete(s.path);
+  truncWarned.delete(s.path);
   save(); renderAll();
   applyShortcuts(); // desenregistre le raccourci global du son supprime
 }
@@ -669,8 +1044,12 @@ async function newCategory() {
   save(); renderAll();
 }
 
+// Collator partage : le recreer a chaque tri/groupe coute inutilement
+// (visibleSounds et sortedCategories sont appelees a chaque rendu).
+const COL_LATIN = new Intl.Collator('fr', { numeric: true, sensitivity: 'base' });
+
 function sortedCategories() {
-  const col = new Intl.Collator('fr', { numeric: true, sensitivity: 'base' });
+  const col = COL_LATIN;
   const arr = [...cfg.categories];
   if (cfg.settings.catSort === 'count-desc') {
     // comptages precalcules : evite de refiltrer cfg.sounds a chaque comparaison (O(n log n) au lieu de O(n^2 log n))
@@ -690,7 +1069,7 @@ function moveCategory(c, dir) {
   const j = i + dir;
   if (i < 0 || j < 0 || j >= cfg.categories.length) return;
   [cfg.categories[i], cfg.categories[j]] = [cfg.categories[j], cfg.categories[i]];
-  save(); renderSidebar();
+  save(); renderAll(); // renderGrid ordonne les groupes via sortedCategories : renderSidebar seul laissait la grille perimee
 }
 
 async function renameCategory(c) {
@@ -722,454 +1101,11 @@ async function deleteCategory(c) {
   save(); renderAll();
 }
 
-// ================================================================ edition d'un son
-function editSound(s) {
-  const nameIn = el('input', { type: 'text', value: s.name, maxlength: 80 });
-  const catSel = el('select', {},
-    el('option', { value: '', text: 'Sans catégorie' }),
-    sortedCategories().map((c) => el('option', { value: c.id, text: c.name, selected: c.id === s.categoryId })));
-  const favChk = el('input', { type: 'checkbox', checked: !!s.favorite });
-  const vol = el('input', { type: 'range', min: 0, max: 300, step: 5, value: s.volume });
-  const volLbl = el('span', { class: 'vol-val', text: s.volume + '%' });
-  vol.addEventListener('input', () => { volLbl.textContent = vol.value + '%'; });
-
-  // ---- raccourci clavier global
-  let sc = s.shortcut || '';
-  const scBtn = el('button', { text: sc ? fmtAccel(sc) : 'Aucun — cliquer pour définir' });
-  const scHint = el('div', { class: 'hint', text: 'Fonctionne même fenêtre minimisée, Discord ou jeu au premier plan. Ex : Ctrl+Alt+Q ou F6.' });
-  let scCleanup = () => {};
-  scBtn.addEventListener('click', () => {
-    scCleanup();
-    scBtn.textContent = 'Appuie sur le raccourci… (Échap pour annuler)';
-    const disarm = () => {
-      window.removeEventListener('keydown', onKey, true);
-      scCleanup = () => {};
-      scBtn.textContent = sc ? fmtAccel(sc) : 'Aucun — cliquer pour définir';
-    };
-    const onKey = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (e.key === 'Escape') { disarm(); return; }
-      const acc = buildAccel(e);
-      if (!acc) { scHint.textContent = 'Ajoute un modifieur (Ctrl, Alt, Maj) ou utilise une touche F.'; return; }
-      const owner = findShortcutOwner(acc, s.id);
-      if (owner) { scHint.textContent = 'Ce raccourci est déjà utilisé par ' + owner + '.'; return; }
-      sc = acc;
-      scBtn.textContent = fmtAccel(acc);
-      scHint.textContent = '';
-      disarm();
-    };
-    window.addEventListener('keydown', onKey, true);
-    scCleanup = disarm;
-  });
-
-  // ---- normalisation
-  let norm = s.norm ?? 1;
-  const normVal = el('span', { class: 'vol-val', text: '×' + norm });
-  const normBtn = el('button', { text: 'Normaliser ce son', onclick: async () => {
-    try {
-      norm = await computeNorm(s.path);
-      normVal.textContent = '×' + norm;
-      toast(`Volume normalisé : ×${norm}.`);
-    } catch { toast('Impossible d\'analyser ce fichier.', 'warn'); }
-  } });
-
-  // ---- decoupage non destructif (le fichier d'origine n'est jamais modifie)
-  let dur = 0, peaks = null, drag = null, dragMoved = false, downX = 0, downT = 0;
-  let pvVoice = null, pvPos = null;
-  let ts = s.trimStart || 0;
-  let te = s.trimEnd ?? 0;
-  const canvas = el('canvas', { class: 'wave', height: 96 });
-  const startIn = el('input', { type: 'number', min: 0, step: 0.01, value: ts.toFixed(2) });
-  const endIn = el('input', { type: 'number', min: 0, step: 0.01, value: '' });
-  const fiIn = el('input', { type: 'number', min: 0, max: 5000, step: 50, value: s.fadeIn || 0 });
-  const foIn = el('input', { type: 'number', min: 0, max: 5000, step: 50, value: s.fadeOut || 0 });
-  const info = el('div', { class: 'hint', text: "Chargement de l'onde…" });
-  const outStart = () => (ts > 0.005 ? ts : 0);
-  const outEnd = () => (dur ? (te < dur - 0.005 ? te : null) : (s.trimEnd ?? null));
-
-  function sync() {
-    startIn.value = ts.toFixed(2);
-    endIn.value = dur ? te.toFixed(2) : '';
-    if (dur) info.textContent = `Durée jouée : ${(te - ts).toFixed(2)} s sur ${dur.toFixed(2)} s`;
-  }
-  function draw() {
-    const w = canvas.width, h = canvas.height, g = canvas.getContext('2d');
-    g.clearRect(0, 0, w, h);
-    if (!peaks) return;
-    const x0 = (ts / dur) * w, x1 = (te / dur) * w, n = peaks.length, bw = w / n;
-    g.fillStyle = 'rgba(139,92,246,.18)';
-    g.fillRect(x0, 0, x1 - x0, h);
-    for (let i = 0; i < n; i++) {
-      const x = i * bw;
-      g.fillStyle = x >= x0 - bw && x <= x1 ? '#c4a8ff' : '#4a4870';
-      const ph = Math.max(2, peaks[i] * h * 0.9);
-      g.fillRect(x, (h - ph) / 2, Math.max(1, bw - 1), ph);
-    }
-    g.fillStyle = '#ec4899';
-    g.fillRect(x0 - 1, 0, 3, h);
-    g.fillRect(x1 - 2, 0, 3, h);
-    if (pvPos != null && dur) {
-      const xp = Math.min(w - 1, Math.max(0, (pvPos / dur) * w));
-      g.fillStyle = '#ffffff';
-      g.fillRect(xp - 1, 0, 2, h);
-      g.beginPath();
-      g.moveTo(xp - 5, 0); g.lineTo(xp + 5, 0); g.lineTo(xp, 7);
-      g.closePath(); g.fill();
-    }
-  }
-  const timeAt = (e) => { const r = canvas.getBoundingClientRect(); return Math.min(dur, Math.max(0, ((e.clientX - r.left) / r.width) * dur)); };
-  const applyMarker = (t) => {
-    if (drag === 'start') ts = Math.min(t, te - 0.05); else te = Math.max(t, ts + 0.05);
-    sync(); draw();
-  };
-  const move = (e) => {
-    if (!drag || !dur) return;
-    if (Math.abs(e.clientX - downX) > 6) dragMoved = true;
-    applyMarker(timeAt(e));
-  };
-  canvas.addEventListener('pointerdown', (e) => {
-    if (!dur) return;
-    const t = timeAt(e);
-    drag = Math.abs(t - ts) <= Math.abs(t - te) ? 'start' : 'end';
-    dragMoved = false;
-    downX = e.clientX;
-    downT = t;
-    canvas.setPointerCapture(e.pointerId);
-  });
-  canvas.addEventListener('pointermove', move);
-  canvas.addEventListener('pointerup', () => {
-    if (!drag) return;
-    if (!dragMoved) {
-      if (pvVoice) seekPreview(downT);
-      else applyMarker(downT);
-    }
-    drag = null;
-  });
-  startIn.addEventListener('change', () => { if (dur) { ts = Math.min(Math.max(0, +startIn.value || 0), te - 0.05); sync(); draw(); } });
-  endIn.addEventListener('change', () => { if (dur) { te = Math.max(Math.min(dur, +endIn.value || dur), ts + 0.05); sync(); draw(); } });
-
-  const loadWave = () => getBuffer(s.path).then((buf) => {
-    dur = buf.duration;
-    const ch = buf.getChannelData(0);
-    const N = 300, step = Math.max(1, Math.floor(ch.length / N));
-    peaks = new Float32Array(N);
-    let mx = 1e-4;
-    for (let i = 0; i < N; i++) {
-      let m = 0;
-      for (let j = i * step, e = Math.min(ch.length, (i + 1) * step); j < e; j++) { const v = Math.abs(ch[j]); if (v > m) m = v; }
-      peaks[i] = m;
-      if (m > mx) mx = m;
-    }
-    for (let i = 0; i < N; i++) peaks[i] /= mx;
-    te = s.trimEnd ? Math.min(s.trimEnd, dur) : dur;
-    ts = Math.min(s.trimStart || 0, te - 0.05);
-    sync(); draw();
-  }).catch(() => { info.textContent = 'Onde indisponible (fichier introuvable ou illisible).'; });
-  loadWave();
-
-  const pvTime = el('div', { class: 'hint pvtime' });
-  let pvToken = 0;
-  const stopPreview = () => {
-    if (pvVoice) { const v = pvVoice; pvVoice = null; stopVoice(v, true); }
-    pvPos = null; pvTime.textContent = ''; draw();
-  };
-  const startPreview = async (from) => {
-    const tok = ++pvToken;
-    stopPreview();
-    const v = await play(s, {
-      monitorOnly: true, preview: true,
-      volume: +vol.value,
-      trimStart: from ?? outStart(),
-      trimEnd: outEnd(),
-      fadeIn: +fiIn.value || 0, fadeOut: +foIn.value || 0,
-      onProgress: (frac, absPos, regionDur, regionStart) => {
-        if (frac == null) { pvPos = null; pvTime.textContent = ''; draw(); return; }
-        pvPos = absPos;
-        pvTime.textContent = fmtTime(absPos - regionStart) + ' / ' + fmtTime(regionDur);
-        draw();
-      },
-    });
-    if (tok !== pvToken) { if (v) stopVoice(v, true); return; }
-    pvVoice = v && voices.has(v) ? v : null;
-  };
-  function seekPreview(t) {
-    if (!dur || !pvVoice) return;
-    startPreview(Math.min(Math.max(t, ts + 0.02), te - 0.02));
-  }
-  const preview = () => startPreview();
-  const reset = () => { ts = 0; te = dur; fiIn.value = 0; foIn.value = 0; sync(); draw(); };
-
-  const scClear = el('button', { class: 'ghost', text: 'Effacer', onclick: () => { sc = ''; scBtn.textContent = 'Aucun — cliquer pour définir'; scHint.textContent = ''; } });
-  const times = el('div', { class: 'times' },
-    el('label', { text: 'Début (s)', title: 'Le son ne jouera qu\'à partir de cet instant. Le fichier d\'origine n\'est jamais modifié.' }), startIn,
-    el('label', { text: 'Fin (s)', title: 'Le son s\'arrêtera à cet instant. Vide = jusqu\'à la fin du fichier.' }), endIn,
-    el('label', { text: 'Fondu d\'entrée (ms)', title: 'Le volume monte progressivement de 0 au niveau normal sur cette durée.' }), fiIn,
-    el('label', { text: 'Fondu de sortie (ms)', title: 'Le volume redescend à 0 sur cette durée avant la fin du son.' }), foIn);
-
-  modal('Modifier le son', [
-    field('Nom', nameIn),
-    field('Catégorie', catSel),
-    field('Favori', el('label', { class: 'check' }, favChk,
-      el('span', { text: 'Visible dans la catégorie ★ Favoris, en haut de la barre latérale.' }))),
-    field('Volume de ce son', el('div', { class: 'row' }, vol, volLbl),
-      '100 % = volume d\'origine. Au-delà, le son est amplifié (un limiteur évite la saturation).'),
-    field('Normalisation', el('div', { class: 'row' }, normBtn, normVal),
-      'Ajuste le volume du son vers un niveau cible sans toucher au fichier. ×1 = inchangé.'),
-    field('Raccourci clavier global', el('div', { class: 'row' }, scBtn, scClear), scHint),
-    field('Découper (début / fin) et fondus', el('div', { class: 'trim' }, canvas, pvTime, info, times),
-      'Glisse les repères roses sur l\'onde ou tape les temps. Clique sur l\'onde pendant l\'écoute pour déplacer la tête de lecture. Le fichier original n\'est jamais modifié.'),
-    el('div', { class: 'row' },
-      el('button', { text: '▶ Écouter (casque)', onclick: preview }),
-      el('button', { text: 'MP3 de l\'extrait', title: 'Crée un petit fichier MP3 contenant uniquement l\'extrait choisi (ffmpeg est téléchargé au premier usage)', onclick: async () => {
-        if (!dur) { toast('Attend le chargement de l\'onde.', 'warn'); return; }
-        try {
-          const out = await window.sf.mediaCut({ input: s.path, start: outStart(), end: outEnd() ?? dur, dir: cfg.settings.storageDir || '' });
-          if (await confirmBox('Extrait MP3 créé', 'Fichier : ' + out + '\n\nL\'utiliser à la place du fichier actuel ? La découpe et les fondus seront réinitialisés (le MP3 contient déjà l\'extrait).', 'Utiliser')) {
-            s.path = out;
-            s.trimStart = 0; s.trimEnd = null; s.fadeIn = 0; s.fadeOut = 0;
-            ts = 0; te = 0; dur = 0; peaks = null; pvPos = null;
-            stopPreview();
-            sync(); draw(); loadWave(); save(); renderAll();
-            toast('Fichier remplacé par l\'extrait MP3.');
-          } else {
-            toast('MP3 créé : ' + out);
-          }
-        } catch (e) { toast('Export impossible : ' + e.message, 'warn'); }
-      } }),
-      el('button', { text: 'Tout réinitialiser', onclick: reset }),
-      el('button', { text: 'Ouvrir l\'emplacement', onclick: () => window.sf.reveal(s.path) })),
-    field('Fichier', el('div', { class: 'path hint', text: s.path })),
-  ], [
-    { label: 'Annuler', onclick: (c) => c() },
-    { label: 'Enregistrer', kind: 'primary', onclick: (c) => {
-      s.name = nameIn.value.trim() || s.name;
-      s.volume = +vol.value;
-      s.categoryId = catSel.value || null;
-      s.favorite = favChk.checked;
-      s.shortcut = sc || null;
-      s.norm = norm;
-      s.trimStart = outStart();
-      s.trimEnd = outEnd();
-      s.fadeIn = Math.max(0, +fiIn.value || 0);
-      s.fadeOut = Math.max(0, +foIn.value || 0);
-      save(); renderAll(); c();
-      applyShortcuts();
-    } },
-  ], { wide: true, onClose: () => { pvToken++; stopPreview(); scCleanup(); } });
-  requestAnimationFrame(() => { canvas.width = canvas.clientWidth || 600; draw(); });
-}
-
-// ================================================================ reglages audio
-// ================================================================ sauvegarde (export/import)
-function exportConfig() {
-  const blob = new Blob([JSON.stringify(cfg, null, 2)], { type: 'application/json' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'soundfart-config.json';
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-  toast('Configuration exportée (références uniquement, pas les fichiers audio).');
-}
-
-// Propose le dossier de destination avant un ajout (YouTube, enregistrement).
-// Pre-rempli avec le dernier choix (lastDestDir) ou le dossier de stockage.
-function askDestDir() {
-  return new Promise((resolve) => {
-    const inp = el('input', { type: 'text', value: cfg.settings.lastDestDir || cfg.settings.storageDir || '' });
-    inp.style.width = '100%';
-    modal('Dossier de destination', [
-      el('div', { class: 'hint', text: 'Le fichier sera enregistré dans ce dossier (sous-dossier imports/ ou recordings/ selon la source). Laisse vide pour le dossier SoundFart par défaut.' }),
-      inp,
-    ], [
-      { label: 'Annuler', onclick: (c) => { c(); resolve(null); } },
-      { label: 'Choisir…', onclick: async () => { const d = await window.sf.pickDir(); if (d) inp.value = d; } },
-      { label: 'OK', kind: 'primary', onclick: (c) => {
-        const d = inp.value.trim();
-        if (d) { cfg.settings.lastDestDir = d; } else { delete cfg.settings.lastDestDir; }
-        save();
-        c(); resolve(d || '');
-      } },
-    ]);
-  });
-}
-
-function importConfig(onDone) {
-  const inp = el('input', { type: 'file', accept: '.json,application/json' });
-  inp.style.display = 'none';
-  document.body.append(inp);
-  inp.addEventListener('cancel', () => inp.remove()); // l'utilisateur a ferme le selecteur sans choisir
-  inp.addEventListener('change', async () => {
-    const f = inp.files[0];
-    inp.remove();
-    if (!f) return;
-    try {
-      const parsed = JSON.parse(await f.text());
-      if (!parsed || !Array.isArray(parsed.sounds)) throw new Error('fichier invalide');
-      if (!(await confirmBox('Importer la configuration ?', 'La configuration actuelle (sons, catégories, réglages, raccourcis) sera remplacée. Les fichiers audio ne sont pas modifiés.', 'Importer'))) return;
-      await teardownAudio();
-      cfg = normalizeCfg(parsed);
-      save();
-      await refreshDevices(false);
-      resolveDevices();
-      await applyAudio();
-      applyShortcuts();
-      renderAll();
-      checkMissing().catch((e) => logErr('checkMissing', e)); // re-verifie les chemins des sons importes
-      toast('Configuration importée.');
-      if (onDone) onDone();
-    } catch (e) { toast('Import impossible : ' + e.message, 'warn'); }
-  });
-  inp.click();
-}
-
-function settingsModal() {
-  const s = cfg.settings;
-  const opts = (list, selected, withNone) => [
-    withNone ? el('option', { value: '', text: '(aucune)' }) : null,
-    list.map((d) => el('option', { value: d.deviceId, text: d.label || d.deviceId, selected: d.deviceId === selected })),
-  ];
-  const cableSel = el('select', {}, el('option', { value: '', text: '(choisir…)' }), opts(audio.devices.out, s.cableId, false));
-  const monSel = el('select', {}, opts(audio.devices.out, s.monId, true));
-  const micSel = el('select', {}, opts(audio.devices.inp, s.micId, false));
-  const mix = el('input', { type: 'checkbox', checked: s.micMix });
-  // Surbrillance des choix recommandes : ★ = a privilegier, ⚠ = a eviter.
-  // dataset.label garde le libelle propre (sans prefixe) pour le stockage.
-  const markSel = (sel, test) => {
-    for (const o of sel.options) {
-      o.dataset.label = o.text;
-      const m = test(o.text);
-      if (m === 1) o.text = '★ ' + o.text;
-      else if (m === -1) o.text = '⚠ ' + o.text;
-    }
-    const refresh = () => {
-      const o = sel.selectedOptions[0];
-      sel.classList.toggle('rec', !!o && o.text.startsWith('★'));
-      sel.classList.toggle('warn', !!o && o.text.startsWith('⚠'));
-    };
-    sel.addEventListener('change', refresh);
-    refresh();
-    return sel;
-  };
-  markSel(cableSel, (t) => (/cable input/i.test(t) ? 1 : /cable/i.test(t) ? -1 : 0));
-  markSel(monSel, (t) => (/cable/i.test(t) ? -1 : 0)); // ecoute locale sur le cable = boucle
-  markSel(micSel, (t) => (VIRTUAL_RE.test(t) ? -1 : 1)); // vrai micro recommande, virtuel evite
-  const lbl = (sel) => { const o = sel.selectedOptions[0]; return o ? (o.dataset.label || o.textContent) : ''; };
-
-  // raccourci global STOP
-  let stopSc = s.stopShortcut || '';
-  const stopBtn = el('button', { text: stopSc ? fmtAccel(stopSc) : 'Aucun — cliquer pour définir', title: 'Raccourci clavier GLOBAL : interrompt tous les sons en cours, même fenêtre minimisée ou dans une autre application.' });
-  const stopHint = el('div', { class: 'hint', text: 'Interrompt immédiatement tous les sons en cours, même fenêtre minimisée.' });
-  let stopCleanup = () => {};
-  stopBtn.addEventListener('click', () => {
-    stopCleanup();
-    stopBtn.textContent = 'Appuie sur le raccourci… (Échap pour annuler)';
-    const disarm = () => {
-      window.removeEventListener('keydown', onKey, true);
-      stopCleanup = () => {};
-      stopBtn.textContent = stopSc ? fmtAccel(stopSc) : 'Aucun — cliquer pour définir';
-    };
-    const onKey = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (e.key === 'Escape') { disarm(); return; }
-      const acc = buildAccel(e);
-      if (!acc) { stopHint.textContent = 'Ajoute un modifieur (Ctrl, Alt, Maj) ou utilise une touche F.'; return; }
-      const owner = cfg.sounds.find((x) => (x.shortcut || '').toLowerCase() === acc.toLowerCase());
-      if (owner) { stopHint.textContent = 'Ce raccourci est déjà attribué à « ' + owner.name + ' ».'; return; }
-      stopSc = acc;
-      stopBtn.textContent = fmtAccel(acc);
-      stopHint.textContent = '';
-      disarm();
-    };
-    window.addEventListener('keydown', onKey, true);
-    stopCleanup = disarm;
-  });
-
-  // dossier de stockage des fichiers crees par l'app (imports YouTube, enregistrements, extraits)
-  // Vrai dossier de donnees (userData : SoundFart-data portable, %APPDATA% sinon).
-  window.sf.getDataDir().then((d) => {
-    const lbl = 'Dossier de données : ' + d + ' — les fichiers vont dans imports/, recordings/, cuts/ à l\'intérieur';
-    dirLbl.textContent = s.storageDir || lbl;
-    resetDirBtn.onclick = () => { s.storageDir = ''; dirLbl.textContent = lbl; };
-  }).catch(() => {});
-  const dirLbl = el('div', { class: 'hint path', text: (s.storageDir || 'Dossier de données par défaut') + ' — les fichiers vont dans imports/, recordings/, cuts/ à l\'intérieur' });
-  const openDirBtn = el('button', { class: 'ghost', text: 'Ouvrir', title: 'Ouvre le dossier de stockage dans l\'Explorateur', onclick: () => window.sf.openDir(s.storageDir || '') });
-  const pickDirBtn = el('button', { text: 'Choisir…', title: 'Choisit le dossier racine où SoundFart range ses fichiers (imports/, recordings/, cuts/).', onclick: async () => {
-    const d = await window.sf.pickDir();
-    if (d) { s.storageDir = d; dirLbl.textContent = d; }
-  } });
-  const resetDirBtn = el('button', { class: 'ghost', text: 'Réinitialiser', onclick: () => { s.storageDir = ''; dirLbl.textContent = 'Dossier SoundFart par défaut (SoundFart-data) — les fichiers vont dans imports/, recordings/, cuts/ à l\'intérieur'; } });
-  const autoMic = el('input', { type: 'checkbox', checked: !!s.autoSwitchMic, title: 'Au lancement, l\'entrée micro Windows bascule sur « CABLE Output » (pour que Discord capte ta voix via le câble), puis revient à ton vrai micro à la fermeture ou en cas de crash.' });
-  const watchMic = el('input', { type: 'checkbox', checked: s.watchdogMic !== false, title: 'Revérifie périodiquement que l\'entrée micro est toujours sur le câble. Se met en pause pour la session si tu changes le micro toi-même (Discord inclus).' });
-
-  const normAllBtn = el('button', { text: 'Normaliser toute la bibliothèque', title: 'Ramène le volume de chaque son à un niveau cible commun. Les fichiers audio ne sont jamais modifiés — seul le gain en lecture change.', onclick: () => { closeSettings(); normalizeAll(); } });
-  const exportBtn = el('button', { text: 'Exporter la configuration', onclick: exportConfig });
-  const importBtn = el('button', { text: 'Importer une configuration', onclick: () => importConfig(closeSettings) });
-
-  const cableVerifyBtn = el('button', { class: 'ghost', text: 'Vérifier', onclick: async () => {
-    cableVerifyBtn.disabled = true; cableVerifyBtn.textContent = 'Vérification…';
-    await refreshDevices(false); resolveDevices(); updateCableUi(); await applyAudio();
-    cableVerifyBtn.disabled = false; cableVerifyBtn.textContent = 'Vérifier';
-    if (!cablePresent()) toast('VB-CABLE toujours absent — si tu viens de l\'installer, redémarre Windows.', 'warn');
-    else toast('VB-CABLE détecté — périphériques prêts.');
-  } });
-  const cableInstallBtn = el('button', { class: 'ghost', text: 'Installer VB-CABLE…', onclick: () => showCableScreen() });
-
-  const closeSettings = modal('Réglages audio', [
-    el('div', { class: 'hint', text: '★ = choix recommandé (bordure rose) · ⚠ = à éviter (bordure rouge). Pour faire fonctionner la soundboard : sortie Discord = CABLE Input, écoute locale = ton casque, micro = ton vrai micro.' }),
-    field('Sortie vers Discord (micro virtuel)', el('div', { class: 'row' }, cableSel, cableVerifyBtn, cableInstallBtn),
-      cablePresent() ? 'Choisis « CABLE Input ». Dans Discord, mets « CABLE Output » comme micro.'
-        : 'Aucun câble virtuel détecté : la diffusion vers Discord est désactivée. VB-CABLE est un pilote gratuit de VB-Audio, à installer toi-même (vb-audio.com/Cable), puis redémarre le PC.'),
-    field('Écoute locale (ton casque)', monSel, s.monId && s.monId === s.cableId
-      ? '⚠ Écoute locale = sortie Discord : tu risks une boucle/écho — choisis un périphérique différent.'
-      : 'Choisis ton casque/écoute habituelle — pas un périphérique « CABLE » (boucle).'),
-    field('Mon micro', micSel, 'Le vrai micro est ★ ; les périphériques virtuels (CABLE Output, Voicemeeter…) sont ⚠ déconseillés ici.'),
-    el('label', { class: 'check' }, mix,
-      el('span', { text: 'Mixer mon micro dans la sortie Discord (sinon tes potes n\'entendent que les sons). Décoche si tu utilises « Écouter ce périphérique » de Windows.' })),
-    field('Bascule micro automatique', el('label', { class: 'check' }, autoMic,
-      el('span', { text: 'Au lancement, SEUL le micro (entrée Windows) passe sur « CABLE Output » et revient à ton micro à la fermeture — tes sorties (Discord, écoute locale) restent sur tes périphériques habituels. Dans Discord, choisis « Défaut » comme périphérique d\'entrée pour que ça suive.' }))),
-    field('Surveillance micro automatique', el('label', { class: 'check' }, watchMic,
-      el('span', { text: 'Pendant que SoundFart tourne, revérifie régulièrement que l\'entrée micro est toujours sur le câble. Si tu changes le micro toi-même (ou qu\'une app le change), la surveillance se met en pause jusqu\'au prochain lancement.' }))),
-    field('Récupération micro', el('button', { class: 'ghost', text: 'Restaurer mon micro Windows', title: 'Force le retour de l\'entrée micro Windows sur ton vrai micro — à utiliser si elle est restée bloquée sur « CABLE Output » (crash, coupure).', onclick: () => {
-      window.sf.restoreMic();
-      toast('Restauration du micro demandée — si l\'entrée était bloquée sur le câble, elle revient sur ton micro.', 'info');
-    } }),
-      'À utiliser si ton micro Windows est resté bloqué sur « CABLE Output » (coupure, crash). Ramène l\'entrée sur ton vrai micro.'),
-    field('Dossier de stockage', el('div', { class: 'row' }, dirLbl, pickDirBtn, openDirBtn, resetDirBtn),
-      'Dossier par défaut des fichiers créés par SoundFart (imports YouTube, enregistrements, extraits MP3) — un choix de dossier est aussi proposé avant chaque ajout.'),
-    field('Raccourci global STOP', el('div', { class: 'row' }, stopBtn), stopHint),
-    field('Niveaux audio', el('div', { class: 'row' }, normAllBtn),
-      'Normalise le volume de tous les sons vers un niveau cible (les fichiers ne sont pas modifiés).'),
-    field('Sauvegarde', el('div', { class: 'row' }, exportBtn, importBtn),
-      'La configuration contient les références aux fichiers, catégories, découpes, raccourcis et favoris — pas les fichiers audio eux-mêmes.'),
-  ], [
-    { label: 'Fermer', onclick: (c) => c() },
-    { label: 'Appliquer', kind: 'primary', onclick: async (c) => {
-      s.cableId = cableSel.value; s.cableLabel = lbl(cableSel);
-      s.monId = monSel.value; s.monLabel = lbl(monSel);
-      s.micId = micSel.value; s.micLabel = lbl(micSel);
-      s.micMix = mix.checked;
-      s.stopShortcut = stopSc || '';
-      s.storageDir = s.storageDir || '';
-      s.autoSwitchMic = autoMic.checked;
-      s.watchdogMic = watchMic.checked;
-      save(); c();
-      if (await applyAudio()) toast('Réglages audio appliqués.');
-      applyShortcuts();
-      if (cablePresent()) window.sf.audioAutoSetup({ enabled: s.autoSwitchMic, cableLabel: s.cableLabel }).then((r) => {
-        if (r && r.changed) toast('Entrée micro basculée sur ' + r.device + ' (restaurée à la fermeture).');
-        else if (r && !r.ok) toast('Bascule micro auto impossible : ' + r.err, 'warn');
-      });
-    } },
-  ], { onClose: () => stopCleanup() });
-}
-
 // ================================================================ rendu
 function visibleSounds() {
   const q = $('#search').value.trim().toLowerCase();
   const view = cfg.ui.cat;
-  const col = new Intl.Collator('fr', { numeric: true, sensitivity: 'base' });
+  const col = COL_LATIN;
   const sorts = {
     'name-asc': (a, b) => col.compare(a.name, b.name),
     'name-desc': (a, b) => col.compare(b.name, a.name),
@@ -1214,10 +1150,19 @@ function renderSidebar() {
     }
     nav.append(row);
   };
+  // Comptages en une seule passe : l'ancienne version refiltrait
+  // cfg.sounds par categorie -> O(categories x sons) a chaque rendu.
+  let favN = 0, noneN = 0;
+  const catCounts = new Map();
+  for (const s of cfg.sounds) {
+    if (s.favorite) favN++;
+    if (!soundHasCat(s)) noneN++;
+    if (s.categoryId) catCounts.set(s.categoryId, (catCounts.get(s.categoryId) || 0) + 1);
+  }
   item('all', 'Tous les sons', cfg.sounds.length, null);
-  item('fav', '★ Favoris', cfg.sounds.filter((s) => s.favorite).length, null);
-  item('none', 'Sans catégorie', cfg.sounds.filter((s) => !soundHasCat(s)).length, null);
-  for (const c of sortedCategories()) item(c.id, c.name, cfg.sounds.filter((s) => s.categoryId === c.id).length, c);
+  item('fav', '★ Favoris', favN, null);
+  item('none', 'Sans catégorie', noneN, null);
+  for (const c of sortedCategories()) item(c.id, c.name, catCounts.get(c.id) || 0, c);
 }
 
 function renderGrid() {
@@ -1302,10 +1247,21 @@ function pushMenuState() {
       stopShortcut: cfg.settings.stopShortcut || '',
       categories: sortedCategories().map((c) => ({ id: c.id, name: c.name })),
     });
-  } catch {}
+  } catch (e) { logErr('menuState', e); }
 }
 
 function renderAll() { renderSidebar(); renderGrid(); pushMenuState(); }
+
+// Resynchronise les controles du haut apres un import de config : leurs
+// options sont creees une seule fois dans init() — sans ca, tri/groupe/
+// volume master affichent l'ancienne config alors que cfg est deja remplace.
+function syncTopbarControls() {
+  const sortSel = $('#sort'); if (sortSel) sortSel.value = cfg.settings.sort;
+  const catSortSel = $('#catSort'); if (catSortSel) catSortSel.value = cfg.settings.catSort;
+  const groupCat = $('#groupCat'); if (groupCat) groupCat.checked = !!cfg.settings.groupByCat;
+  const master = $('#master');
+  if (master) { master.value = cfg.settings.master; const mv = $('#masterVal'); if (mv) mv.textContent = cfg.settings.master + '%'; }
+}
 
 function showCtx(e, s) {
   const item = (label, fn, cls) => el('button', { class: cls || '', text: label, onclick: fn });
@@ -1313,7 +1269,7 @@ function showCtx(e, s) {
   m.replaceChildren(
     item('Modifier (nom, volume, catégorie, raccourci)…', () => editSound(s)),
     item(s.favorite ? '★ Retirer des favoris' : '☆ Ajouter aux favoris', () => { s.favorite = !s.favorite; save(); renderAll(); }),
-    item('Ouvrir l\'emplacement du fichier', () => window.sf.reveal(s.path)),
+    item('Ouvrir l\'emplacement du fichier', () => window.sf.reveal(s.path).catch((e) => logErr('reveal', e))),
     item('Retrouver le fichier…', () => relocateSound(s)),
     item('Retirer de la liste', () => removeSound(s), 'danger'));
   m.style.left = Math.min(e.clientX, innerWidth - 240) + 'px';
@@ -1322,458 +1278,56 @@ function showCtx(e, s) {
 }
 
 async function relocateSound(s) {
-  const paths = await window.sf.pickFiles();
-  const p = paths[0];
+  let paths;
+  try { paths = await window.sf.pickFiles(); } catch (e) { logErr('pickFiles', e); return; }
+  const p = Array.isArray(paths) ? paths[0] : null;
   if (!p) return;
+  // Le filtre du dialogue est indicatif : valider l'extension ici sinon
+  // file:check dirait « present » mais file:read refuserait au play.
+  if (!window.SFUtils.AUDIO_EXT.includes(p.slice(p.lastIndexOf('.')).toLowerCase())) {
+    toast("Ce fichier n'est pas un format audio supporté.", 'warn'); return;
+  }
+  // Un chemin deja pris par un autre son serait deduplique au prochain
+  // chargement -> perte silencieuse d'un des deux sons.
+  if (cfg.sounds.some((x) => x !== s && x.path.toLowerCase() === p.toLowerCase())) {
+    toast('Ce chemin est déjà utilisé par un autre son.', 'warn'); return;
+  }
+  const oldPath = s.path;
+  // Arreter les voix qui jouent l'ancien chemin : sinon le son continue
+  // de jouer un fichier different de celui affiche (comme removeSound).
+  for (const v of [...voices]) if (v.soundId === s.id) stopVoice(v, true);
   s.path = p;
+  cacheDelete(oldPath); // l'ancien buffer devient orphelin sinon
   missing.delete(s.id);
   save(); renderAll();
   toast('Fichier retrouvé : ' + p);
 }
 
+let checkSeq = 0; // jeton de generation : des scans concurrents (focus,
+// import, ajout) ne doivent pas ecrire un 'missing' perime dans le desordre.
 async function checkMissing() {
-  const miss = new Set(await window.sf.checkFiles(cfg.sounds.map((s) => s.path)));
+  const seq = ++checkSeq;
+  let miss;
+  try { miss = new Set(await window.sf.checkFiles(cfg.sounds.map((s) => s.path))); }
+  catch (e) { logErr('checkMissing', e); return; } // erreur remontee, badges inchanges
+  if (seq !== checkSeq) return; // un scan plus recent a ete lance entre-temps
   const next = new Set(cfg.sounds.filter((s) => miss.has(s.path)).map((s) => s.id));
   const changed = next.size !== missing.size || [...next].some((i) => !missing.has(i));
   missing = next;
   if (changed) renderGrid();
 }
 
-// ================================================================ enregistreur
-async function recorderModal() {
-  let streams = [], actx = null, rec = null, chunks = [];
-  let recordedSound = null, recTimer = null, recStart = 0, looseTracks = [];
-  let dead = false; // passe a true a la fermeture : avorte les startBtn encore en vol
-  let tapNode = null, pcmQ = [], pcmSeen = false, tapLost = false, pcmDrops = 0;
-  const killTapNode = () => { if (tapNode) { try { tapNode.disconnect(); } catch {} tapNode = null; } pcmQ = []; };
-  const offTapDead = window.sf.onTapDead ? window.sf.onTapDead(() => {
-    window.sf.uiLog('tapDead rec=' + (rec ? rec.state : 'null') + ' dead=' + dead);
-    tapLost = true; // le tap est mort : ni enregistrement silencieux ni faux succes
-    if (dead || !rec || rec.state === 'inactive') return;
-    toast('Source « Audio du PC » perdue — enregistrement arrêté.', 'warn');
-    try { rec.stop(); } catch {}
-  }) : null;
-  const offTapPcm = window.sf.onTapPcm ? window.sf.onTapPcm((ab) => {
-    if (!pcmSeen) { pcmSeen = true; window.sf.uiLog('tapPcm: premier flux recu (' + ab.byteLength + 'o)'); }
-    if (tapNode) { try { tapNode.port.postMessage(ab); } catch {} }
-    else if (pcmQ.length < 600) pcmQ.push(ab);
-    else if (!pcmDrops) { pcmDrops = 1; window.sf.uiLog('pcmQ saturee : chunks AudioTap jetes (renderer occupe)'); }
-  }) : null;
-
-  // « default » exclu : apres la bascule micro auto, il pointerait sur CABLE Output (on enregistrerait la soundboard, pas le micro)
-  const devs = (await navigator.mediaDevices.enumerateDevices())
-    .filter((d) => d.kind === 'audioinput' && d.deviceId !== 'communications' && d.deviceId !== 'default');
-  const micSel = el('select', {}, devs.map((d) => {
-    const o = el('option', { value: d.deviceId, text: (VIRTUAL_RE.test(d.label || '') ? '⚠ ' : '') + (d.label || d.deviceId), selected: d.deviceId === cfg.settings.micId });
-    o.dataset.label = d.label || d.deviceId;
-    return o;
-  }));
-  if (!micSel.value && devs.length) micSel.value = devs[0].deviceId;
-  const micOn = el('input', { type: 'checkbox', checked: true, title: 'Enregistre la voix via ton micro (avec réduction d\'écho et de bruit).' });
-  const pcOn = el('input', { type: 'checkbox', checked: false, title: 'Enregistre tout ce que tu entends sur le PC (vidéo, jeu, musique) — capturé directement à la sortie, sans repasser par le câble.' });
-  const cableOn = el('input', { type: 'checkbox', checked: false, title: 'Enregistre ce que SoundFart envoie vers Discord (les sons de la soundboard).' });
-  const status = el('div', { class: 'hint', text: 'Choisis les sources, puis lance l\'enregistrement.' });
-  const nameIn = el('input', { type: 'text', value: 'Enregistrement ' + new Date().toLocaleString('fr-FR'), maxlength: 80 });
-  const catSel = el('select', {},
-    el('option', { value: '', text: 'Sans catégorie' }),
-    sortedCategories().map((c) => el('option', { value: c.id, text: c.name })));
-  const previewBtn = el('button', { text: '▶ Écouter', disabled: true });
-  const startBtn = el('button', { text: '● Enregistrer', class: 'primary' });
-  const stopBtn = el('button', { text: '■ Arrêter', disabled: true });
-
-  const extFor = (mime) => (mime && mime.includes('mp4') ? '.m4a' : mime && mime.includes('ogg') ? '.ogg' : '.webm');
-  const mimePick = () => ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg'].find((t) => MediaRecorder.isTypeSupported(t)) || '';
-
-  const stopLoose = () => { looseTracks.forEach((t) => t.stop()); looseTracks = []; };
-
-  // libere ce qui a ete ouvert apres la fermeture du modal (sources tardives, tap systeme)
-  const deadCleanup = (st) => {
-    if (st) st.getTracks().forEach((t) => t.stop());
-    stopLoose();
-    killTapNode();
-    window.sf.audioTapStop().catch(() => {});
-  };
-
-  const cleanup = () => {
-    dead = true;
-    if (recTimer) { clearInterval(recTimer); recTimer = null; }
-    if (offTapDead) offTapDead();
-    if (offTapPcm) offTapPcm();
-    // Enregistrement existant : on laisse onstop faire la sauvegarde + tout le
-    // menage — l'annuler ici perdrait silencieusement l'enregistrement.
-    // Si rec.stop() echoue (ou rec inactif sans onstop a venir), on nettoie
-    // quand meme : micro/tap/contexte ne doivent pas rester allumes.
-    if (rec && rec.state !== 'inactive') {
-      try { rec.stop(); return; } catch { /* onstop ne viendra pas : nettoyage ci-dessous */ }
-    }
-    streams.forEach((st) => st.getTracks().forEach((t) => t.stop()));
-    streams = [];
-    stopLoose();
-    killTapNode();
-    window.sf.audioTapStop().catch(() => {});
-    if (actx) { actx.close().catch(() => {}); actx = null; }
-  };
-
-  // Capture l'audio systeme (Discord, musique...) = tout ce qui sort par le peripherique par defaut.
-  // Methode 1 : chromeMediaSource (Electron/desktopCapturer) — la plus fiable sous Windows.
-  // Methode 2 : getDisplayMedia + loopback (peut echouer : « Could not start audio source »).
-  const audioOnly = (stream) => {
-    const vids = stream.getVideoTracks();
-    if (vids.length) looseTracks.push(...vids); // garder la video vivante : le loopback meurt avec elle
-    return new MediaStream(stream.getAudioTracks());
-  };
-  const checkLive = async (stream) => {
-    await new Promise((r) => setTimeout(r, 300));
-    const tracks = stream.getAudioTracks();
-    if (!tracks.length || tracks.some((t) => t.readyState !== 'live')) {
-      stream.getTracks().forEach((t) => t.stop());
-      throw new Error('piste audio système interrompue (loopback indisponible)');
-    }
-    return stream;
-  };
-  const systemStream = async () => {
-    const srcId = await window.sf.desktopSource().catch(() => null);
-    const attempts = [];
-    if (srcId) {
-      attempts.push(() => navigator.mediaDevices.getUserMedia({
-        audio: { chromeMediaSource: 'desktop', chromeMediaSourceId: srcId },
-      }));
-      attempts.push(() => navigator.mediaDevices.getUserMedia({
-        audio: { mandatory: { chromeMediaSource: 'desktop', chromeMediaSourceId: srcId } },
-      }));
-    }
-    attempts.push(() => navigator.mediaDevices.getDisplayMedia({ video: true, audio: true })
-      .then((disp) => { looseTracks.push(...disp.getVideoTracks()); return new MediaStream(disp.getAudioTracks()); }));
-    let lastErr = null;
-    for (const fn of attempts) {
-      try {
-        const st = audioOnly(await fn());
-        return await checkLive(st);
-      } catch (e) {
-        lastErr = e;
-        stopLoose();
-        window.sf.uiLog('systemStream: ' + (e && e.name) + ' ' + (e && e.message));
-      }
-    }
-    throw lastErr || new Error('audio systeme indisponible');
-  };
-
-  // Peripherique d'entree qui correspond au cable virtuel (ex. « CABLE Output »)
-  const cableStream = async () => {
-    const inp = (audio.devices.inp || []).filter((d) => d.deviceId !== 'default');
-    const d = inp.find((x) => /output/i.test(x.label) && VIRTUAL_RE.test(x.label))
-      || inp.find((x) => /cable/i.test(x.label));
-    if (!d) throw new Error('peripherique « CABLE Output » introuvable');
-    return navigator.mediaDevices.getUserMedia({
-      audio: { deviceId: { exact: d.deviceId }, echoCancellation: false, noiseSuppression: false, autoGainControl: false },
-    });
-  };
-
-  previewBtn.addEventListener('click', () => {
-    if (recordedSound) play(recordedSound, { monitorOnly: true, preview: true });
-  });
-
-  startBtn.addEventListener('click', async () => {
-    startBtn.disabled = true; // desactive des le clic : evite le double demarrage
-    try {
-      streams = [];
-      // « Audio du PC » : AudioTap capture le loopback systeme en PCM float32 48 kHz sur
-      // stdout -> IPC -> AudioWorklet -> enregistreur. Ne passe PLUS par le cable :
-      // la voix des amis Discord n'est plus reinjectee dans l'appel (anti-echo).
-      // Repli sur getDisplayMedia si le tap echoue.
-      let tapOn = false;
-      pcmSeen = false; tapLost = false;
-      if (pcOn.checked) {
-        try {
-          const r = await window.sf.audioTapStart();
-          tapOn = !!(r && r.ok);
-          if (!tapOn) window.sf.uiLog('audioTapStart: ' + (r && r.err));
-        } catch (e) { window.sf.uiLog('audioTapStart: ' + e.message); }
-        if (dead) { deadCleanup(); return; }
-      }
-      const want = [];
-      if (micOn.checked) want.push(['micro', () => navigator.mediaDevices.getUserMedia({
-        audio: { deviceId: micSel.value ? { exact: micSel.value } : undefined, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-      })]);
-      if (pcOn.checked && !tapOn) want.push(['audio du PC', systemStream]);
-      if (cableOn.checked) want.push(['câble SoundFart', cableStream]);
-      // tapOn = source « audio du PC » active via PCM/worklet (pas de getUserMedia) :
-      // elle compte comme une source meme si want est vide.
-      if (!want.length && !(pcOn.checked && tapOn)) throw new Error('coche au moins une source');
-      for (const [label, fn] of want) {
-        try {
-          const st = await fn();
-          if (dead) { deadCleanup(st); return; }
-          // Source morte en cours d'enregistrement : le fichier serait
-          // silencieux sur cette source sans avertissement.
-          st.getTracks().forEach((t) => t.addEventListener('ended', () => {
-            if (!dead && rec && rec.state === 'recording') {
-              toast('Une source audio est morte — enregistrement arrêté.', 'warn');
-              try { rec.stop(); } catch {}
-            }
-          }));
-          streams.push(st);
-        }
-        catch (e) { window.sf.uiLog('recorder src ' + label + ': ' + (e && e.name) + ' ' + (e && e.message)); streams.forEach((st) => st.getTracks().forEach((t) => t.stop())); streams = []; throw new Error(label + ' : ' + e.message); }
-      }
-      if (dead) { deadCleanup(); return; }
-      const mime = mimePick();
-      actx = new AudioContext({ sampleRate: SR });
-      const dest = actx.createMediaStreamDestination();
-      const comp = actx.createDynamicsCompressor(); // evite l'ecrêtage quand plusieurs sources sont mixees
-      comp.threshold.value = -12; comp.knee.value = 20; comp.ratio.value = 8;
-      comp.connect(dest);
-      streams.forEach((st) => actx.createMediaStreamSource(st).connect(comp));
-      if (tapOn) {
-        try {
-          await actx.audioWorklet.addModule('tap-processor.js');
-          // outputChannelCount [2] : sans ca la sortie du worklet peut etre mono
-          // (seul le canal gauche serait enregistre). numberOfInputs 0 : inutilise.
-          tapNode = new AudioWorkletNode(actx, 'tap-processor', { numberOfInputs: 0, outputChannelCount: [2] });
-          pcmQ.forEach((ab) => tapNode.port.postMessage(ab));
-          pcmQ = [];
-        } catch (e) {
-          window.sf.uiLog('tap worklet: ' + (e && e.message));
-          killTapNode();
-          try {
-            const st = await systemStream();
-            if (dead) { deadCleanup(st); return; }
-            streams.push(st);
-            actx.createMediaStreamSource(st).connect(comp);
-          } catch (e2) { window.sf.uiLog('recorder src audio du PC (repli): ' + (e2 && e2.message)); }
-        }
-      }
-      chunks = [];
-      rec = new MediaRecorder(dest.stream, mime ? { mimeType: mime } : undefined);
-      rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
-      rec.onstop = async () => {
-        if (recTimer) { clearInterval(recTimer); recTimer = null; }
-        const recMime = rec ? rec.mimeType : '';
-        try {
-          const blob = new Blob(chunks, { type: recMime || mime || 'audio/webm' });
-          const ab = await blob.arrayBuffer();
-          const fname = nameIn.value.trim() || 'enregistrement';
-          const destDir = await askDestDir();
-          if (destDir === null) {
-            status.textContent = 'Enregistrement annulé (dossier).';
-          } else {
-          const path = await window.sf.saveRecording({ data: ab, name: fname, ext: extFor(recMime || mime), dir: destDir || cfg.settings.storageDir || '' });
-          recordedSound = {
-            id: uid(), name: fname, path, volume: 100, plays: 0, addedAt: Date.now(),
-            categoryId: null, favorite: false, norm: 1, shortcut: null,
-            trimStart: 0, trimEnd: null, fadeIn: 0, fadeOut: 0,
-          };
-          status.textContent = 'Enregistrement prêt (' + fmtTime((Date.now() - recStart) / 1000) + ') : ' + path;
-          previewBtn.disabled = false;
-          }
-        } catch (e) {
-          status.textContent = 'Sauvegarde impossible : ' + e.message;
-        }
-        streams.forEach((st) => st.getTracks().forEach((t) => t.stop()));
-        stopLoose();
-        killTapNode();
-        window.sf.audioTapStop().catch(() => {});
-        if (actx) { actx.close().catch(() => {}); actx = null; }
-        rec = null;
-        startBtn.disabled = false; stopBtn.disabled = true;
-        micSel.disabled = micOn.disabled = pcOn.disabled = cableOn.disabled = false;
-      };
-      // modal ferme pendant la preparation : ne pas demarrer l'enregistrement
-      if (dead) { deadCleanup(); if (actx) { actx.close().catch(() => {}); actx = null; } return; }
-      // Le tap est mort entre tapStart et maintenant : demarrer produirait un
-      // fichier silencieux — on refuse avec un message clair.
-      if (tapOn && tapLost) throw new Error('audio du PC : flux AudioTap interrompu avant le démarrage');
-      if (tapNode) {
-        // Flush du ring buffer : le PCM arrive des l'audioTapStart, avant les
-        // getUserMedia -> sans ca le debut du fichier contiendrait de l'audio
-        // capture AVANT le clic sur « Enregistrer ».
-        tapNode.port.postMessage('flush');
-        tapNode.connect(comp);
-      }
-      rec.start(250);
-      recStart = Date.now();
-      recTimer = setInterval(() => { status.textContent = '● Enregistrement… ' + fmtTime((Date.now() - recStart) / 1000); }, 250);
-      status.textContent = '● Enregistrement…';
-      startBtn.disabled = true; stopBtn.disabled = false;
-      micSel.disabled = micOn.disabled = pcOn.disabled = cableOn.disabled = true;
-    } catch (e) {
-      window.sf.uiLog('recorder start: ' + (e && e.name) + ' ' + (e && e.message));
-      status.textContent = 'Source inaccessible : ' + e.message;
-      // meme liberation que rec.onstop : pas de micro/tap/contexte leaving trainer
-      streams.forEach((st) => st.getTracks().forEach((t) => t.stop()));
-      stopLoose();
-      killTapNode();
-      window.sf.audioTapStop().catch(() => {});
-      if (actx) { actx.close().catch(() => {}); actx = null; }
-      startBtn.disabled = false;
-    }
-  });
-
-  stopBtn.addEventListener('click', () => { try { if (rec && rec.state !== 'inactive') rec.stop(); } catch {} });
-
-  const cableDevLabel = () => {
-    const d = (audio.devices.inp || []).find((x) => /output/i.test(x.label) && VIRTUAL_RE.test(x.label))
-      || (audio.devices.inp || []).find((x) => /cable/i.test(x.label));
-    return d ? d.label : 'CABLE Output (introuvable)';
-  };
-  const micLabel = () => { const o = micSel.selectedOptions[0]; return o ? (o.dataset.label || o.textContent) : 'aucun micro'; };
-  const srcNames = el('div', { class: 'hint' });
-  const syncSrcNames = () => { srcNames.textContent = 'Sources : micro = ' + micLabel() + ' · audio du PC = sortie système · câble = ' + cableDevLabel(); };
-  micSel.addEventListener('change', syncSrcNames);
-  syncSrcNames();
-
-  modal('Enregistreur', [
-    field('Micro', el('div', { class: 'row' }, micOn, micSel), 'Voix via le périphérique d\'entrée choisi.'),
-    srcNames,
-    field('Audio du PC', pcOn, 'Coche pour mixer ce que tu entends (musique, voix Discord, jeu) directement dans l\'enregistrement — le flux passe par SoundFart sans repasser par le câble, donc sans écho pour tes amis.'),
-    field('Câble SoundFart', cableOn, 'Coche pour ajouter ce qui passe dans le câble virtuel (sons de la soundboard + micro mixé).'),
-    el('div', { class: 'hint', text: 'Tu peux combiner plusieurs sources : elles sont mixées avec un limiteur anti-saturation. Le son est enregistré en qualité numérique, sans passer par les haut-parleurs.' }),
-    el('div', { class: 'row' }, startBtn, stopBtn, previewBtn),
-    status,
-    field('Nom', nameIn),
-    field('Catégorie', catSel),
-  ], [
-    { label: 'Fermer', onclick: (c) => c() },
-    { label: 'Ajouter à la bibliothèque', kind: 'primary', onclick: (c) => {
-      if (!recordedSound) { toast('Enregistre d\'abord un son.', 'warn'); return; }
-      recordedSound.name = nameIn.value.trim() || recordedSound.name;
-      recordedSound.categoryId = catSel.value || null;
-      cfg.sounds.push(recordedSound);
-      save(); renderAll(); c();
-      toast('Son ajouté à la bibliothèque.');
-      setTimeout(() => editSound(recordedSound), 60);
-    } },
-  ], { onClose: cleanup });
-}
-
-// ================================================================ import YouTube
-const YT_RE = /^(https?:\/\/)?(www\.|m\.)?(youtube\.com|youtu\.be|music\.youtube\.com)\//;
-
-function youtubeModal() {
-  const urlIn = el('input', { type: 'text', placeholder: 'https://www.youtube.com/watch?v=…' });
-  urlIn.style.flex = '1';
-  const infoBox = el('div', { class: 'hint', text: 'Colle un lien YouTube puis « Analyser ».' });
-  const startIn = el('input', { type: 'text', placeholder: '0 ou 02:15', value: '0' });
-  const endIn = el('input', { type: 'text', placeholder: '13 ou 02:28', value: '' });
-  startIn.style.flex = '1'; endIn.style.flex = '1';
-  const nameIn = el('input', { type: 'text', placeholder: 'Nom du son (titre par défaut)' });
-  const catSel = el('select', {},
-    el('option', { value: '', text: 'Sans catégorie' }),
-    sortedCategories().map((c) => el('option', { value: c.id, text: c.name })));
-  const prog = el('div', { class: 'hint' });
-  const bar = el('div', { class: 'ytbar' }, el('i'));
-  const barFill = bar.firstChild;
-
-  let info = null, dl = null, offProg = null, busy = false;
-  const setProg = (p) => {
-    if (p === -1 || p == null) { prog.textContent = 'Téléchargement…'; barFill.style.width = '100%'; barFill.style.opacity = '.4'; }
-    else { prog.textContent = 'Téléchargement… ' + p + ' %'; barFill.style.opacity = '1'; barFill.style.width = p + '%'; }
-  };
-
-  const analyzeBtn = el('button', { text: 'Analyser', onclick: async () => {
-    const url = urlIn.value.trim();
-    if (!YT_RE.test(url)) { infoBox.textContent = 'Ce lien ne ressemble pas à une URL YouTube.'; return; }
-    busy = true;
-    infoBox.textContent = 'Vérification de l\'outil de téléchargement…';
-    try {
-      offProg = window.sf.onYtProgress(setProg);
-      await window.sf.ytEnsure();
-      infoBox.textContent = 'Lecture des infos de la vidéo…';
-      info = await window.sf.ytInfo(url);
-      infoBox.textContent = `« ${info.title} » — durée ${fmtTime(info.duration)}.`;
-      if (!nameIn.value) nameIn.value = String(info.title).slice(0, 80);
-      endIn.placeholder = info.duration ? 'Fin (max ' + fmtTime(info.duration) + ')' : 'Fin';
-    } catch (e) {
-      info = null;
-      infoBox.textContent = 'Analyse impossible : ' + e.message;
-    } finally {
-      busy = false;
-    }
-  } });
-
-  const dlBtn = el('button', { text: 'Télécharger l\'extrait', onclick: async () => {
-    if (!info || busy) return;
-    const start = parseTs(startIn.value);
-    const hasTimeline = endIn.value.trim() !== '' && startIn.value.trim() !== '';
-    const end = endIn.value.trim() === '' ? 0 : parseTs(endIn.value);
-    if (endIn.value.trim() !== '' && startIn.value.trim() === '') {
-      prog.textContent = 'Fin sans début : renseigne aussi le début, ou vide les deux pour le fichier complet.'; return;
-    }
-    if (!hasTimeline && startIn.value.trim() !== '0' && startIn.value.trim() !== '') {
-      prog.textContent = 'Timeline incomplète : définis le début ET la fin, ou laisse les deux vides pour le fichier complet.'; return;
-    }
-    if (hasTimeline && (isNaN(start) || isNaN(end) || !(end > start))) {
-      prog.textContent = 'Heure invalide : la fin doit être après le début.'; return;
-    }
-    const dest = await askDestDir();
-    if (dest === null) return;
-    busy = true;
-    dl = null;
-    prog.textContent = 'Préparation…';
-    barFill.style.width = '0%'; barFill.style.opacity = '1';
-    try {
-      offProg = offProg || window.sf.onYtProgress(setProg);
-      const r = await window.sf.ytDownload({ url: urlIn.value.trim(), start: hasTimeline ? start : 0, end: hasTimeline ? end : 0, dir: dest || cfg.settings.storageDir || '', full: !hasTimeline });
-      dl = { path: r.path, sectioned: r.sectioned, start: hasTimeline ? start : 0, end: hasTimeline ? end : null };
-      prog.textContent = r.sectioned
-        ? 'Extrait MP3 prêt (' + fmtTime(end - start) + ').'
-        : hasTimeline
-          ? 'Audio complet téléchargé ; seul l\'extrait choisi sera joué (' + fmtTime(end - start) + ' sur ' + fmtTime(info.duration) + ').'
-          : 'Fichier audio complet téléchargé — ajuste le début/fin dans l\'éditeur si besoin.';
-    } catch (e) {
-      prog.textContent = 'Téléchargement impossible : ' + e.message + ' — vérifie le lien, ta connexion, et réessaie.';
-    } finally {
-      busy = false;
-    }
-  } });
-
-  const previewBtn = el('button', { text: '▶ Écouter', onclick: () => {
-    if (!dl) { prog.textContent = 'Télécharge d\'abord l\'extrait.'; return; }
-    play({
-      id: uid(), name: nameIn.value || 'YouTube', path: dl.path, volume: 100, plays: 0,
-      norm: 1, favorite: false, shortcut: null,
-      trimStart: dl.sectioned ? 0 : dl.start,
-      trimEnd: dl.sectioned ? null : dl.end,
-      fadeIn: 0, fadeOut: 0, addedAt: 0, categoryId: null,
-    }, { monitorOnly: true, preview: true });
-  } });
-
-  modal('Importer depuis YouTube', [
-    field('Lien YouTube', el('div', { class: 'row' }, urlIn, analyzeBtn)),
-    infoBox,
-    field('Extrait (secondes ou hh:mm:ss)', el('div', { class: 'row' },
-      el('span', { class: 'hint', text: 'Début' }), startIn,
-      el('span', { class: 'hint', text: 'Fin' }), endIn),
-      'Ex. début « 02:15 », fin « 02:28 » pour un extrait de 13 s.'),
-    el('div', { class: 'row' }, dlBtn, previewBtn),
-    prog, bar,
-    field('Nom', nameIn),
-    field('Catégorie', catSel),
-    el('div', { class: 'hint', text: 'Le fichier audio est enregistré dans le dossier « imports » du dossier choisi ci-dessus. Respecte les droits d\'auteur et les conditions de YouTube.' }),
-  ], [
-    { label: 'Fermer', onclick: (c) => c() },
-    { label: 'Ajouter à la bibliothèque', kind: 'primary', onclick: (c) => {
-      if (!dl) { toast('Télécharge d\'abord l\'extrait.', 'warn'); return; }
-      const s = {
-        id: uid(),
-        name: nameIn.value.trim() || (info && info.title) || 'YouTube',
-        path: dl.path,
-        categoryId: catSel.value || null,
-        volume: 100, addedAt: Date.now(), plays: 0,
-        favorite: false, norm: 1, shortcut: null,
-        trimStart: dl.sectioned ? 0 : dl.start,
-        trimEnd: dl.sectioned ? null : dl.end,
-        fadeIn: 0, fadeOut: 0,
-      };
-      cfg.sounds.push(s);
-      save(); renderAll(); c();
-      toast('Son YouTube ajouté : ' + dl.path);
-    } },
-  ], { onClose: () => { if (offProg) offProg(); } });
-}
-
 // ================================================================ demarrage
 async function init() {
+  // Telemetrie memoire periodique : performance.memory (Chromium) permet de
+  // correlER un crash renderer (-1/143) avec une saturation du heap —
+  // indice cle pour trancher OOM vs crash de la couche audio Windows.
+  setInterval(() => {
+    try {
+      const m = performance.memory;
+      if (m) uiLog('heap=' + Math.round(m.usedJSHeapSize / 1048576) + '/' + Math.round(m.jsHeapSizeLimit / 1048576) + ' Mo');
+    } catch {}
+  }, 60000);
   window.sf.getVersion().then((v) => { const e = $('#appVersion'); if (e) e.textContent = 'v' + v; }).catch(() => {});
   const saved = await window.sf.loadConfig();
   cfg = normalizeCfg(saved);
@@ -1783,13 +1337,16 @@ async function init() {
   SORTS.forEach(([v, l]) => sortSel.append(el('option', { value: v, text: l, selected: v === cfg.settings.sort })));
   const catSortSel = $('#catSort');
   CAT_SORTS.forEach(([v, l]) => catSortSel.append(el('option', { value: v, text: l, selected: v === cfg.settings.catSort })));
-  catSortSel.addEventListener('change', () => { cfg.settings.catSort = catSortSel.value; save(); renderSidebar(); });
+  catSortSel.addEventListener('change', () => { cfg.settings.catSort = catSortSel.value; save(); renderAll(); });
   sortSel.addEventListener('change', () => { cfg.settings.sort = sortSel.value; save(); renderGrid(); });
   const groupCat = $('#groupCat');
   groupCat.checked = !!cfg.settings.groupByCat;
   groupCat.addEventListener('change', () => { cfg.settings.groupByCat = groupCat.checked; save(); renderAll(); });
-  $('#search').addEventListener('input', renderGrid);
-  $('#addBtn').addEventListener('click', async () => { const p = await window.sf.pickFiles(); if (p.length) addPaths(p); });
+  // Debounce : chaque frappe reconstruisait tout le grid (filtre + tri +
+  // DOM) -> jank clavier sur une grosse bibliotheque.
+  let searchT = null;
+  $('#search').addEventListener('input', () => { clearTimeout(searchT); searchT = setTimeout(renderGrid, 120); });
+  $('#addBtn').addEventListener('click', async () => { try { const p = await window.sf.pickFiles(); if (p.length) await addPaths(p); } catch (e) { logErr('pickFiles', e); } });
   $('#ytBtn').addEventListener('click', youtubeModal);
   $('#recBtn').addEventListener('click', () => recorderModal().catch((e) => toast('Enregistreur : ' + e.message, 'warn')));
   $('#addCat').addEventListener('click', newCategory);
@@ -1799,7 +1356,7 @@ async function init() {
   // menu application (F11)
   window.sf.onMenuAction(async (a) => {
     try {
-      if (a === 'add') { const p = await window.sf.pickFiles(); if (p.length) addPaths(p); }
+      if (a === 'add') { const p = await window.sf.pickFiles(); if (p.length) addPaths(p).catch((e) => logErr('addPaths', e)); }
       else if (a === 'youtube') youtubeModal();
       else if (a === 'recorder') await recorderModal();
       else if (a === 'export') exportConfig();
@@ -1807,7 +1364,7 @@ async function init() {
       else if (a === 'settings') { await refreshDevices(false); settingsModal(); }
       else if (a === 'stop') stopAll(false);
       else if (a === 'search') { const i = $('#search'); i.focus(); i.select(); }
-      else if (a === 'group') { cfg.settings.groupByCat = !cfg.settings.groupByCat; save(); renderAll(); }
+      else if (a === 'group') { cfg.settings.groupByCat = !cfg.settings.groupByCat; save(); const gc = $('#groupCat'); if (gc) gc.checked = !!cfg.settings.groupByCat; renderAll(); }
       else if (a.startsWith('view:')) { const v = a.slice(5); cfg.ui.cat = ['all', 'fav', 'none'].includes(v) || cfg.categories.some((c) => c.id === v) ? v : 'all'; save(); renderAll(); }
       else if (a === 'about') {
         const v = await window.sf.getVersion().catch(() => '?');
@@ -1839,28 +1396,60 @@ async function init() {
   });
   document.addEventListener('click', () => $('#ctxmenu').classList.remove('on'));
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') $('#ctxmenu').classList.remove('on'); });
-  window.addEventListener('focus', checkMissing);
+  // Debounce : chaque focus relancait un scan complet de tous les chemins
+  // (jusqu'a 5000, par lots de 200 sequentiels) — un partage reseau
+  // injoignable gelait les badges sans timeout.
+  let checkTimer = null;
+  window.addEventListener('focus', () => {
+    clearTimeout(checkTimer);
+    checkTimer = setTimeout(() => checkMissing().catch((e) => logErr('checkMissing', e)), 400);
+  });
   $('#cableBannerBtn').addEventListener('click', () => showCableScreen());
   // devicechange peut spammer (casque, bluetooth...) : debounce puis re-resolution des peripheriques
   let devTimer = null;
   navigator.mediaDevices.addEventListener('devicechange', () => {
     clearTimeout(devTimer);
     devTimer = setTimeout(async () => {
+      try {
       const s = cfg.settings;
       const prev = { cable: s.cableId, mon: s.monId, mic: s.micId };
       const hadCable = cablePresent();
+      // Instantane des entrees AVANT refresh : needMic ne doit tirer que
+      // si la liste a change (micro rebranche), pas a chaque devicechange
+      // (casque BT, HDMI...) — sinon chaque evenement coupait les sons
+      // en cours via teardownAudio et spamait « Micro inaccessible ».
+      const prevInp = new Set((audio.devices.inp || []).map((d) => d.deviceId));
       await refreshDevices(false);
+      // Forensique crash -1/143 : tracer les transitions de peripheriques —
+      // un device qui disparait peut preceder de quelques secondes le crash
+      // AudioContext ; sans cette ligne le log ne montre pas le déclencheur.
+      if (s.cableId !== prev.cable || s.monId !== prev.mon || s.micId !== prev.mic) {
+        uiLog('devicechange: cable=' + (prev.cable || 'defaut') + '->' + (s.cableId || 'defaut') +
+          ' mon=' + (prev.mon || 'defaut') + '->' + (s.monId || 'defaut') +
+          ' mic=' + (prev.mic || 'defaut') + '->' + (s.micId || 'defaut'));
+      }
       resolveDevices();
       updateCableUi();
       // ne reconstruit les sorties que si un peripherique configure a disparu
-      if (s.cableId !== prev.cable || s.monId !== prev.mon || s.micId !== prev.mic) await applyAudio();
+      // — ou si le micro requis est mort : au rebranchement USB l'endpointId
+      // Windows est stable, donc micId ne change pas et sans cette condition
+      // le micro restait coupe jusqu'au prochain changement reel.
+      const inpNow = audio.devices.inp || [];
+      const inpChanged = inpNow.length !== prevInp.size || inpNow.some((d) => !prevInp.has(d.deviceId));
+      // Candidat micro plausible : micro configure OU vrai peripherique
+      // non virtuel — jamais sur 'default'/virtuel seul (larsen CABLE).
+      const micCandidate = (s.micId && s.micId !== 'default') ||
+        inpNow.some((d) => d.deviceId !== 'default' && !VIRTUAL_RE.test(d.label || ''));
+      const needMic = (s.micMix || s.autoSwitchMic) && !audio.micStream && inpChanged && micCandidate;
+      if (s.cableId !== prev.cable || s.monId !== prev.mon || s.micId !== prev.mic || needMic) await applyAudio().catch((e) => logErr('applyAudio', e));
       // Cable branche/installé a chaud : diffusion + bascule micro sans relancer l'app
       if (!hadCable && cablePresent()) {
-        await applyAudio();
+        await applyAudio().catch((e) => logErr('applyAudio', e));
         window.sf.audioAutoSetup({ enabled: s.autoSwitchMic, cableLabel: s.cableLabel }).then((r) => {
           if (r && r.changed) toast('Entrée micro basculée sur ' + r.device + ' (restaurée à la fermeture).');
-        });
+        }).catch((e) => logErr('audioAutoSetup', e));
       }
+      } catch (e) { logErr('devicechange', e); }
     }, 500);
   });
 
@@ -1879,12 +1468,18 @@ async function init() {
     const paths = [...e.dataTransfer.files].map((f) => window.sf.pathForFile(f)).filter(Boolean);
     if (paths.length) addPaths(paths).catch((e) => logErr('addPaths', e));
   });
+  // dragend/blur : un drag annule hors fenetre peut desequilibrer les
+  // dragleave -> overlay fige (cosmetique, mais evitons-le).
+  window.addEventListener('dragend', () => { depth = 0; overlay.classList.remove('on'); });
+  window.addEventListener('blur', () => { depth = 0; overlay.classList.remove('on'); });
 
   // Bibliotheque vide (premier lancement) : injecter les sons par defaut bundled dans l'exe.
   if (!cfg.sounds.length && window.sf.seedSounds) {
-    const defs = await window.sf.seedSounds();
+    const raw = await window.sf.seedSounds().catch((e) => { logErr('seedSounds', e); return null; });
+    const defs = Array.isArray(raw) ? raw : [];
     const now = Date.now();
     defs.forEach((d, i) => {
+      if (cfg.sounds.length >= 5000) return;
       cfg.sounds.push({
         id: uid(), name: d.name, path: d.path, categoryId: null,
         volume: 100, addedAt: now + i, plays: 0,
@@ -1907,11 +1502,22 @@ async function init() {
   if (cablePresent()) window.sf.audioAutoSetup({ enabled: cfg.settings.autoSwitchMic, cableLabel: cfg.settings.cableLabel }).then((r) => {
     if (r && r.changed) toast('Entrée micro basculée sur ' + r.device + ' (restaurée à la fermeture).');
     else if (r && !r.ok) console.warn('bascule micro auto :', r.err);
-  });
+  }).catch((e) => logErr('audioAutoSetup', e));
   window.sf.onMicWatchOff && window.sf.onMicWatchOff(() => {
     toast('Entrée micro modifiée pendant la session — surveillance auto suspendue (réglages → surveillance micro).', 'warn');
   });
+  window.sf.onPowerResume && window.sf.onPowerResume(() => {
+    // Reveil systeme : peripheriques re-enumeres sans devicechange fiable.
+    // Delai : les drivers audio/USB/Bluetooth peuvent mettre >1 s a se
+    // re-initialiser — une enumeration prematuree partielle effacerait
+    // cableId/monId (resolveDevices) et casserait le routage.
+    setTimeout(() => {
+      refreshDevices(false).then(() => { resolveDevices(); updateCableUi(); })
+        .catch((e) => logErr('powerResume', e));
+    }, 2500);
+  });
   window.sf.onShortcut((key) => {
+    uiLog('shortcut recu: ' + key); // forensique : distingue « jamais enregistre » de « joue mais muet »
     if (key === '__stop__') { stopAll(false); return; }
     const s = cfg.sounds.find((x) => x.id === key);
     if (s) play(s);
@@ -1924,4 +1530,7 @@ async function init() {
   }
 }
 
-init();
+init().catch((e) => {
+  logErr('init', e);
+  try { toast('Initialisation incomplète : ' + (e && e.message), 'warn'); } catch {}
+});

@@ -2,7 +2,7 @@
 <html lang="fr">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self' blob:; base-uri 'none'; form-action 'none';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'none';">
 <title>SoundFart</title>
 <link rel="stylesheet" href="style.css">
 </head>
@@ -16,7 +16,7 @@
     <button id="addCat" class="ghost wide">＋ Nouvelle catégorie</button>
     <div class="spacer"></div>
     <button id="recBtn" class="ghost wide">🎙 Enregistreur</button>
-    <button id="openSettings" class="ghost wide">⚙ Réglages audio</button>
+    <button id="openSettings" class="ghost wide">⚙ Paramètres</button>
   </aside>
 
   <main>
@@ -47,6 +47,11 @@
 <div id="ctxmenu"></div>
 <div id="toast"></div>
 <script src="../lib/audio-utils.js"></script>
+<script src="normalize.js"></script>
+<script src="edit-sound.js"></script>
+<script src="settings.js"></script>
+<script src="recorder.js"></script>
+<script src="youtube.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

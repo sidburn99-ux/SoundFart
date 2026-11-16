@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('sf', {
   expandPaths: (paths) => ipcRenderer.invoke('files:expand', paths),
   readFile: (p) => ipcRenderer.invoke('file:read', p),
   checkFiles: (paths) => ipcRenderer.invoke('file:check', paths),
+  listImports: (dir) => ipcRenderer.invoke('imports:list', dir),
   reveal: (p) => ipcRenderer.invoke('file:reveal', p),
   pathForFile: (file) => webUtils.getPathForFile(file),
   applyShortcuts: (entries) => ipcRenderer.invoke('shortcuts:apply', entries),
@@ -27,6 +28,7 @@ contextBridge.exposeInMainWorld('sf', {
   ytEnsure: () => ipcRenderer.invoke('yt:ensure'),
   ytInfo: (url) => ipcRenderer.invoke('yt:info', url),
   ytDownload: (opts) => ipcRenderer.invoke('yt:download', opts),
+  ytCancel: () => ipcRenderer.invoke('yt:cancel'),
   onYtProgress: on('sf:ytprogress'),
   onMenuAction: on('sf:menu'),
   menuState: (s) => ipcRenderer.send('menu:state', s),
@@ -40,4 +42,5 @@ contextBridge.exposeInMainWorld('sf', {
   onTapDead: on('sf:tapDead'),
   onTapPcm: on('sf:tapPcm'),
   onMicWatchOff: on('sf:micWatchOff'),
+  onPowerResume: on('sf:powerResume'),
 });

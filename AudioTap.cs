@@ -36,7 +36,10 @@ internal static class AudioTap
     private static readonly Guid IID_IAudioCaptureClient = new Guid("C8ADBD64-E71E-48a0-A4DE-185C395CD317");
     private static readonly Guid IID_IAudioRenderClient = new Guid("F294ACFC-3146-4483-A7BF-ADDCA7C260E2");
 
-    [DllImport("ole32.dll")] private static extern void PropVariantClear(ref PropVariant pvar);
+    // PROPVARIANT natif = 24 octets x64 : le marshaling par valeur d'une
+    // struct sous-dimensionnee corrompt la pile. IntPtr alloue a la place ;
+    // GetValue est un out-param (pas besoin de PropVariantInit, absent d'ole32).
+    [DllImport("ole32.dll")] private static extern int PropVariantClear(IntPtr pvar);
 
     // ------------------------- COM -------------------------
     private enum DataFlow { Render = 0, Capture = 1, All = 2 }
@@ -73,18 +76,11 @@ internal static class AudioTap
     {
         int GetCount(out int cProps);
         int GetAt(int iProp, out PropertyKey pkey);
-        int GetValue(ref PropertyKey key, out PropVariant pv);
+        int GetValue(ref PropertyKey key, IntPtr pv);
     }
 
     [StructLayout(LayoutKind.Sequential, Pack = 4)]
     private struct PropertyKey { public Guid fmtid; public int pid; }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct PropVariant
-    {
-        public ushort vt; public ushort wReserved1; public ushort wReserved2; public ushort wReserved3;
-        public IntPtr pointer;
-    }
 
     [Guid("1CB9AD4C-DBFA-4c32-B178-C2F568A703B2"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     private interface IAudioClient
@@ -142,25 +138,48 @@ internal static class AudioTap
             int subTag = f.tag;
             if (f.tag == unchecked((short)0xFFFE))
             {
-                // WAVEFORMATEXTENSIBLE : SubFormat GUID a l'offset 24, son premier ushort = tag
+                // WAVEFORMATEXTENSIBLE : cbSize a l'offset 16 doit valoir >= 22
+                // avant de lire le SubFormat GUID a l'offset 24 (sinon lecture
+                // hors limites sur un format malforme).
+                int cbSize = Marshal.ReadInt16(p, 16);
+                if (cbSize < 22) throw new Exception("WAVEFORMATEXTENSIBLE tronque (cbSize " + cbSize + ")");
                 subTag = Marshal.ReadInt16(p, 24);
             }
             f.isFloat = subTag == 3;
             if (subTag != 1 && subTag != 3) throw new Exception("format audio non supporte (tag " + subTag + ", bits " + f.bits + ", canaux " + f.channels + ")");
-            if (f.bits != 16 && f.bits != 32) throw new Exception("profondeur " + f.bits + " bits non supportee");
+            if (f.isFloat && f.bits != 32) throw new Exception("float " + f.bits + " bits non supporte (seul float32 est gere)");
+            if (!f.isFloat && f.bits != 16 && f.bits != 24 && f.bits != 32) throw new Exception("profondeur " + f.bits + " bits non supportee");
+            // channels/rate/blockAlign doivent etre > 0 : blockAlign == channels*x
+            // passe avec channels=0/blockAlign=0 -> DivideByZero ou chan[-1] plus bas.
+            if (f.channels < 1 || f.rate < 1 || f.blockAlign < 1)
+                throw new Exception("format audio invalide (canaux " + f.channels + ", rate " + f.rate + ", blockAlign " + f.blockAlign + ")");
             // blockAlign doit correspondre a channels * bits/8 : sinon les canaux
             // seraient lus decales (padding/24-in-32) -> audio corrompu.
             if (f.blockAlign != f.channels * (f.bits / 8))
                 throw new Exception("blockAlign " + f.blockAlign + " != " + f.channels + " canaux x " + (f.bits / 8) + " o");
+            // bytesPerSec alimente maxQueued (file render) : a 0 la file serait
+            // toujours jugee pleine -> tout le backlog jete -> silence sans erreur.
+            if (f.bytesPerSec < 1)
+                throw new Exception("format audio invalide (bytesPerSec " + f.bytesPerSec + ")");
             f.frameBytes = f.blockAlign;
             return f;
         }
 
         public bool SameAs(Fmt o)
         {
-            return tag == o.tag && channels == o.channels && rate == o.rate && bits == o.bits && blockAlign == o.blockAlign;
+            // isFloat fait partie de l'identite : deux WAVEFORMATEXTENSIBLE
+            // (tag 0xFFFE) int32 vs float32 ont le meme tag/channels/rate/bits
+            // mais des echantillons differents — sans ce test convert=false
+            // copierait des int32 comme des float32.
+            return tag == o.tag && channels == o.channels && rate == o.rate && bits == o.bits && blockAlign == o.blockAlign && isFloat == o.isFloat;
         }
     }
+
+    // Sleep(4) est arrondi a ~15,6 ms par le timer Windows par defaut : sans
+    // timeBeginPeriod(1) le drain WASAPI tourne ~4x trop lent pour la periode
+    // de rendu (~10 ms) — latence et risk de sous-alimentation du cable.
+    [DllImport("winmm.dll")] private static extern uint timeBeginPeriod(uint uPeriod);
+    [DllImport("winmm.dll")] private static extern uint timeEndPeriod(uint uPeriod);
 
     // Decode un paquet en float[] interleave, puis reechantillonne + reencode vers dst.
     private static byte[] Convert(byte[] src, Fmt sf, Fmt df)
@@ -184,6 +203,13 @@ internal static class AudioTap
                 float v;
                 if (sf.isFloat) v = BitConverter.ToSingle(src, p);
                 else if (sf.bits == 16) v = BitConverter.ToInt16(src, p) / 32768f;
+                else if (sf.bits == 24)
+                {
+                    // PCM 24 bits little-endian, non aligne : 3 octets signes.
+                    int raw = src[p] | (src[p + 1] << 8) | (src[p + 2] << 16);
+                    if ((raw & 0x800000) != 0) raw |= unchecked((int)0xFF000000); // sign-extend
+                    v = raw / 8388608f;
+                }
                 else v = BitConverter.ToInt32(src, p) / 2147483648f;
                 chan[c][i] = v;
             }
@@ -215,35 +241,66 @@ internal static class AudioTap
             for (int c = 0; c < dCh; c++) map[c].Add(new KeyValuePair<int, float>(Math.Min(c, sCh - 1), 1f));
         }
 
-        // reechantillonnage lineaire src.rate -> df.rate
+        // reechantillonnage src.rate -> df.rate, par canal source.
+        // Decimation (ratio > 1) : moyenne boite sur la fenetre couverte par
+        // chaque echantillon de sortie — reduit l'aliasing par rapport a une
+        // interpolation ponctuelle (ex. 96 -> 48 kHz). Upsampling : interpolation
+        // lineaire, comportement historique conserve.
         double ratio = (double)sf.rate / df.rate;
         int dFrames = (int)Math.Ceiling(sFrames / ratio);
+        var rchan = new float[sCh][];
+        for (int c = 0; c < sCh; c++)
+        {
+            var dst = new float[dFrames];
+            if (ratio > 1.0001)
+            {
+                for (int i = 0; i < dFrames; i++)
+                {
+                    int a = (int)(i * ratio);
+                    int b = Math.Min((int)((i + 1) * ratio), sFrames);
+                    if (b <= a) b = Math.Min(a + 1, sFrames);
+                    double acc = 0;
+                    for (int j = a; j < b; j++) acc += chan[c][j];
+                    dst[i] = (float)(acc / (b - a));
+                }
+            }
+            else
+            {
+                for (int i = 0; i < dFrames; i++)
+                {
+                    double pos = i * ratio;
+                    int i0 = (int)pos;
+                    double frac = pos - i0;
+                    int i1 = Math.Min(i0 + 1, sFrames - 1);
+                    if (i0 >= sFrames) i0 = sFrames - 1;
+                    dst[i] = (float)(chan[c][i0] * (1 - frac) + chan[c][i1] * frac);
+                }
+            }
+            rchan[c] = dst;
+        }
         var outBuf = new byte[dFrames * dFrameBytes];
         int dSamplesPer = df.bits / 8;
         for (int i = 0; i < dFrames; i++)
         {
-            double pos = i * ratio;
-            int i0 = (int)pos;
-            double frac = pos - i0;
-            int i1 = Math.Min(i0 + 1, sFrames - 1);
-            if (i0 >= sFrames) i0 = sFrames - 1;
             int off = i * dFrameBytes;
             for (int c = 0; c < dCh; c++)
             {
                 float v = 0f;
-                foreach (var kv in map[c])
-                {
-                    int sc = kv.Key;
-                    v += (float)(chan[sc][i0] * (1 - frac) + chan[sc][i1] * frac) * kv.Value;
-                }
+                foreach (var kv in map[c]) v += rchan[kv.Key][i] * kv.Value;
                 if (v > 1f) v = 1f; else if (v < -1f) v = -1f; // clamp (somme downmix + float)
                 int p = off + c * dSamplesPer;
                 if (df.isFloat) Buffer.BlockCopy(BitConverter.GetBytes(v), 0, outBuf, p, 4);
-                else
+                else if (df.bits == 16) Buffer.BlockCopy(BitConverter.GetBytes((short)(v * 32767f)), 0, outBuf, p, 2);
+                else if (df.bits == 24)
                 {
-                    if (df.bits == 16) Buffer.BlockCopy(BitConverter.GetBytes((short)(v * 32767f)), 0, outBuf, p, 2);
-                    else Buffer.BlockCopy(BitConverter.GetBytes((int)(v * 2147483647f)), 0, outBuf, p, 4);
+                    // PCM 24 bits little-endian : stride 3 octets — ecrire un int32
+                    // ici debordait du buffer et corrompait le canal suivant.
+                    int s = (int)(v * 8388607f);
+                    outBuf[p] = (byte)s;
+                    outBuf[p + 1] = (byte)(s >> 8);
+                    outBuf[p + 2] = (byte)(s >> 16);
                 }
+                else Buffer.BlockCopy(BitConverter.GetBytes((int)(v * 2147483647f)), 0, outBuf, p, 4);
             }
         }
         return outBuf;
@@ -252,21 +309,25 @@ internal static class AudioTap
     // ------------------------- utilitaires -------------------------
     private static string DeviceName(IMMDevice dev)
     {
+        // PROPVARIANT alloue en memoire non geree (24 o couvre x64 et x86) :
+        // vt a l'offset 0, pointeur de la variante a l'offset 8.
+        IntPtr pv = Marshal.AllocCoTaskMem(24);
+        Marshal.WriteInt16(pv, 0, 0); // vt = VT_EMPTY : si GetValue echoue, Clear est un no-op (AllocCoTaskMem ne zero pas)
         try
         {
             IPropertyStore store;
             if (dev.OpenPropertyStore(STGM_READ, out store) != 0) return "";
             PropertyKey key = new PropertyKey { fmtid = new Guid("a45c254e-df1c-4efd-8020-67d146a850e0"), pid = 14 };
-            PropVariant pv = new PropVariant();
-            try
+            if (store.GetValue(ref key, pv) != 0) return "";
+            if (Marshal.ReadInt16(pv, 0) == 31) // VT_LPWSTR
             {
-                if (store.GetValue(ref key, out pv) != 0) return "";
-                if (pv.vt == 31 && pv.pointer != IntPtr.Zero) return Marshal.PtrToStringUni(pv.pointer) ?? "";
-                return "";
+                IntPtr bstr = Marshal.ReadIntPtr(pv, 8);
+                if (bstr != IntPtr.Zero) return Marshal.PtrToStringUni(bstr) ?? "";
             }
-            finally { PropVariantClear(ref pv); } // libere le BSTR (VT_LPWSTR) alloue par le property store
+            return "";
         }
         catch { return ""; }
+        finally { PropVariantClear(pv); Marshal.FreeCoTaskMem(pv); } // libere le BSTR alloue par le store
     }
 
     private static T Com<T>(string clsid) where T : class
@@ -308,7 +369,24 @@ internal static class AudioTap
     // ------------------------- boucle -------------------------
     // pcmMode : au lieu de reinjecter dans le cable, ecrit du PCM float32 stereo 48 kHz
     //           sur stdout (recupere par SoundFart pour l'enregistreur, sans passer par le cable).
-    private static int Run(IMMDeviceEnumerator en, string cableName, int parentPid, double seconds, string srcName, bool pcmMode)
+    // Contexte d'un flux audio initialise : clients COM, formats negocies,
+    // etat de conversion. Un TapCtx n'est valable que tant que ses peripheriques
+    // vivent — apres DEVICE_INVALIDATED on n'en reutilise JAMAIS un morceau.
+    private sealed class TapCtx
+    {
+        public IAudioClient src, dst;
+        public IAudioCaptureClient cap;
+        public IAudioRenderClient ren;
+        public Fmt sf, df;
+        public bool convert;
+        public uint dstBufFrames;
+    }
+
+    // Init complet : resolution des peripheriques (par nom ou defaut), activation
+    // IAudioClient, GetMixFormat, Initialize, GetService, Start. Appele au demarrage
+    // ET a chaque reconnexion a chaud — chaque appel repart de zero (nouveaux
+    // devices, nouveaux clients COM, buffers reinitialises).
+    private static TapCtx InitTap(IMMDeviceEnumerator en, string cableName, string srcName, bool pcmMode)
     {
         // source : loopback du peripherique de sortie par defaut (ou srcName si fourni)
         IMMDevice srcDev = null;
@@ -336,10 +414,15 @@ internal static class AudioTap
         }
         int hr;
         IAudioClient src = ActivateAudio(srcDev);
-        IntPtr srcFmtPtr;
-        hr = src.GetMixFormat(out srcFmtPtr);
-        if (hr != 0 || srcFmtPtr == IntPtr.Zero) throw new Exception("GetMixFormat source echoue");
-        Fmt sf = Fmt.FromPtr(srcFmtPtr);
+        IntPtr srcFmtPtr = IntPtr.Zero;
+        Fmt sf;
+        try
+        {
+            hr = src.GetMixFormat(out srcFmtPtr);
+            if (hr != 0 || srcFmtPtr == IntPtr.Zero) throw new Exception("GetMixFormat source echoue");
+            sf = Fmt.FromPtr(srcFmtPtr); // peut throw -> le finally libere le format
+        }
+        catch { if (srcFmtPtr != IntPtr.Zero) Marshal.FreeCoTaskMem(srcFmtPtr); throw; }
 
         // destination : peripherique cable (ignoree en mode pcm : sortie = stdout)
         IMMDevice dstDev = null;
@@ -358,13 +441,20 @@ internal static class AudioTap
             dstDev = FindRender(en, cableName);
             // Garde anti-boucle : si la source EST le cable, on reinjecterait notre propre flux.
             string srcId = null, dstId = null;
-            try { srcDev.GetId(out srcId); dstDev.GetId(out dstId); } catch {}
+            try { srcDev.GetId(out srcId); dstDev.GetId(out dstId); }
+            catch (Exception gidEx) { Console.Error.WriteLine("AudioTap: GetId: " + gidEx.Message); } // garde anti-boucle degradee, pas sautee en silence
             if (srcId != null && srcId == dstId)
                 throw new Exception("la source est identique au cable « " + cableName + " » (boucle audio)");
             dst = ActivateAudio(dstDev);
-            hr = dst.GetMixFormat(out dstFmtPtr);
-            if (hr != 0 || dstFmtPtr == IntPtr.Zero) throw new Exception("GetMixFormat cable echoue");
-            df = Fmt.FromPtr(dstFmtPtr);
+            Fmt tmpDf;
+            try
+            {
+                hr = dst.GetMixFormat(out dstFmtPtr);
+                if (hr != 0 || dstFmtPtr == IntPtr.Zero) throw new Exception("GetMixFormat cable echoue");
+                tmpDf = Fmt.FromPtr(dstFmtPtr);
+            }
+            catch { if (dstFmtPtr != IntPtr.Zero) Marshal.FreeCoTaskMem(dstFmtPtr); dstFmtPtr = IntPtr.Zero; throw; }
+            df = tmpDf;
         }
         // libere srcFmtPtr apres l'init (gere dans le finally d'Initialize)
 
@@ -386,7 +476,8 @@ internal static class AudioTap
         Console.Error.WriteLine("AudioTap: init loopback hr=0x" + hr.ToString("X8"));
         if (hr != 0) throw new Exception("init loopback echoue (0x" + hr.ToString("X8") + ")");
         uint srcBufFrames;
-        src.GetBufferSize(out srcBufFrames);
+        int srcSizeHr = src.GetBufferSize(out srcBufFrames);
+        if (srcSizeHr != 0) throw new Exception("GetBufferSize source echoue (0x" + srcSizeHr.ToString("X8") + ")");
         Console.Error.WriteLine("AudioTap: srcBuf=" + srcBufFrames);
 
         // init rendu cable (ignore en mode pcm : pas de destination, stdout a la place)
@@ -401,7 +492,8 @@ internal static class AudioTap
             finally { Marshal.FreeCoTaskMem(dstFmtPtr); dstFmtPtr = IntPtr.Zero; }
             Console.Error.WriteLine("AudioTap: init cable hr=0x" + hr.ToString("X8"));
             if (hr != 0) throw new Exception("init cable echoue (0x" + hr.ToString("X8") + ")");
-            dst.GetBufferSize(out dstBufFrames);
+            int dstSizeHr = dst.GetBufferSize(out dstBufFrames);
+            if (dstSizeHr != 0) throw new Exception("GetBufferSize cable echoue (0x" + dstSizeHr.ToString("X8") + ")");
             Console.Error.WriteLine("AudioTap: dstBuf=" + dstBufFrames);
         }
 
@@ -425,12 +517,36 @@ internal static class AudioTap
         Console.Error.WriteLine("AudioTap: Start...");
         hr = src.Start();
         Console.Error.WriteLine("AudioTap: src.Start hr=0x" + hr.ToString("X8"));
+        if (hr != 0) { try { src.Stop(); } catch {} throw new Exception("src.Start echoue (0x" + hr.ToString("X8") + ")"); }
         if (!pcmMode)
         {
             hr = dst.Start();
             Console.Error.WriteLine("AudioTap: dst.Start hr=0x" + hr.ToString("X8"));
+            if (hr != 0) { try { src.Stop(); dst.Stop(); } catch {} throw new Exception("dst.Start echoue (0x" + hr.ToString("X8") + ")"); }
         }
         Console.Error.WriteLine("AudioTap: capture demarree" + (pcmMode ? " (mode pcm -> stdout)" : ""));
+        return new TapCtx { src = src, dst = dst, cap = cap, ren = ren, sf = sf, df = df, convert = convert, dstBufFrames = dstBufFrames };
+    }
+
+    private static int Run(IMMDeviceEnumerator en, string cableName, int parentPid, double seconds, string srcName, bool pcmMode)
+    {
+        // Init avec retries : peripherique pas encore pret (driver en cours de
+        // chargement, devicechange en cours) -> on reessaie avant d'abandonner.
+        TapCtx t = null;
+        Exception lastInitErr = null;
+        for (int att = 0; att < 5 && t == null; att++)
+        {
+            if (att > 0) Thread.Sleep(500 * att);
+            try { t = InitTap(en, cableName, srcName, pcmMode); }
+            catch (Exception ie) { lastInitErr = ie; Console.Error.WriteLine("AudioTap: init " + (att + 1) + "/5: " + ie.Message); }
+        }
+        if (t == null) throw lastInitErr ?? new Exception("init impossible");
+        IAudioClient src = t.src, dst = t.dst;
+        IAudioCaptureClient cap = t.cap;
+        IAudioRenderClient ren = t.ren;
+        Fmt sf = t.sf, df = t.df;
+        bool convert = t.convert;
+        uint dstBufFrames = t.dstBufFrames;
 
         var queue = new Queue<byte[]>();
         long queuedBytes = 0;
@@ -445,6 +561,13 @@ internal static class AudioTap
         var pcmOut = pcmMode ? new System.IO.BufferedStream(Console.OpenStandardOutput(), 65536) : null;
         long pcmPending = 0;
 
+        timeBeginPeriod(1); // granularity 1 ms pour le Sleep(4) de la boucle
+        // StartTime du parent memorise AVANT la boucle : sinon un PID reutilise
+        // dans la fenetre avant le premier check (500 ms) devenait « parent »
+        // et l'anti-orphelin ne se declenchait jamais.
+        if (parentPid > 0)
+            try { parentStart = System.Diagnostics.Process.GetProcessById(parentPid).StartTime; }
+            catch { parentStart = DateTime.MinValue; } // parent deja mort : le check en boucle tranchera
         while (DateTime.UtcNow < deadline)
         {
             // Parent verifie par TEMPS (toutes les 500 ms), pas par nombre de paquets :
@@ -463,6 +586,9 @@ internal static class AudioTap
             }
 
             // 1) aspirer les paquets disponibles
+            bool wantReconnect = false;
+            int sStreak = 0; // codes S_ consecutifs : borne le spin interne
+            int zeroFrames = 0; // GetBuffer S_OK avec 0 frame : borne le spin interne
             while (true)
             {
                 uint packet;
@@ -472,30 +598,42 @@ internal static class AudioTap
                 if (pkHr < 0)
                 {
                     Console.Error.WriteLine("AudioTap: GetNextPacketSize echoue hr=0x" + pkHr.ToString("X8") + " (peripherique invalide ?)");
+                    if (pkHr == unchecked((int)0x88890004)) { wantReconnect = true; break; } // AUDCLNT_E_DEVICE_INVALIDATED
                     try { src.Stop(); if (dst != null) dst.Stop(); } catch {}
-                    return 2;
+                    try { if (pcmOut != null) { pcmOut.Flush(); pcmOut.Dispose(); } } catch {}
+                    timeEndPeriod(1); return 2;
                 }
-                if (pkHr != 0) continue; // code S_ : rien a faire ce tour
+                if (pkHr != 0) { if (++sStreak > 500) break; if (sStreak == 100) Thread.Sleep(1); continue; } // code S_ : rien a faire ce tour
+                sStreak = 0;
                 if (packet == 0) break;
                 IntPtr data; uint frames; int flags; ulong pos, qpc;
                 int gbHr = cap.GetBuffer(out data, out frames, out flags, out pos, out qpc);
                 if (gbHr < 0)
                 {
                     Console.Error.WriteLine("AudioTap: GetBuffer echoue hr=0x" + gbHr.ToString("X8") + " (peripherique invalide ?)");
+                    if (gbHr == unchecked((int)0x88890004)) { wantReconnect = true; break; } // AUDCLNT_E_DEVICE_INVALIDATED
                     try { src.Stop(); if (dst != null) dst.Stop(); } catch {}
-                    return 2;
+                    try { if (pcmOut != null) { pcmOut.Flush(); pcmOut.Dispose(); } } catch {}
+                    timeEndPeriod(1); return 2;
                 }
-                if (gbHr > 0) continue; // code S_ : pas de donnees a consommer ce tour
-                if (frames == 0) { cap.ReleaseBuffer(0); continue; }
+                if (gbHr > 0) { if (++sStreak > 500) break; if (sStreak == 100) Thread.Sleep(1); continue; } // code S_ : pas de donnees a consommer ce tour
+                sStreak = 0;
+                // frames==0 persistant = driver etat transitoire : sans borne,
+                // la boucle tournait a 100% CPU hors de portee du check parent.
+                if (frames == 0) { cap.ReleaseBuffer(0); if (++zeroFrames > 200) break; continue; }
+                zeroFrames = 0;
                 int bytes = (int)(frames * sf.frameBytes);
                 bool silent = (flags & 0x2) != 0;
                 byte[] buf = new byte[bytes];
                 if (!silent)
                 {
                     Marshal.Copy(data, buf, 0, bytes);
-                    // pic approximatif : max des échantillons float/int16 du 1er canal
+                    // pic approximatif : max des échantillons float/int16 du 1er canal.
+                    // bits==24 : échantillon non aligné de 3 octets — on saute le pic
+                    // (statistique indicative) plutôt que risquer une lecture hors bornes.
                     int spb = sf.bits / 8;
-                    for (int i = 0; i + spb <= bytes && i < frames * sf.frameBytes; i += sf.frameBytes)
+                    bool peakOk = sf.isFloat || sf.bits == 16 || sf.bits == 32;
+                    for (int i = 0; peakOk && i + spb <= bytes && i < frames * sf.frameBytes; i += sf.frameBytes)
                     {
                         long mag;
                         if (sf.isFloat) { float fv = BitConverter.ToSingle(buf, i); mag = (long)(Math.Abs(fv) * 1000000); }
@@ -504,7 +642,8 @@ internal static class AudioTap
                         if (mag > statPeak) statPeak = mag;
                     }
                 }
-                cap.ReleaseBuffer(frames);
+                int rbHr = cap.ReleaseBuffer(frames);
+                if (rbHr < 0) Console.Error.WriteLine("AudioTap: ReleaseBuffer echoue hr=0x" + rbHr.ToString("X8"));
                 statPackets++; if (silent) statSilentPkts++; statBytes += bytes;
                 byte[] outBuf = convert ? Convert(buf, sf, df) : buf;
                 if (outBuf.Length == 0) continue;
@@ -513,13 +652,15 @@ internal static class AudioTap
                     // ecriture immediate sur stdout (le silence est deja des zeros)
                     pcmOut.Write(outBuf, 0, outBuf.Length);
                     pcmPending += outBuf.Length;
-                    if (pcmPending >= 131072) { pcmOut.Flush(); pcmPending = 0; }
+                    if (pcmPending >= 16384) { pcmOut.Flush(); pcmPending = 0; } // ~40 ms a 384 Ko/s
                     statWritten += outBuf.Length;
                     continue;
                 }
-                if (queuedBytes + outBuf.Length > maxQueued)
+                // Depassement : on jette les plus anciens paquets. La boucle
+                // (et non un Dequeue unique) couvre aussi le cas ou un seul
+                // paquet depasse maxQueued — sinon Dequeue sur file vide.
+                while (queue.Count > 0 && queuedBytes + outBuf.Length > maxQueued)
                 {
-                    // depassement : on jette le plus ancien paquet
                     byte[] old = queue.Dequeue();
                     queuedBytes -= old.Length;
                 }
@@ -530,7 +671,11 @@ internal static class AudioTap
 
             uint padNow;
             if (!pcmMode && dst.GetCurrentPadding(out padNow) == 0) statPadding = padNow;
-            if (pcmMode && pcmPending > 0) { pcmOut.Flush(); pcmPending = 0; }
+            // Flush par palier (>=16 Kio), pas a chaque iteration (~4 ms) :
+            // un WriteFile stdout par tour saturait le pipeline IPC sans gain
+            // de latence utile. Le reliquat part au prochain palier ou sur
+            // les chemins de sortie (return 2 / fin de boucle).
+            if (pcmMode && pcmPending >= 16384) { pcmOut.Flush(); pcmPending = 0; }
             if (DateTime.UtcNow - statLast > TimeSpan.FromSeconds(2))
             {
                 statLast = DateTime.UtcNow;
@@ -555,12 +700,22 @@ internal static class AudioTap
                         int takeBytes = takeFrames * df.frameBytes;
                         IntPtr rdata;
                         int rgHr = ren.GetBuffer((uint)takeFrames, out rdata);
-                        if (rgHr != 0)
+                        if (rgHr < 0)
                         {
                             Console.Error.WriteLine("AudioTap: render GetBuffer echoue hr=0x" + rgHr.ToString("X8"));
+                            if (rgHr == unchecked((int)0x88890004)) { wantReconnect = true; break; } // AUDCLNT_E_DEVICE_INVALIDATED
+                            if (rgHr == AUDCLNT_E_BUFFER_TOO_LARGE)
+                            {
+                                // Endpoint partage : le padding a pu changer entre
+                                // GetCurrentPadding et GetBuffer (autre ecrivain).
+                                // Transitoire -> on saute ce tour, pas de mort.
+                                break;
+                            }
                             try { src.Stop(); dst.Stop(); } catch {}
-                            return 2;
+                            try { if (pcmOut != null) { pcmOut.Flush(); pcmOut.Dispose(); } } catch {}
+                            timeEndPeriod(1); return 2;
                         }
+                        if (rgHr > 0) break; // code S_ : pas de buffer ce tour (symetrique au cote capture)
                         if (takeBytes == head.Length)
                         {
                             Marshal.Copy(head, 0, rdata, takeBytes);
@@ -576,11 +731,54 @@ internal static class AudioTap
                             queue.Enqueue(rest);
                             queuedBytes -= takeBytes;
                         }
-                        ren.ReleaseBuffer((uint)takeFrames, 0);
-                        statWritten += takeFrames;
+                        int rb2Hr = ren.ReleaseBuffer((uint)takeFrames, 0);
+                        if (rb2Hr < 0) Console.Error.WriteLine("AudioTap: render ReleaseBuffer echoue hr=0x" + rb2Hr.ToString("X8"));
+                        statWritten += takeBytes; // octets, comme le mode pcm (statWritten += outBuf.Length)
                         spaceBytes -= takeBytes;
                     }
                 }
+            }
+
+            // Reconnexion DEVICE_INVALIDATED — placée APRES le bloc render :
+            // wantReconnect peut etre pose cote capture (GetNextPacketSize/
+            // GetBuffer) OU cote render (ren.GetBuffer). Le test precedent
+            // etait AVANT la section render : un flag pose la n'etait jamais
+            // consomme (reinitialise a chaque iteration) -> invalidation
+            // render jamais geree. La file residuelle est d'abord drainee
+            // vers le render (endpoint distinct, souvent encore vivant),
+            // puis on reconnecte les DEUX clients.
+            if (wantReconnect)
+            {
+                // AUDCLNT_E_DEVICE_INVALIDATED : peripherique retire ou service
+                // audio reinitalise. Arret propre, re-resolution complete (l'id
+                // a pu changer), re-init — borne a 5 tentatives, backoff
+                // 0.5 s -> 2.5 s ; au-dela, echec net (code 2 -> tapDead).
+                try { src.Stop(); if (dst != null) dst.Stop(); } catch {}
+                TapCtx t2 = null;
+                for (int att = 0; att < 5 && t2 == null; att++)
+                {
+                    Thread.Sleep(500 * (att + 1));
+                    try { t2 = InitTap(en, cableName, srcName, pcmMode); }
+                    catch (Exception rex) { Console.Error.WriteLine("AudioTap: reconnexion " + (att + 1) + "/5: " + rex.Message); }
+                }
+                if (t2 == null)
+                {
+                    Console.Error.WriteLine("AudioTap: reconnexion impossible apres 5 tentatives");
+                    try { if (pcmOut != null) { pcmOut.Flush(); pcmOut.Dispose(); } } catch {}
+                    timeEndPeriod(1); return 2;
+                }
+                // Libere les anciens clients COM explicitement : sinon les
+                // sessions WASAPI fantomes persistent jusqu'au GC (device
+                // « encore utilise » transitoirement apres reconnexion).
+                foreach (var old in new object[] { src, dst, cap, ren })
+                    try { if (old != null) Marshal.ReleaseComObject(old); } catch {}
+                src = t2.src; dst = t2.dst; cap = t2.cap; ren = t2.ren;
+                sf = t2.sf; df = t2.df; convert = t2.convert; dstBufFrames = t2.dstBufFrames;
+                maxQueued = (long)(df.bytesPerSec * 0.5); // le format a pu changer (44.1 -> 96 kHz)
+                queue.Clear(); queuedBytes = 0; // buffers de l'ancien format : invalides
+                Console.Error.WriteLine("AudioTap: reconnecte -> " + sf.channels + "ch " + sf.rate + "Hz " + sf.bits + "b -> "
+                    + df.channels + "ch " + df.rate + "Hz " + df.bits + "b" + (convert ? " (conversion)" : " (copie)"));
+                continue; // boucle externe : re-drain avec les nouveaux clients
             }
 
             Thread.Sleep(4);
@@ -589,6 +787,7 @@ internal static class AudioTap
         if (pcmOut != null) { try { pcmOut.Flush(); pcmOut.Dispose(); } catch {} }
         try { src.Stop(); if (dst != null) dst.Stop(); } catch {}
         Console.Error.WriteLine("AudioTap: arret");
+        timeEndPeriod(1);
         return 0;
     }
 
@@ -596,11 +795,20 @@ internal static class AudioTap
     {
         try
         {
+            // stderr en UTF-8 : les noms de peripheriques non-ASCII (accents)
+            // etaient corrompus selon la page de code OEM de la console.
+            Console.OutputEncoding = new System.Text.UTF8Encoding(false);
             string cable = args.Length > 0 ? args[0] : "CABLE Input";
             int parentPid = 0;
-            if (args.Length > 1) int.TryParse(args[1], out parentPid); // non numerique -> 0 = check desactive
+            if (args.Length > 1)
+            {
+                if (!int.TryParse(args[1], out parentPid))
+                    Console.Error.WriteLine("AudioTap: parentPid non numerique (« " + args[1] + " ») — anti-orphelin desactive");
+            } // non numerique -> 0 = check desactive (mais journalise)
             double seconds = 0;
-            if (args.Length > 2 && !double.TryParse(args[2], out seconds))
+            if (args.Length > 2 && (!double.TryParse(args[2], System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out seconds)
+                || double.IsNaN(seconds) || double.IsInfinity(seconds) || seconds < 0))
                 throw new Exception("argument « secondes » invalide : " + args[2]);
             string srcName = args.Length > 3 && args[3].Length > 0 ? args[3] : null;
             bool pcmMode = args.Length > 4 && args[4] == "pcm";

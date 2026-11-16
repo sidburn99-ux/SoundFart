@@ -31,7 +31,7 @@ Pour que Discord entende les sons, il faut un périphérique audio virtuel qui f
 
 ## 3. Configurer SoundFart
 
-Ouvre **⚙ Réglages audio** (barre latérale) :
+Ouvre **⚙ Paramètres** (barre latérale ou menu). Le panneau est organisé comme dans Discord : une **navigation latérale** à gauche (groupes Audio / Bibliothèque / Général) et des sections détaillées à droite — `Sortie audio` (sorties Discord et écoute locale), `Micro & voix` (micro, mixage, bascule automatique, traitement vocal), `Bibliothèque` (normalisation, durée max, imports non ajoutés), `Données & stockage` (dossier des fichiers) et `Général` (raccourci STOP, sauvegarde).
 
 | Réglage | Quoi choisir |
 |---|---|
@@ -42,8 +42,11 @@ Ouvre **⚙ Réglages audio** (barre latérale) :
 | **Bascule micro automatique** | ✅ (recommandé) : à l'ouverture, l'entrée micro Windows passe sur **CABLE Output** ; à la fermeture, ton micro (ex. G930) est restauré automatiquement — uniquement si SoundFart a réellement basculé (ton choix manuel est toujours respecté). Un **garde externe** restaure même après un crash/kill du processus. Le bouton **« Restaurer mon micro Windows »** (section « Récupération micro ») force le retour en cas de blocage. |
 | **Surveillance micro automatique** | ✅ (recommandé) : vérifie périodiquement que l'entrée micro est toujours sur le câble ; si tu changes le micro toi-même (ou via une autre app), la surveillance se **met en pause pour la session** — impossible de distinguer un choix utilisateur d'un changement parasite. |
 | **Dossier de stockage** | Où SoundFart range les fichiers qu'il crée (imports YouTube, enregistrements, extraits MP3). |
+| **Niveaux audio** | **Cible loudness (LUFS)** : le volume perçu visé par la normalisation (-18 LUFS par défaut, réglable de -40 à 0). « Normaliser toute la bibliothèque » (ou « Normaliser ce son » dans l'éditeur) ramène la loudness de chaque son à cette cible **sans dépasser le plafond de pic** (-1 dBFS, avec ~1 dB de marge sous le pic interpolé réel) — les fichiers ne sont jamais modifiés. Plus haut = plus fort, plus bas = plus doux. Mesure 100 % interne en LUFS (aucun téléchargement, l'app reste portable). Le bouton **Tester** joue 1,2 s de bruit au niveau saisi sur ton écoute locale uniquement (rien n'est envoyé sur Discord). « Normaliser toute la bibliothèque » applique la cible saisie et affiche sa progression **dans le panneau**, qui reste ouvert — tu peux cliquer « Appliquer » ou ajuster d'autres réglages pendant ce temps. **« Remettre volume et normalisation à zéro »** (deux clics pour confirmer) remet chaque son à volume 100 % / ×1 — découpes, fondus, favoris, catégories et raccourcis ne sont pas touchés. |
 
 Clique **Appliquer**. Le bandeau en bas de fenêtre affiche les routes actives (`Discord : … · Casque : …`).
+
+> **Après la mise à jour « normalisation loudness »** : les anciens réglages de normalisation (calculés sur le pic) sont remis à ×1 — relance **« Normaliser toute la bibliothèque »** une fois pour recalculer en LUFS. Tes volumes manuels, découpes, favoris et catégories ne sont pas touchés.
 
 ## 4. Configurer Discord
 
@@ -65,8 +68,9 @@ Clique **Appliquer**. Le bandeau en bas de fenêtre affiche les routes actives (
 - **Découper / fondus** : « Modifier » → onde avec repères roses + fondus d'entrée/sortie.
 - **YouTube** : bouton « 📺 YouTube » → colle le lien. **Laisse début/fin vides** pour récupérer l'audio complet, ou précise une timeline (`02:15` ou secondes) pour un extrait. L'extrait est **physiquement découpé en MP3** quand ffmpeg est disponible (téléchargé une fois, ~115 Mo) ; sinon audio complet + découpe logicielle dans l'éditeur.
 - **Couper un son en MP3** : « Modifier » (✎) → règle début/fin → « MP3 de l'extrait » → tu peux remplacer le fichier par le petit MP3.
-- **Enregistreur** : « 🎙 Enregistreur » dans la barre latérale. Tu peux mixer plusieurs sources : **micro**, **audio du PC** (voix Discord, musique — capture système) et **câble SoundFart** (sons + micro mixé). Coche « Audio du PC » pour enregistrer une conversation Discord complète.
-- **Sauvegarde** : ⚙ Réglages → « Exporter la configuration » (récupère tout sauf les fichiers audio ; pour changer de PC, replace les fichiers au même endroit ou utilise « Retrouver le fichier… » sur les cartes marquées).
+- **Enregistreur** : « 🎙 Enregistreur » dans la barre latérale. Tu peux mixer plusieurs sources : **micro**, **audio du PC** (voix Discord, musique — capture système) et **câble SoundFart** (sons + micro mixé). Coche « Audio du PC » pour enregistrer une conversation Discord complète. Pendant la prise, une **jauge de niveau** montre le signal ; à l'arrêt tu peux **écouter la prise avant de sauvegarder** et **la rogner** (champs début/fin → WAV sans perte).
+- **Traitement vocal** : ⚙ Paramètres → Micro & voix → « Traitement vocal » (réduction bruit/écho sur ta voix uniquement, sans toucher aux sons) avec intensité Léger / Normal / Fort / **Max** — si ta voix sonne étouffée, baisse l'intensité.
+- **Sauvegarde** : ⚙ Paramètres → Général → « Exporter la configuration » (récupère tout sauf les fichiers audio ; pour changer de PC, replace les fichiers au même endroit ou utilise « Retrouver le fichier… » sur les cartes marquées).
 
 ## 6. Dépannage
 
@@ -74,7 +78,7 @@ Clique **Appliquer**. Le bandeau en bas de fenêtre affiche les routes actives (
 |---|---|---|
 | Pas de son dans Discord | CABLE Output pas sélectionné dans Discord, ou mauvaise sortie dans SoundFart | Vérifie les deux sens (sections 3 et 4) |
 | « Fichier introuvable » sur une carte | Le fichier a été déplacé/supprimé | Clique le badge ou clic droit → « Retrouver le fichier… » |
-| Fenêtre noire au démarrage | Fichiers `src/` manquants à côté de `main.js` | Vérifie que `index.html`, `style.css`, `app.js` sont dans `src/` |
+| Fenêtre noire au démarrage | Fichiers `src/` manquants à côté de `main.js` | Vérifie que tous les `.js` de `src/` (`app.js`, `normalize.js`, `edit-sound.js`, `settings.js`, `recorder.js`, `youtube.js`, `tap-processor.js`, `voice-gate.js`) sont présents |
 | « Micro inaccessible » | Permission Windows refusée | Paramètres Windows → Confidentialité → Micro |
 | Erreurs techniques | — | `SoundFart-data\soundfart.log` (`%APPDATA%\SoundFart\soundfart.log` en repli) + F12 pour la console |
 

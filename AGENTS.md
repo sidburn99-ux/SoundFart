@@ -21,13 +21,21 @@
 ## Architecture (contraignante)
 
 ```
-main.js          # process main : IPC, fenêtre, audio natif, yt-dlp/ffmpeg, watchdog micro
+main.js          # process main : IPC, fenêtre, config, audio natif, raccourcis, watchdog micro
+main/media-tools.js # ffmpeg (coupe MP3) + yt-dlp : createMediaTools(deps) injectees
 preload.js       # contextBridge : surface API exposée au renderer
-src/app.js       # renderer : UI, moteur Web Audio, enregistreur, réglages, config
+src/app.js       # renderer core : état/config, moteur Web Audio, rendu, init
+src/normalize.js # normalisation LUFS (chargé avant app.js)
+src/edit-sound.js# éditeur de son (trim, fade, volume, norm)
+src/settings.js  # panneau réglages + export/import config
+src/recorder.js  # enregistreur multi-sources
+src/youtube.js   # import YouTube (yt-dlp)
 src/index.html   # page unique (CSP stricte)   ·   src/style.css : thème
 src/tap-processor.js  # AudioWorklet : PCM AudioTap -> graphe audio
+src/voice-gate.js     # AudioWorklet : traitement vocal (filtre + noise gate)
 lib/audio-utils.js    # fonctions pures partagées main/renderer (window.SFUtils)
-test/            # node:test (npm test)
+lib/media-permission.js # décision permissions média (getUserMedia/displayMedia)
+test/            # node:test (npm test) + drivers CDP manuels cdp-*.js (VALIDATION.md)
 AudioEndpoint.cs # bascule micro Windows (compilé csc.exe à la volée)
 AudioTap.cs      # loopback WASAPI -> PCM stdout
 assets/          # icône exe + sons par défaut
@@ -41,7 +49,7 @@ Contraintes à ne pas casser :
 - PCM AudioTap : float32 **stéréo** 48 kHz = **8 octets/frame** — tout découpage aligné (`main.js` tapPcmRem) ; worklet : `outputChannelCount:[2]`, `numberOfInputs:0`, `'flush'` avant `rec.start`.
 - Restauration micro : uniquement si `audio-restore.json` existe — jamais forcer un virtuel→non-virtuel sans lui, jamais écraser un choix manuel.
 - Crash renderer `AudioContext` (exitCode -1/143) : bug connu non résolu — le signaler s'il réapparaît, ne pas le masquer.
-- `yt-dlp`/`ffmpeg` : versions épinglées + SHA-256 ; `runYt` timeout 2 min ; `yt:download` template unique par requête.
+- `yt-dlp`/`ffmpeg` : versions épinglées + SHA-256 (yt-dlp auto-mis à jour ~hebdo vérifiée par hash, `--ignore-config` appliqué) ; `runYt` timeout 2 min ; `yt:download` template unique par requête.
 - `config.json` : écriture atomique + `.bak` ; corrompu → `.broken-<ts>` + fallback `.bak` ; `normalizeCfg` valide/déduplique à l'import.
 
 ## Commandes
@@ -84,7 +92,7 @@ node --check <f>  # syntaxe JS
 - Livraison/release : invoquer le skill `release` (`.devin/skills/release/SKILL.md`) — il exécute la Definition of Done.
 - `suivi.tsv` + `suivi.html` (régénérer via `regen-suivi.ps1`) : à jour à chaque changement significatif ; le TSV est la source, le HTML jamais édité à la main.
 - Tout changement de comportement → mettre à jour les docs impactées (`SPECIFICATION.md` pour le technique, `GUIDE.md` pour l'utilisateur, `README.md` si visible) ; jamais de comportement documenté qui n'existe pas.
-- `TECHNICAL_HARDENING_PLAN.md` : vidé ou archivé en fin de mission hardening — ne pas le laisser pourrir avec des constats obsolètes.
+- `reliability/FINDINGS.md` : registre canonique des anomalies de la campagne de fiabilisation (terminée le 15/11/2026) — archivé, ne pas le faire grossir sans nouvelle campagne ; le reste de `reliability/` a été condensé dans `JOURNAL.md`.
 
 ## Pour faire X, lis Y
 
@@ -94,14 +102,15 @@ node --check <f>  # syntaxe JS
 | Architecture et flux | `SPECIFICATION.md` |
 | Utiliser l'application | `GUIDE.md` |
 | État d'avancement et tests | `suivi.tsv` |
+| Historique, campagnes, validations | `JOURNAL.md` |
+| Registre des anomalies (campagne close) | `reliability/FINDINGS.md` |
 | Tester sur VM Windows propre | `TESTS_VM.md` |
-| Historique des versions | `JOURNAL.md`, `JOURNAL_DE_DEVELOPMENT.md` |
-| Reprendre un chantier hardening | `TECHNICAL_HARDENING_PLAN.md` |
+| Valider l'audio sur matériel réel | `VALIDATION.md` |
 | Mentions légales | `THIRD-PARTY-NOTICES` |
 
 ## Ne pas lire par défaut
 
-`JOURNAL.md`, `JOURNAL_DE_DEVELOPMENT.md`, `suivi.html` (généré), `TECHNICAL_HARDENING_PLAN.md` (sauf mission hardening), `dist/` (sauf pour vérifier le build).
+`JOURNAL.md`, `suivi.html` (généré), `reliability/` (campagne close), `dist/` (sauf pour vérifier le build).
 
 ## Definition of Done
 
