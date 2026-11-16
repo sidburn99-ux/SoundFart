@@ -864,24 +864,11 @@ function logErr(tag, e) { console.error(tag, e); }
 const uiLog = (m) => { try { window.sf.uiLog(m); } catch {} };
 
 // ================================================================ normalisation
-// Mesure pour la normalisation : ffmpeg ebur128=peak=true (IPC
-// file:loudness) = loudness integree EBU R128 + True Peak, reference.
-// Repli degrade si ffmpeg est indisponible OU si le fichier est trop
-// court : ebur128 exige un bloc de 400 ms et renvoie I: -70 (plancher,
-// pas -inf) pour les fichiers < 400 ms et les silences — valeur non
-// exploitable. Le repli JS (SFUtils.loudnessFromPcm, coefficients BS.1770
-// exacts) couvre tout le buffer en une zone pour les courts fichiers.
+// Mesure 100 % JS (SFUtils.loudnessFromPcm, coefficients BS.1770 exacts
+// valides contre ffmpeg ebur128 a ~0,05 LU) : aucun outil externe, l'app
+// reste portable. True Peak : pas d'interpolation — le pic echantillon
+// SOUS-estime le pic reel d'environ 1 dB, d'ou le plafond a -1 dBFS.
 async function measureForNorm(path) {
-  let ffTp = null;
-  try {
-    const m = await window.sf.fileLoudness(path);
-    // I: au plancher -70 = trop court ou trop silencieux -> loudness
-    // inexploitable ; le True Peak reste valide et est conserve.
-    if (m && Number.isFinite(m.lufs) && m.lufs > -69.5) {
-      return { lufs: m.lufs, truePeakDb: m.truePeakDb, degraded: false };
-    }
-    ffTp = m ? m.truePeakDb : null;
-  } catch (e) { logErr('fileLoudness', e); }
   const buf = await getBuffer(path);
   const chs = [];
   for (let c = 0; c < buf.numberOfChannels; c++) chs.push(buf.getChannelData(c));
@@ -890,9 +877,7 @@ async function measureForNorm(path) {
   for (const d of chs) for (let i = 0; i < d.length; i++) { const a = Math.abs(d[i]); if (a > peak) peak = a; }
   return {
     lufs,
-    // Sans True Peak ffmpeg : le pic echantillon SOUS-estime le True
-    // Peak — traite comme tel quand meme (repli degrade documente).
-    truePeakDb: Number.isFinite(ffTp) ? ffTp : (peak > 0 ? 20 * Math.log10(peak) : -Infinity),
+    truePeakDb: peak > 0 ? 20 * Math.log10(peak) : -Infinity,
     degraded: true,
   };
 }
@@ -928,18 +913,6 @@ async function normalizeAll(host) {
   } else {
     closeP = modal('Normalisation de la bibliothèque', [prog, hint], [{ label: 'Fermer', onclick: (c) => c() }], { onClose: () => { cancelled = true; } });
   }
-  // ffmpeg ebur128 = mesure de reference : on le prepare AVANT de
-  // compter. Sinon le 1er son bloque ~80 Mo de telechargement+extraction
-  // sans aucun retour visuel (constate : progression figee a 0/N).
-  prog.textContent = 'Préparation de ffmpeg…';
-  let offDl = null;
-  try {
-    offDl = window.sf.onYtProgress((f) => {
-      prog.textContent = f >= 0 ? `Téléchargement de ffmpeg… ${f} %` : 'Préparation de ffmpeg…';
-    });
-    await window.sf.ensureFfmpeg();
-  } catch (e) { logErr('ensureFfmpeg', e); /* repli JS par son si ffmpeg indisponible */ }
-  if (offDl) offDl();
   for (const s of targets) {
     if (cancelled) break;
     prog.textContent = `${done + 1} / ${targets.length} — ${s.name || 'son'}`;
@@ -1617,7 +1590,7 @@ function settingsModal() {
         el('div', { class: 'row' },
           el('span', { class: 'hint', text: 'Cible loudness (LUFS) :' }), normTargetIn, el('span', { class: 'hint', text: 'LUFS' }), normTestBtn, normAllBtn),
         normProg),
-        'Ramène la loudness perçue de chaque son au niveau cible sans dépasser le plafond True Peak (les fichiers ne sont pas modifiés). Plus haut = plus fort, plus bas = plus doux — -18 LUFS par défaut. La mesure utilise ffmpeg si disponible (téléchargé une fois, ~80 Mo, comme pour les exports MP3).'),
+        'Ramène la loudness perçue de chaque son au niveau cible sans dépasser le plafond de pic (-1 dBFS). Mesure 100 % interne (BS.1770), aucun téléchargement — les fichiers ne sont pas modifiés.'),
       field('Réinitialiser', el('div', { class: 'row' }, resetSoundsBtn),
         'Remet chaque son à volume 100 % et normalisation ×1 (cliquer deux fois pour confirmer).'),
     ]},

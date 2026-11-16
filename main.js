@@ -43,7 +43,7 @@ function execFileTracked(file, args, opts = {}) {
     });
   });
 }
-const { AUDIO_EXT, VIRTUAL_RE: VIRTUAL_RE_MAIN, parseEndpoints, parseGet, findCableCapture, chooseRestoreIds, safeName, expandPaths, expandPathsAsync, writeRecording, cbOrNoop, parseEbur128 } = require('./lib/audio-utils');
+const { AUDIO_EXT, VIRTUAL_RE: VIRTUAL_RE_MAIN, parseEndpoints, parseGet, findCableCapture, chooseRestoreIds, safeName, expandPaths, expandPathsAsync, writeRecording, cbOrNoop } = require('./lib/audio-utils');
 let win = null;
 
 // ---------- journal d'erreurs : SoundFart-data\soundfart.log ----------
@@ -581,29 +581,6 @@ H('media:cut', async (_e, o) => {
   return out;
 });
 
-// Mesure de reference pour la normalisation : ffmpeg ebur128=peak=true
-// donne la loudness integree (EBU R128) ET le True Peak en une passe.
-// stderr est conserve en queue (errTail) : les lignes « t: » defilent
-// pendant toute la duree et le Summary n'arrive qu'a la fin.
-H('file:loudness', async (_e, p) => {
-  if (typeof p !== 'string' || !path.isAbsolute(p)) throw new Error('chemin invalide');
-  if (!AUDIO_EXT.includes(path.extname(String(p)).toLowerCase())) throw new Error('format audio non supporté');
-  try { const st = await fs.promises.stat(p); if (!st.isFile()) throw new Error('pas un fichier'); } catch (e) { throw new Error('fichier introuvable'); }
-  const fdir = await ensureFfmpeg();
-  const { stderr } = await execFileTracked(path.join(fdir, 'ffmpeg.exe'),
-    ['-hide_banner', '-nostats', '-i', String(p), '-vn', '-sn', '-dn', '-af', 'ebur128=peak=true', '-f', 'null', '-'],
-    { timeout: 300000, errTail: 262144 });
-  const m = parseEbur128(stderr);
-  if (!m || (m.lufs == null && m.truePeakDb == null)) throw new Error('mesure ebur128 illisible');
-  return m;
-});
-
-// Prepare ffmpeg (telechargement ~80 Mo + extraction) SANS mesurer :
-// la normalisation l'appelle une fois pour afficher la progression au
-// lieu de bloquer le premier son sans retour visuel (sf:ytprogress
-// est deja emis par downloadVerified).
-H('ffmpeg:ensure', async () => { await ensureFfmpeg(); return true; });
-
 // ---------- import YouTube (yt-dlp, telecharge au premier usage) ----------
 const toolsDir = () => path.join(app.getPath('userData'), 'tools');
 const ytdlpPath = () => path.join(toolsDir(), 'yt-dlp.exe');
@@ -669,7 +646,10 @@ function downloadFile(url, dest, onProgress) {
           // Content-Length incoherent ou reponse tronquee : ne jamais valider
           // un fichier partiel (le SHA-256 ne protege que les binaires, pas .sums).
           if (total && got !== total) { out.destroy(); return rej(new Error('téléchargement tronqué (' + got + '/' + total + ' octets)')); }
-          out.close(() => res());
+          // res() ici visait le wrapper resolve de la ligne ~642, mais le
+          // parametre (res) du callback https le masque -> TypeError ->
+          // crash fatal a la fin de CHAQUE telechargement.
+          out.close(() => done(resolve));
         });
         out.on('error', rej);
       });
