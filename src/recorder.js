@@ -20,14 +20,16 @@ async function recorderModal() {
   // sinon le cleanup d'une vieille modale tuerait l'enregistrement d'une
   // nouvelle session (silencieux, sans tapDead car arret volontaire).
   const stopTapIfMine = () => {
-    if (myTapGen && myTapGen === lastTapGen) window.sf.audioTapStop().catch(() => {});
+    // Le catch silencieux laissait un AudioTap orphelin (CPU + process
+    // jusqu'a la detection parent-death) sans aucun diagnostic.
+    if (myTapGen && myTapGen === lastTapGen) window.sf.audioTapStop().catch((e) => window.sf.uiLog('audioTapStop: ' + (e && e.message)));
   };
   const offTapDead = window.sf.onTapDead ? window.sf.onTapDead(() => {
     window.sf.uiLog('tapDead rec=' + (rec ? rec.state : 'null') + ' dead=' + dead);
     tapLost = true; // le tap est mort : ni enregistrement silencieux ni faux succes
     if (dead || !rec || rec.state === 'inactive') return;
     toast('Source « Audio du PC » perdue — enregistrement arrêté.', 'warn');
-    try { rec.stop(); } catch {}
+    try { rec.stop(); } catch (e) { window.sf.uiLog('recorder rec.stop (tapDead): ' + (e && e.message)); }
   }) : null;
   const offTapPcm = window.sf.onTapPcm ? window.sf.onTapPcm((ab) => {
     if (!pcmSeen) { pcmSeen = true; window.sf.uiLog('tapPcm: premier flux recu (' + ab.byteLength + 'o)'); }
@@ -102,8 +104,12 @@ async function recorderModal() {
     // menage — l'annuler ici perdrait silencieusement l'enregistrement.
     // Si rec.stop() echoue (ou rec inactif sans onstop a venir), on nettoie
     // quand meme : micro/tap/contexte ne doivent pas rester allumes.
+    // rec non-null = un onstop peut etre EN VOL (state 'inactive' immediat
+    // mais blob/askDestDir/modal pas finis) : sans ce flag, onstop ouvrirait
+    // sa modale de resultat et detruirait une modale ouverte entre-temps —
+    // closedDuringRec ne couvrait que « ferme pendant la prise ».
+    if (rec) closedDuringRec = true;
     if (rec && rec.state !== 'inactive') {
-      closedDuringRec = true;
       try { rec.stop(); return; } catch { /* onstop ne viendra pas : nettoyage ci-dessous */ }
     }
     streams.forEach((st) => st.getTracks().forEach((t) => t.stop()));
@@ -224,7 +230,13 @@ async function recorderModal() {
       // autoplay, veille) : sans resume, le MediaRecorder produit un fichier
       // silencieux sans erreur.
       try { await actx.resume(); } catch (e) { window.sf.uiLog('recorder actx.resume: ' + (e && e.message)); }
-      if (actx.state !== 'running') window.sf.uiLog('recorder actx.state=' + actx.state + ' (risque de fichier silencieux)');
+      if (actx.state !== 'running') {
+        window.sf.uiLog('recorder actx.state=' + actx.state + ' (risque de fichier silencieux)');
+        // Un MediaRecorder sur un contexte suspendu produit un fichier
+        // silencieux SANS erreur — l'utilisateur doit le savoir, pas
+        // seulement le log.
+        toast('Enregistrement : contexte audio suspendu — le fichier pourrait être silencieux.', 'warn');
+      }
       const dest = actx.createMediaStreamDestination();
       const comp = actx.createDynamicsCompressor(); // evite l'ecrêtage quand plusieurs sources sont mixees
       comp.threshold.value = -12; comp.knee.value = 20; comp.ratio.value = 8;
