@@ -4,6 +4,20 @@
 // ================================================================ import YouTube
 const YT_RE = /^(https?:\/\/)?(www\.|m\.)?(youtube\.com|youtu\.be|music\.youtube\.com)\//;
 
+// yt-dlp/ffmpeg ecrivent leurs erreurs en anglais sur stderr — on traduit
+// les cas courants pour l'utilisateur, le detail technique reste en log.
+function ytErrFr(e) {
+  const raw = String((e && e.message) || e || '');
+  if (/annul/i.test(raw)) return 'Téléchargement annulé.';
+  if (/délai dépassé|timed?\s*out/i.test(raw)) return 'Délai dépassé — la vidéo est peut-être trop longue ou YouTube est lent. Réessaie.';
+  if (/private|sign in|login|authentication/i.test(raw)) return 'Vidéo privée ou connexion YouTube requise.';
+  if (/unavailable|removed|deleted|does not exist|404/i.test(raw)) return 'Vidéo indisponible, supprimée ou introuvable.';
+  if (/429|too many requests/i.test(raw)) return 'YouTube limite les requêtes — réessaie dans quelques minutes.';
+  if (/403|forbidden/i.test(raw)) return 'YouTube a refusé l\'accès à cette vidéo.';
+  if (/url|http|dns|network|connexion|getaddrinfo/i.test(raw) && /fail|error|refus/i.test(raw)) return 'Problème réseau — vérifie ta connexion et réessaie.';
+  return raw || 'Erreur inconnue.';
+}
+
 function youtubeModal() {
   const urlIn = el('input', { type: 'text', placeholder: 'https://www.youtube.com/watch?v=…' });
   urlIn.style.flex = '1';
@@ -57,10 +71,16 @@ function youtubeModal() {
       endIn.placeholder = info.duration ? 'Fin (max ' + fmtTime(info.duration) + ')' : 'Fin';
     } catch (e) {
       info = null; analyzedUrl = null;
-      infoBox.textContent = 'Analyse impossible : ' + ((e && e.message) || e);
+      infoBox.textContent = 'Analyse impossible : ' + ytErrFr(e);
     } finally {
       analyzeBusy = false;
     }
+  } });
+
+  const cancelBtn = el('button', { text: 'Annuler le téléchargement', disabled: true, onclick: async () => {
+    // yt:cancel tue le process yt-dlp : runYt rejette « annulé », le catch
+    // affiche le message traduit et finally reactive les boutons.
+    try { await window.sf.ytCancel(); } catch (e) { logErr('ytCancel', e); }
   } });
 
   const dlBtn = el('button', { text: 'Télécharger l\'extrait', onclick: async () => {
@@ -83,6 +103,7 @@ function youtubeModal() {
     }
     busy = true;
     dl = null;
+    cancelBtn.disabled = false;
     prog.textContent = 'Téléchargement…';
     barFill.style.width = '0%'; barFill.style.opacity = '1';
     try {
@@ -131,9 +152,10 @@ function youtubeModal() {
           ? 'Audio complet téléchargé ; seul l\'extrait choisi sera joué (' + fmtTime(end - start) + ' sur ' + fmtTime(info.duration) + ').'
           : 'Fichier audio complet téléchargé — ajuste le début/fin dans l\'éditeur si besoin.';
     } catch (e) {
-      prog.textContent = 'Téléchargement impossible : ' + ((e && e.message) || e) + ' — vérifie le lien, ta connexion, et réessaie.';
+      prog.textContent = 'Téléchargement impossible : ' + ytErrFr(e) + ' — vérifie le lien, ta connexion, et réessaie.';
     } finally {
       busy = false;
+      cancelBtn.disabled = true;
       if (offProg) { offProg(); offProg = null; } // ne jamais laisser fuir l'ecouteur ytprogress
     }
   } });
@@ -157,7 +179,7 @@ function youtubeModal() {
       el('span', { class: 'hint', text: 'Fin' }), endIn),
       'Ex. début « 02:15 », fin « 02:28 » pour un extrait de 13 s.'),
     field('Dossier', el('div', { class: 'row' }, destLabel, destBtn), 'Le fichier audio est enregistré dans « imports » de ce dossier.'),
-    el('div', { class: 'row' }, dlBtn),
+    el('div', { class: 'row' }, dlBtn, cancelBtn),
     prog, bar,
     field('Nom', nameIn),
     field('Catégorie', catSel),

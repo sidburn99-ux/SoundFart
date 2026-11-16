@@ -390,12 +390,20 @@ async function ensureYtDlp() {
   return ytdlpPromise;
 }
 
+// runYt expose son process courant pour yt:cancel : sans ca, un download
+// engage repartait jusqu'au timeout 2 min ou la fin — aucun moyen
+// d'interrompre un import lance par erreur.
+let activeYt = null; // { p, cancelled }
+
 function runYt(args, onProgress) {
   onProgress = cbOrNoop(onProgress);
   return new Promise((resolve, reject) => {
     // stdin ignore : un outil externe ne doit pas heriter d'un pipe ouvert
     // (yt-dlp/ffmpeg peuvent y attendre une saisie et pendre).
     const p = trackChild(spawn(ytdlpPath(), args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }));
+    const rec = { p, cancelled: false };
+    activeYt = rec;
+    const release = () => { if (activeYt === rec) activeYt = null; };
     let err = '', done = false;
     // Timeout global : un yt-dlp fige ne doit pas pendre le telechargement
     // indefiniment (le timeout inactivite de downloadVerified ne s'applique pas ici).
@@ -403,7 +411,7 @@ function runYt(args, onProgress) {
     // -x/--download-sections — un kill simple laissait ffmpeg orphelin, continuant
     // a ecrire un MP3 partiel hors de childProcs.
     const timer = setTimeout(() => {
-      done = true; try { killTree(p.pid); } catch {}
+      done = true; release(); try { killTree(p.pid); } catch {}
       // timedOut : distingue un kill-programme d'une erreur yt-dlp — le
       // retry de yt:download ne doit pas forcer une maj ~100 Mo pour un
       // contenu simplement trop long pour la fenetre de 2 min.
@@ -421,14 +429,25 @@ function runYt(args, onProgress) {
       const m = /\[download\]\s+([\d.]+)%/.exec(String(d));
       if (m) { try { onProgress(parseFloat(m[1])); } catch {} }
     });
-    p.on('error', (e) => { if (!done) { done = true; clearTimeout(timer); reject(e); } });
+    p.on('error', (e) => { if (!done) { done = true; release(); clearTimeout(timer); reject(e); } });
     p.on('close', (code) => {
       if (done) return;
-      done = true; clearTimeout(timer);
+      done = true; release(); clearTimeout(timer);
+      if (rec.cancelled) { reject(new Error('yt-dlp annulé par l\'utilisateur')); return; }
       code === 0 ? resolve() : reject(new Error('yt-dlp a échoué : ' + err.slice(-500).trim()));
     });
   });
 }
+
+// Annulation utilisateur : tue l'arbre yt-dlp (+ ffmpeg petit-enfant).
+// Le close handler rejette avec une erreur « annulé » distincte.
+H('yt:cancel', () => {
+  const rec = activeYt;
+  if (!rec) return false;
+  rec.cancelled = true;
+  try { killTree(rec.p.pid); } catch {}
+  return true;
+});
 
 // f vaut -1 (reset) ou un pourcentage 0-100 deja pret (yt-dlp, downloadVerified).
 // L'ancienne heuristique « f <= 1 -> fraction » affichait -100 % au reset et

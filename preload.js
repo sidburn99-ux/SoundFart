@@ -27,6 +27,7 @@ contextBridge.exposeInMainWorld('sf', {
   ytEnsure: () => ipcRenderer.invoke('yt:ensure'),
   ytInfo: (url) => ipcRenderer.invoke('yt:info', url),
   ytDownload: (opts) => ipcRenderer.invoke('yt:download', opts),
+  ytCancel: () => ipcRenderer.invoke('yt:cancel'),
   onYtProgress: on('sf:ytprogress'),
   onMenuAction: on('sf:menu'),
   menuState: (s) => ipcRenderer.send('menu:state', s),
