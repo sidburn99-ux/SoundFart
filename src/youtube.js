@@ -57,7 +57,7 @@ function youtubeModal() {
       endIn.placeholder = info.duration ? 'Fin (max ' + fmtTime(info.duration) + ')' : 'Fin';
     } catch (e) {
       info = null; analyzedUrl = null;
-      infoBox.textContent = 'Analyse impossible : ' + e.message;
+      infoBox.textContent = 'Analyse impossible : ' + ((e && e.message) || e);
     } finally {
       analyzeBusy = false;
     }
@@ -131,7 +131,7 @@ function youtubeModal() {
           ? 'Audio complet téléchargé ; seul l\'extrait choisi sera joué (' + fmtTime(end - start) + ' sur ' + fmtTime(info.duration) + ').'
           : 'Fichier audio complet téléchargé — ajuste le début/fin dans l\'éditeur si besoin.';
     } catch (e) {
-      prog.textContent = 'Téléchargement impossible : ' + e.message + ' — vérifie le lien, ta connexion, et réessaie.';
+      prog.textContent = 'Téléchargement impossible : ' + ((e && e.message) || e) + ' — vérifie le lien, ta connexion, et réessaie.';
     } finally {
       busy = false;
       if (offProg) { offProg(); offProg = null; } // ne jamais laisser fuir l'ecouteur ytprogress
@@ -141,7 +141,7 @@ function youtubeModal() {
   const previewSound = () => {
     if (!dl) return;
     play({
-      id: uid(), name: nameIn.value || 'YouTube', path: dl.path, volume: 100, plays: 0,
+      id: uid(), name: (nameIn.value || '').trim() || 'YouTube', path: dl.path, volume: 100, plays: 0,
       norm: 1, favorite: false, shortcut: null,
       trimStart: dl.sectioned ? 0 : dl.start,
       trimEnd: dl.sectioned ? null : dl.end,
