@@ -292,6 +292,7 @@ async function recorderModal() {
             toast('Enregistrement annulé (choix du dossier).', 'warn');
           } else {
           const path = await window.sf.saveRecording({ data: ab, name: fname, ext: extFor(recMime || mime), dir: destDir || cfg.settings.storageDir || '' });
+          if (typeof path !== 'string' || !path) throw new Error('réponse rec:save invalide');
           recordedSound = {
             id: uid(), name: fname, path, volume: 100, plays: 0, addedAt: Date.now(),
             categoryId: null, favorite: false, norm: 1, shortcut: null,
