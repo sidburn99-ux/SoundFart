@@ -380,7 +380,8 @@ H('file:read', async (_e, p) => {
   if (typeof p !== 'string' || !path.isAbsolute(p)) throw new Error('chemin invalide');
   if (!AUDIO_EXT.includes(path.extname(p).toLowerCase())) throw new Error('Format non autorise');
   const st = await fs.promises.stat(p);
-  if (!st.isFile() || st.size > 512 * 1024 * 1024) throw new Error('fichier audio trop volumineux (> 512 Mo)');
+  if (!st.isFile()) throw new Error('chemin invalide : ce n\'est pas un fichier');
+  if (st.size > 512 * 1024 * 1024) throw new Error('fichier audio trop volumineux (> 512 Mo)');
   return fs.promises.readFile(p);
 });
 
