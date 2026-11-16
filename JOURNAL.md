@@ -77,6 +77,28 @@ Vérifiable ici : `node --check`, `npm test`, `npm run dist`, build `.bat`/`.ps1
 - Restauration micro réelle sur matériel (AudioEndpoint.exe compilé à l'usage) : le budget 8 s est prouvé sur `execFileSync` générique, pas sur le vrai binaire.
 - Comportement `normalizeCfg` dans l'UI réelle (purge de sons à chemin invalide) : logique testée unitairement via `isUsablePath`, pas rejouée en interface.
 
+## Chantier audio-robustesse (16/11/2026, branche `fix/audio-robustness`)
+
+Crash renderer `-1/143` (SF-REL-0611) + dette technique restante. Baseline : `npm test` 56/56, `node --check` OK, `npm run dist` OK, smoke exe propre (AudioContext créés, aucune erreur `[page]` nouvelle — les 7 occurrences `[page]` du log test datent du 15/11).
+
+### Fait
+
+- **Forensique crash** : `app.on('child-process-gone')` journalise type/raison/exitCode/serviceName — le service audio WebAudio de Chromium tourne dans un processus utilitaire dont les crashes n'étaient visibles ni dans `render-process-gone` ni forcément en dump Crashpad. Côté renderer, `devicechange` logue désormais les transitions cable/mon/mic (un device qui disparaît peut précéder le crash de quelques secondes).
+- **`setDisplayMediaRequestHandler` réparé** : `getDisplayMedia({video:true,audio:true})` exige une source vidéo dans le callback — le handler renvoyait `{audio:'loopback'}` seul → requête refusée → **repli `systemStream` de l'enregistreur mort**. Fournit maintenant `sources[0]` (écran primaire, jamais lu — le renderer ne garde la vidéo que pour maintenir le loopback). **À valider en conditions réelles** (enregistrement « audio du PC » sans AudioTap).
+- **`restoreMicNowP`/`restoreMicNow` dédupliqués** : logique de décision extraite (`micRestoreArgs` + `restoreMarker`) — la copie complète dérivait (même famille que `killTree` non injecté). Async et sync partagent désormais la même décision ; le sync reste synchrone avec budget 8 s pour `will-quit`.
+- **`loudnessFromPcmAsync`** : moteur BS.1770 refactoré en `setup/stepRange/finish` — `loudnessFromPcm` synchrone strictement identique, variante async qui cède la main toutes les ~2 M frames. `measureForNorm` l'utilise + scan de pic par tranches : la normalisation ne gèle plus l'UI plusieurs secondes sur les fichiers longs. Test : async **bit-identique** au synchrone.
+
+### Vérifications
+
+`node --check` ×3, `npm test` **57/57** (+1 test d'équivalence async), `npm run dist` OK, smoke `--test-profile` propre.
+
+### « À valider » / non vérifié
+
+- Le repli `getDisplayMedia` n'est prouvé que statiquement (contrat API Electron) — test réel requis : enregistrer « audio du PC » en forçant l'échec d'AudioTap.
+- `child-process-gone` : au prochain crash `-1/143`, vérifier que `[child-gone]` apparaît dans `soundfart.log` avec `serviceName` audio — c'est la donnée qui manque pour identifier le fautif.
+- Restauration micro réelle (AudioEndpoint.exe) après refactor — non rejouée sur matériel.
+- Auto-update : **abandonné pour le moment** (electron-updater ne supporte pas le format portable ; updater maison possible sans dépendance — décision reportée).
+
 ## Campagne de fiabilisation (15/11/2026)
 
 Audit complet (3 revues parallèles + recherche documentaire) puis corrections par cycles, avec Quality Gate V2 (CLOSED exige cause + test + non-régression + revue indépendante + runtime + limites documentées).
