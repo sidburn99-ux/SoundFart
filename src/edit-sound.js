@@ -151,8 +151,14 @@ function editSound(s) {
       if (m > mx) mx = m;
     }
     for (let i = 0; i < N; i++) peaks[i] /= mx;
-    te = s.trimEnd ? Math.min(s.trimEnd, dur) : dur;
-    ts = Math.min(s.trimStart || 0, te - 0.05);
+    // « Tout réinitialiser » pendant « Chargement de l'onde… » : dur=0,
+    // te=0 — sans pendingReset, loadWave restaurait l'ancienne decoupe
+    // depuis s.trimStart/trimEnd en ecrasant le reset.
+    if (pendingReset) { pendingReset = false; ts = 0; te = dur; }
+    else {
+      te = s.trimEnd ? Math.min(s.trimEnd, dur) : dur;
+      ts = Math.min(s.trimStart || 0, te - 0.05);
+    }
     sync(); draw();
   }).catch((e) => { logErr('loadWave', e); info.textContent = 'Onde indisponible (fichier introuvable ou illisible).'; });
   loadWave();
@@ -190,7 +196,9 @@ function editSound(s) {
   // « Tout » = tous les parametres AUDIO : volume, normalisation, decoupe,
   // fondus. Nom/categorie/favori/raccourci gardes (identite du son, pas un
   // traitement) — sinon un clic imprudent effacait le raccourci configure.
+  let pendingReset = false;
   const reset = () => {
+    pendingReset = true;
     ts = 0; te = dur; fiIn.value = 0; foIn.value = 0;
     vol.value = 100; volLbl.textContent = '100%';
     norm = 1; normVal.textContent = '×1';

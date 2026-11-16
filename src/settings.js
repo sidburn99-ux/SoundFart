@@ -100,7 +100,10 @@ function settingsModal() {
   ];
   const cableSel = el('select', {}, el('option', { value: '', text: '(choisir…)' }), opts(audio.devices.out, s.cableId, false));
   const monSel = el('select', {}, opts(audio.devices.out, s.monId, true));
-  const micSel = el('select', {}, opts(audio.devices.inp, s.micId, false));
+  // Placeholder « (choisir…) » comme cableSel : sans lui, un micId vide
+  // selecionnait silencieusement le 1er peripherique (eventuellement un
+  // virtuel) a l'application des reglages.
+  const micSel = el('select', {}, el('option', { value: '', text: '(auto — premier vrai micro)' }), opts(audio.devices.inp, s.micId, false));
   const mix = el('input', { type: 'checkbox', checked: s.micMix });
   // Surbrillance des choix recommandes : ★ = a privilegier, ⚠ = a eviter.
   // dataset.label garde le libelle propre (sans prefixe) pour le stockage.
@@ -338,7 +341,12 @@ function settingsModal() {
       const mv = pickVal(monSel, audio.devices.out, s.monId, s.monLabel);
       s.monId = mv.id; s.monLabel = mv.label;
       const iv = pickVal(micSel, audio.devices.inp, s.micId, s.micLabel);
-      s.micId = iv.id; s.micLabel = iv.label;
+      // '' = placeholder « auto » : on conserve le micId existant (le
+      // placeholder s'affiche aussi quand le peripherique configure est
+      // absent — effacer ici perdrait le reglage sans action utilisateur).
+      // MicId vide -> applyAudioInner prend le premier vrai micro non
+      // virtuel ; pas de label '(choisir…)' stocke.
+      s.micId = iv.id || s.micId || ''; s.micLabel = iv.id ? iv.label : s.micLabel;
       s.micMix = mix.checked;
       s.stopShortcut = stopSc || '';
       s.storageDir = s.storageDir || '';

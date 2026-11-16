@@ -223,12 +223,13 @@ function downloadFile(url, dest, onProgress) {
 }
 
 // GET HTTPS borne (1 Mo) pour les petites API JSON — pas de fichier.
-function httpsGetText(url, depth = 0) {
+function httpsGetText(url, depth = 0, deadline = 0) {
   return new Promise((resolve, reject) => {
-    // Deadline TOTALE 60 s : req.setTimeout(20 s) ne borne que l'inactivite
-    // — un serveur qui degoutte 1 octet/19 s etirait la reponse a des
-    // heures et bloquerait ytdlpPromise (donc tous les yt:*) a jamais.
-    const killer = setTimeout(() => { try { req.destroy(); } catch {} rej(new Error('délai total dépassé (60 s)')); }, 60000);
+    // Deadline TOTALE 60 s partagee entre redirections : sans propagation,
+    // chaque saut recreait 60 s -> ~5 min au lieu de 1 et ytdlpPromise
+    // (donc tous les yt:*) restait bloque pendant ce temps.
+    if (!deadline) deadline = Date.now() + 60000;
+    const killer = setTimeout(() => { try { req.destroy(); } catch {} rej(new Error('délai total dépassé (60 s)')); }, Math.max(1, deadline - Date.now()));
     const done = (fn, v) => { clearTimeout(killer); fn(v); };
     const rej = (e) => done(reject, e), res = (v) => done(resolve, v);
     // Bornes : HTTPS only a chaque saut (anti-downgrade) et max 5
@@ -240,7 +241,7 @@ function httpsGetText(url, depth = 0) {
         r.resume();
         let loc;
         try { loc = new URL(r.headers.location, url).href; } catch { return rej(new Error('redirection invalide')); }
-        return res(httpsGetText(loc, depth + 1));
+        return res(httpsGetText(loc, depth + 1, deadline));
       }
       if (r.statusCode !== 200) { r.resume(); return rej(new Error('HTTP ' + r.statusCode)); }
       let got = 0; const chunks = [];
@@ -411,7 +412,7 @@ function runYt(args, onProgress) {
     // -x/--download-sections — un kill simple laissait ffmpeg orphelin, continuant
     // a ecrire un MP3 partiel hors de childProcs.
     const timer = setTimeout(() => {
-      done = true; release(); try { killTree(p.pid); } catch {}
+      done = true; release(); try { killTree(p.pid); } catch {} try { p.kill(); } catch {}
       // timedOut : distingue un kill-programme d'une erreur yt-dlp — le
       // retry de yt:download ne doit pas forcer une maj ~100 Mo pour un
       // contenu simplement trop long pour la fenetre de 2 min.
@@ -433,19 +434,29 @@ function runYt(args, onProgress) {
     p.on('close', (code) => {
       if (done) return;
       done = true; release(); clearTimeout(timer);
-      if (rec.cancelled) { reject(new Error('yt-dlp annulé par l\'utilisateur')); return; }
+      if (rec.cancelled) { const e = new Error('yt-dlp annulé par l\'utilisateur'); e.cancelled = true; reject(e); return; }
       code === 0 ? resolve() : reject(new Error('yt-dlp a échoué : ' + err.slice(-500).trim()));
     });
   });
 }
 
-// Annulation utilisateur : tue l'arbre yt-dlp (+ ffmpeg petit-enfant).
+// Jeton d'annulation par operation yt:download : activeYt ne couvre que
+// runYt — les phases ensureYtDlp/ensureFfmpeg/maybeUpdateYtDlp (avant ou
+// entre les runYt) ignoraient yt:cancel. Verifie avant chaque etape.
+let ytCancelReq = false;
+const ytCancelledErr = () => { const e = new Error('yt-dlp annulé par l\'utilisateur'); e.cancelled = true; return e; };
+const ytThrowIfCancelled = () => { if (ytCancelReq) throw ytCancelledErr(); };
+
+// Annulation utilisateur : tue l'arbre yt-dlp (+ ffmpeg petit-enfant)
+// et arme le jeton pour les phases hors runYt.
 // Le close handler rejette avec une erreur « annulé » distincte.
 H('yt:cancel', () => {
+  ytCancelReq = true;
   const rec = activeYt;
-  if (!rec) return false;
+  if (!rec) return ytDownloadBusy; // annulation en phase ensure/update : le jeton suffit
   rec.cancelled = true;
   try { killTree(rec.p.pid); } catch {}
+  try { rec.p.kill(); } catch {}
   return true;
 });
 
@@ -486,11 +497,14 @@ H('yt:download', async (_e, o) => {
   const { url, start, end, dir, full } = o;
   if (ytDownloadBusy) throw new Error('Un import YouTube est déjà en cours — attends la fin.');
   ytDownloadBusy = true;
+  ytCancelReq = false; // nouveau telechargement : le jeton d'annulation repart a zero
   try {
   if (!validHttpUrl(url) || !isYoutubeUrl(url)) throw new Error('URL YouTube invalide');
   if (!full && (!Number.isFinite(+start) || +start < 0 || !Number.isFinite(+end) || +end <= +start)) throw new Error('bornes invalides');
   await ensureYtDlp();
+  ytThrowIfCancelled(); // annulation pendant l'installation/verif yt-dlp
   const tryDownload = async () => {
+    ytThrowIfCancelled();
     const impDir = path.join(storageRoot(dir), 'imports');
     await fs.promises.mkdir(impDir, { recursive: true });
     // Template unique par requete : le « plus recent » ne peut pas etre un
@@ -510,12 +524,19 @@ H('yt:download', async (_e, o) => {
     const wantSection = !full && Number.isFinite(+start) && Number.isFinite(+end) && +end > +start;
     let ffDir = null;
     if (wantSection) { try { ffDir = await ensureFfmpeg(); } catch (e) { log('[yt] ffmpeg indisponible pour la coupe, repli audio complet : ' + (e && e.message), 'warn'); } }
+    ytThrowIfCancelled(); // annulation pendant le telechargement ffmpeg (~80 Mo)
     if (wantSection && ffDir) {
       try {
         await runYt([...baseArgs, '--ffmpeg-location', ffDir, '-f', 'bestaudio', '-x', '--audio-format', 'mp3', '--download-sections', `*${start}-${end}`, url], ytProgress);
         sectioned = true;
-      } catch (e) { log('[yt] extrait sectionne impossible, repli sur l\'audio complet : ' + (e && e.message), 'warn'); }
+      } catch (e) {
+        // Annulation = intention utilisateur : JAMAIS de repli sur
+        // l'audio complet (sinon Annuler relancait un 2e yt-dlp).
+        if (e && (e.cancelled || ytCancelReq)) throw e.cancelled ? e : ytCancelledErr();
+        log('[yt] extrait sectionne impossible, repli sur l\'audio complet : ' + (e && e.message), 'warn');
+      }
     }
+    ytThrowIfCancelled();
     if (!sectioned) {
       ytProgress(-1);
       // Template DISTINCT pour le repli : un yt-dlp/ffmpeg tue par timeout
@@ -582,17 +603,23 @@ H('yt:download', async (_e, o) => {
   try {
     return await tryDownload();
   } catch (e) {
+    // Annulation = intention utilisateur : pas de maj, pas de retry.
+    if (e && e.cancelled) throw e;
+    if (ytCancelReq) throw ytCancelledErr();
     // YouTube casse souvent les vieilles versions : une mise a jour forcee puis un seul retry.
     // Exception timeout : un contenu trop long pour les 2 min de runYt
     // echouera pareil apres retry — on verifie la maj SANS la forcer
     // (un yt-dlp a jour = check rapide, pas de ~100 Mo gaspilles).
     if (!e || !e.noRetry) {
       const forceUpdate = !(e && e.timedOut);
-      if (await maybeUpdateYtDlp(forceUpdate)) return await tryDownload();
+      if (await maybeUpdateYtDlp(forceUpdate)) {
+        ytThrowIfCancelled(); // annulation pendant la verification/mise a jour
+        return await tryDownload();
+      }
     }
     throw e;
   }
-  } finally { ytDownloadBusy = false; }
+  } finally { ytDownloadBusy = false; ytCancelReq = false; }
 });
   return { ensureFfmpeg, ensureYtDlp, runYt, maybeUpdateYtDlp, findFile, ytdlpPath, ffmpegDir, ffmpegPath };
 }

@@ -391,7 +391,13 @@ H('file:read', async (_e, p) => {
 H('imports:list', async (_e, dir) => {
   const d = path.join(storageRoot(dir), 'imports');
   let names;
-  try { names = await fs.promises.readdir(d); } catch { return []; }
+  try { names = await fs.promises.readdir(d); }
+  catch (e) {
+    // ENOENT = dossier jamais cree : normal. Autres erreurs (EACCES,
+    // reseau) meritaient d'etre visibles — sinon liste vide silencieuse.
+    if (e && e.code !== 'ENOENT') log('[imports:list] readdir ' + d + ' : ' + (e && e.message), 'warn');
+    return [];
+  }
   const out = [];
   for (const f of names) {
     if (!AUDIO_EXT.includes(path.extname(f).toLowerCase())) continue;
@@ -1187,7 +1193,13 @@ app.on('will-quit', () => {
   globalShortcut.unregisterAll();
   // Tue les enfants encore vivants (yt-dlp/ffmpeg) : taskkill /T emporte
   // l'arbre entier — p.kill() seul laisserait le ffmpeg petit-enfant tourner.
-  for (const p of [...childProcs]) { try { killTree(p.pid); } catch {} try { p.kill(); } catch {} }
+  // execFileSync borne (2 s/PID) : killTree async n'aurait pas le temps de
+  // finir avant la mort du process — ffmpeg restait orphelin et continuait
+  // d'ecrire un MP3 partiel apres la fermeture.
+  for (const p of [...childProcs]) {
+    try { execFileSync('taskkill', ['/pid', String(p.pid), '/T', '/F'], { timeout: 2000, windowsHide: true }); } catch {}
+    try { p.kill(); } catch {}
+  }
   childProcs.clear();
   try { if (audioTapProc) audioTapProc.kill(); } catch {}
   audioTapProc = null;

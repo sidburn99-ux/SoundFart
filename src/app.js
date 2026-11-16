@@ -601,6 +601,12 @@ async function applyAudioInner() {
       }
   }
   updateRoutes();
+  // Une reconstruction qui produit au moins une sortie = incident regle :
+  // le compteur de retry repart a zero. Sans ca, 'running' n'etant jamais
+  // re-emis sur un ctx neuf (autoplay no-gesture), deadRetries s'epuisait
+  // sur ~5 incidents cumules et la reconstruction auto mourait pour de
+  // bon — le bug veille/reveil ne se corrigeait qu'une fois par session.
+  if (audio.cable || audio.mon) deadRetries = 0;
   if (warns.length) toast(warns.join('\n'), 'warn');
   return warns.length === 0;
 }
@@ -1396,6 +1402,11 @@ async function init() {
       const s = cfg.settings;
       const prev = { cable: s.cableId, mon: s.monId, mic: s.micId };
       const hadCable = cablePresent();
+      // Instantane des entrees AVANT refresh : needMic ne doit tirer que
+      // si la liste a change (micro rebranche), pas a chaque devicechange
+      // (casque BT, HDMI...) — sinon chaque evenement coupait les sons
+      // en cours via teardownAudio et spamait « Micro inaccessible ».
+      const prevInp = new Set((audio.devices.inp || []).map((d) => d.deviceId));
       await refreshDevices(false);
       // Forensique crash -1/143 : tracer les transitions de peripheriques —
       // un device qui disparait peut preceder de quelques secondes le crash
@@ -1411,7 +1422,13 @@ async function init() {
       // — ou si le micro requis est mort : au rebranchement USB l'endpointId
       // Windows est stable, donc micId ne change pas et sans cette condition
       // le micro restait coupe jusqu'au prochain changement reel.
-      const needMic = (s.micMix || s.autoSwitchMic) && !audio.micStream && (audio.devices.inp || []).length > 0;
+      const inpNow = audio.devices.inp || [];
+      const inpChanged = inpNow.length !== prevInp.size || inpNow.some((d) => !prevInp.has(d.deviceId));
+      // Candidat micro plausible : micro configure OU vrai peripherique
+      // non virtuel — jamais sur 'default'/virtuel seul (larsen CABLE).
+      const micCandidate = (s.micId && s.micId !== 'default') ||
+        inpNow.some((d) => d.deviceId !== 'default' && !VIRTUAL_RE.test(d.label || ''));
+      const needMic = (s.micMix || s.autoSwitchMic) && !audio.micStream && inpChanged && micCandidate;
       if (s.cableId !== prev.cable || s.monId !== prev.mon || s.micId !== prev.mic || needMic) await applyAudio().catch((e) => logErr('applyAudio', e));
       // Cable branche/installé a chaud : diffusion + bascule micro sans relancer l'app
       if (!hadCable && cablePresent()) {
