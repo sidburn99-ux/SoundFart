@@ -20,6 +20,7 @@
     "productName": "SoundFart",
     "files": [
       "main.js",
+      "main/**/*",
       "preload.js",
       "AudioEndpoint.cs",
       "AudioTap.cs",

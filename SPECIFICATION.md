@@ -21,7 +21,11 @@
 main.js          processus principal : IPC, config, fichiers, yt-dlp, ffmpeg,
                  raccourcis globaux, bascule micro Windows, menu F11, journal
 preload.js       pont contextBridge sécurisé (contexte isolé, sandbox)
-src/app.js       toute la logique renderer : moteur Web Audio, UI, bibliothèque
+src/app.js       renderer core : état/config, moteur Web Audio, rendu, init
+src/normalize.js normalisation LUFS · src/edit-sound.js éditeur de son
+src/settings.js  réglages + export/import · src/recorder.js enregistreur
+src/youtube.js   import YouTube — scripts classiques chargés avant app.js
+                 (portée globale partagée, init() voit tout)
 src/index.html   markup · src/style.css : thème sombre
 ```
 

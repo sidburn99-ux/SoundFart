@@ -77,7 +77,7 @@ Clique **Appliquer**. Le bandeau en bas de fenêtre affiche les routes actives (
 |---|---|---|
 | Pas de son dans Discord | CABLE Output pas sélectionné dans Discord, ou mauvaise sortie dans SoundFart | Vérifie les deux sens (sections 3 et 4) |
 | « Fichier introuvable » sur une carte | Le fichier a été déplacé/supprimé | Clique le badge ou clic droit → « Retrouver le fichier… » |
-| Fenêtre noire au démarrage | Fichiers `src/` manquants à côté de `main.js` | Vérifie que `index.html`, `style.css`, `app.js` sont dans `src/` |
+| Fenêtre noire au démarrage | Fichiers `src/` manquants à côté de `main.js` | Vérifie que tous les `.js` de `src/` (`app.js`, `normalize.js`, `edit-sound.js`, `settings.js`, `recorder.js`, `youtube.js`, `tap-processor.js`) sont présents |
 | « Micro inaccessible » | Permission Windows refusée | Paramètres Windows → Confidentialité → Micro |
 | Erreurs techniques | — | `SoundFart-data\soundfart.log` (`%APPDATA%\SoundFart\soundfart.log` en repli) + F12 pour la console |
 

@@ -12,11 +12,14 @@ $html = [System.IO.File]::ReadAllText($htmlPath, [System.Text.Encoding]::UTF8)
 # groupe .NET). '"' -> '\"' est conserve (inoffensif dans un template literal).
 $inj = $tsv.Replace('\', '\\').Replace('"', '\"').Replace('`', '\`').Replace('${', '\${')
 $inj = $inj.Replace("`r`n", '\n').Replace("`n", '\n')
-# Ancre sur la fin de la ligne d'injection : un « `; » present dans le TSV
-# (echappe en '\`') faisait matcher la regex non-greedy trop tot et
-# corrompait le HTML au run suivant.
-$m = [regex]::Match($html, '(?s)const TSV = `.*?`;\s*\r?\n')
-if (-not $m.Success) { Write-Error "const TSV introuvable dans suivi.html"; exit 1 }
-$html = $html.Remove($m.Index, $m.Length).Insert($m.Index, 'const TSV = `' + $inj + '`;')
+# Ancre sur 'const rows' (le code JS qui suit la declaration) : un « `; »
+# present dans le TSV (echappe en '\`') ou un ';const' colle faisaient
+# matcher la regex non-greedy trop tot et corrompaient le HTML.
+$startMarker = 'const TSV = `'
+$endMarker = 'const rows'
+$si = $html.IndexOf($startMarker)
+$ei = $html.IndexOf($endMarker, $si)
+if ($si -lt 0 -or $ei -lt 0) { Write-Error "const TSV introuvable dans suivi.html"; exit 1 }
+$html = $html.Remove($si, $ei - $si).Insert($si, 'const TSV = `' + $inj + '`;' + "`n")
 [System.IO.File]::WriteAllText($htmlPath, $html, $utf8)
 Write-Output "suivi.html regenere"

@@ -21,9 +21,15 @@
 ## Architecture (contraignante)
 
 ```
-main.js          # process main : IPC, fenêtre, audio natif, yt-dlp/ffmpeg, watchdog micro
+main.js          # process main : IPC, fenêtre, config, audio natif, raccourcis, watchdog micro
+main/media-tools.js # ffmpeg (coupe MP3) + yt-dlp : createMediaTools(deps) injectees
 preload.js       # contextBridge : surface API exposée au renderer
-src/app.js       # renderer : UI, moteur Web Audio, enregistreur, réglages, config
+src/app.js       # renderer core : état/config, moteur Web Audio, rendu, init
+src/normalize.js # normalisation LUFS (chargé avant app.js)
+src/edit-sound.js# éditeur de son (trim, fade, volume, norm)
+src/settings.js  # panneau réglages + export/import config
+src/recorder.js  # enregistreur multi-sources
+src/youtube.js   # import YouTube (yt-dlp)
 src/index.html   # page unique (CSP stricte)   ·   src/style.css : thème
 src/tap-processor.js  # AudioWorklet : PCM AudioTap -> graphe audio
 lib/audio-utils.js    # fonctions pures partagées main/renderer (window.SFUtils)
