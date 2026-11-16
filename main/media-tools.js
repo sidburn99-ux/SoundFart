@@ -13,7 +13,11 @@ function createMediaTools(deps) {
 // ---------- ffmpeg : coupe physique des extraits (MP3) ----------
 function findFile(dir, name, depth = 0) {
   if (depth > 4) return null;
-  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+  // Un sous-dossier disparu/verrouille (AV, OneDrive) ne doit pas faire
+  // echouer tout le scan : on passe au suivant au lieu de propager.
+  let entries;
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return null; }
+  for (const e of entries) {
     const p = path.join(dir, e.name);
     if (e.isDirectory()) { const r = findFile(p, name, depth + 1); if (r) return r; }
     else if (e.name.toLowerCase() === name) return p;
@@ -170,7 +174,11 @@ function downloadFile(url, dest, onProgress) {
     let curReq = null;
     const killer = setTimeout(() => { try { if (curReq) curReq.destroy(); } catch {} rej(new Error('téléchargement interrompu : délai total dépassé (15 min)')); }, 15 * 60 * 1000);
     const done = (fn, v) => { clearTimeout(killer); fn(v); };
-    const rej = (e) => done(reject, e), res = (v) => done(resolve, v);
+    // Tout echec apres createWriteStream laisse un fichier PARTIEL sur
+    // disque (ffmpeg.zip tronque, .part orphelin) : on le supprime avant
+    // de rejeter — unlink sur un chemin pas encore cree est sans effet.
+    const rej = (e) => { try { fs.unlinkSync(dest); } catch {} done(reject, e); };
+    const res = (v) => done(resolve, v);
     const get = (u, n) => {
       // Les redirections ne doivent jamais sortir du HTTPS (anti-downgrade MITM).
       if (!/^https:\/\//i.test(u)) return rej(new Error('redirection non-HTTPS refusée : ' + u.slice(0, 120)));
@@ -217,25 +225,31 @@ function downloadFile(url, dest, onProgress) {
 // GET HTTPS borne (1 Mo) pour les petites API JSON — pas de fichier.
 function httpsGetText(url, depth = 0) {
   return new Promise((resolve, reject) => {
+    // Deadline TOTALE 60 s : req.setTimeout(20 s) ne borne que l'inactivite
+    // — un serveur qui degoutte 1 octet/19 s etirait la reponse a des
+    // heures et bloquerait ytdlpPromise (donc tous les yt:*) a jamais.
+    const killer = setTimeout(() => { try { req.destroy(); } catch {} rej(new Error('délai total dépassé (60 s)')); }, 60000);
+    const done = (fn, v) => { clearTimeout(killer); fn(v); };
+    const rej = (e) => done(reject, e), res = (v) => done(resolve, v);
     // Bornes : HTTPS only a chaque saut (anti-downgrade) et max 5
     // redirections — sinon une redirection circulaire bouclerait a vie.
-    if (!/^https:\/\//i.test(url)) return reject(new Error('URL non-HTTPS refusée'));
-    if (depth > 5) return reject(new Error('trop de redirections'));
-    const req = https.get(url, { headers: { 'User-Agent': 'SoundFart' } }, (res) => {
-      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        res.resume();
+    if (!/^https:\/\//i.test(url)) return rej(new Error('URL non-HTTPS refusée'));
+    if (depth > 5) return rej(new Error('trop de redirections'));
+    const req = https.get(url, { headers: { 'User-Agent': 'SoundFart' } }, (r) => {
+      if (r.statusCode >= 300 && r.statusCode < 400 && r.headers.location) {
+        r.resume();
         let loc;
-        try { loc = new URL(res.headers.location, url).href; } catch { return reject(new Error('redirection invalide')); }
-        return resolve(httpsGetText(loc, depth + 1));
+        try { loc = new URL(r.headers.location, url).href; } catch { return rej(new Error('redirection invalide')); }
+        return res(httpsGetText(loc, depth + 1));
       }
-      if (res.statusCode !== 200) { res.resume(); return reject(new Error('HTTP ' + res.statusCode)); }
+      if (r.statusCode !== 200) { r.resume(); return rej(new Error('HTTP ' + r.statusCode)); }
       let got = 0; const chunks = [];
-      res.on('data', (c) => { got += c.length; if (got > 1024 * 1024) { req.destroy(new Error('reponse trop volumineuse')); return; } chunks.push(c); });
-      res.on('error', reject);
-      res.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')));
+      r.on('data', (c) => { got += c.length; if (got > 1024 * 1024) { req.destroy(new Error('reponse trop volumineuse')); return; } chunks.push(c); });
+      r.on('error', rej);
+      r.on('end', () => res(Buffer.concat(chunks).toString('utf-8')));
     });
     req.setTimeout(20000, () => req.destroy(new Error('timeout')));
-    req.on('error', reject);
+    req.on('error', rej);
   });
 }
 
@@ -388,7 +402,14 @@ function runYt(args, onProgress) {
     // killTree et pas p.kill() : yt-dlp spawn ffmpeg.exe en petit-enfant pour
     // -x/--download-sections — un kill simple laissait ffmpeg orphelin, continuant
     // a ecrire un MP3 partiel hors de childProcs.
-    const timer = setTimeout(() => { done = true; try { killTree(p.pid); } catch {} reject(new Error('yt-dlp : délai dépassé (2 min)')); }, 120000);
+    const timer = setTimeout(() => {
+      done = true; try { killTree(p.pid); } catch {}
+      // timedOut : distingue un kill-programme d'une erreur yt-dlp — le
+      // retry de yt:download ne doit pas forcer une maj ~100 Mo pour un
+      // contenu simplement trop long pour la fenetre de 2 min.
+      const e = new Error('yt-dlp : délai dépassé (2 min)'); e.timedOut = true;
+      reject(e);
+    }, 120000);
     // yt-dlp ecrit la progression sur stderr (pas stdout).
     p.stderr.on('data', (d) => {
       const s = String(d);
@@ -457,7 +478,11 @@ H('yt:download', async (_e, o) => {
     // fichier etranger cree pendant le telechargement (ni un autre import).
     const tag = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     const tags = [tag];
-    const outTpl = path.join(impDir, 'sf-' + tag + '-%(id)s.%(ext)s');
+    // yt-dlp interprete % dans TOUT le -o comme caractere de template
+    // (%% = litteral) : un storageRoot contenant % (ex. D:\100%\..)
+    // rendait le template invalide -> yt:download echouait toujours.
+    const tplDir = impDir.replace(/%/g, '%%');
+    const outTpl = path.join(tplDir, 'sf-' + tag + '-%(id)s.%(ext)s');
     const baseArgs = ['--no-playlist', '--no-warnings', '-o', outTpl];
     let sectioned = false;
     // ffmpeg n'est requis que pour l'extrait sectionne (-x + download-sections) ;
@@ -478,7 +503,7 @@ H('yt:download', async (_e, o) => {
       // peut encore ecrire dans l'ancien template — le filtre 'created'
       // pourrait sinon retenir un MP3 partiel comme import valide.
       const tag2 = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-      const outTpl2 = path.join(impDir, 'sf-' + tag2 + '-%(id)s.%(ext)s');
+      const outTpl2 = path.join(tplDir, 'sf-' + tag2 + '-%(id)s.%(ext)s');
       tags.push(tag2);
       await runYt(['--no-playlist', '--no-warnings', '-o', outTpl2, '-f', 'bestaudio/best', url], ytProgress);
     }
@@ -517,12 +542,19 @@ H('yt:download', async (_e, o) => {
     }
     // Ménage des artefacts de tentatives avortées : yt-dlp laisse des
     // .part/.ytdl/.temp prefixés sf-<tag>- dans imports/ qu'aucun code
-    // ne relisait — ils s'accumulaient à chaque import raté.
+    // ne relisait — ils s'accumulaient à chaque import raté. Idem pour un
+    // audio COMPLET du tag avorte (extrait sectionne mort apres avoir
+    // produit son MP3, puis repli full) : orphelin cumule sinon.
+    // 'newest' n'est jamais touche, quel que soit son tag.
     try {
       for (const f of fs.readdirSync(impDir)) {
-        if (tags.some((t) => f.startsWith('sf-' + t + '-')) && /\.(part|ytdl|temp)$/i.test(f)) {
-          try { fs.unlinkSync(path.join(impDir, f)); } catch {}
-        }
+        const fp = path.join(impDir, f);
+        if (fp === newest) continue;
+        const tagged = tags.some((t) => f.startsWith('sf-' + t + '-'));
+        const isArtifact = tagged && /\.(part|ytdl|temp)$/i.test(f);
+        const isOrphanAudio = tagged && tags.some((t) => t !== lastTag && f.startsWith('sf-' + t + '-'))
+          && AUDIO_EXT.includes(path.extname(f).toLowerCase());
+        if (isArtifact || isOrphanAudio) { try { fs.unlinkSync(fp); } catch {} }
       }
     } catch {}
     ytProgress(-1);
@@ -532,8 +564,12 @@ H('yt:download', async (_e, o) => {
     return await tryDownload();
   } catch (e) {
     // YouTube casse souvent les vieilles versions : une mise a jour forcee puis un seul retry.
+    // Exception timeout : un contenu trop long pour les 2 min de runYt
+    // echouera pareil apres retry — on verifie la maj SANS la forcer
+    // (un yt-dlp a jour = check rapide, pas de ~100 Mo gaspilles).
     if (!e || !e.noRetry) {
-      if (await maybeUpdateYtDlp(true)) return await tryDownload();
+      const forceUpdate = !(e && e.timedOut);
+      if (await maybeUpdateYtDlp(forceUpdate)) return await tryDownload();
     }
     throw e;
   }
