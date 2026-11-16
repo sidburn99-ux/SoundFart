@@ -191,7 +191,7 @@ function settingsModal() {
   const pickDirBtn = el('button', { text: 'Choisir…', title: 'Choisit le dossier racine où SoundFart range ses fichiers (imports/, recordings/, cuts/).', onclick: async () => {
     try {
       const d = await window.sf.pickDir();
-      if (d) { s.storageDir = d; dirLbl.textContent = d; }
+      if (d) { s.storageDir = d; dirLbl.textContent = d; updateStorageUi(); }
     } catch (e) { logErr('pickDir', e); }
   } });
   const resetDirBtn = el('button', { class: 'ghost', text: 'Réinitialiser', title: 'Oublie le dossier choisi : il sera redemandé à la prochaine création de fichier.', onclick: () => { s.storageDir = ''; dirLbl.textContent = 'Non choisi — sera demandé à la prochaine création de fichier'; } });

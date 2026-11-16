@@ -86,7 +86,9 @@ function youtubeModal() {
   const destBtn = el('button', { text: 'Changer…', onclick: async () => {
     try {
       const d = await window.sf.pickDir();
-      if (d) { destDir = d; cfg.settings.lastDestDir = d; save(); destLabel.textContent = d; }
+      // Premier choix explicite = dossier de sons principal (coherence
+      // avec askDestDir) — sinon la banniere resterait affichee.
+      if (d) { destDir = d; cfg.settings.lastDestDir = d; if (!cfg.settings.storageDir) { cfg.settings.storageDir = d; updateStorageUi(); } save(); destLabel.textContent = d; }
     } catch (e) { logErr('pickDir', e); }
   } });
 
