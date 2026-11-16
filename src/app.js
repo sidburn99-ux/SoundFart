@@ -753,6 +753,14 @@ function showCableScreen() {
   updateCableUi();
 }
 
+// Bandeau « dossier de sons » : visible tant que storageDir n'est pas choisi
+// (propose, jamais bloquant — devient obligatoire via ensureStorageDir des
+// qu'une action cree un fichier).
+function updateStorageUi() {
+  const b = $('#storage-banner');
+  if (b) b.hidden = !!cfg.settings.storageDir;
+}
+
 function setPlaying(id, delta) {
   const n = (playingCount.get(id) || 0) + delta;
   if (n <= 0) { playingCount.delete(id); playingNames.delete(id); } else playingCount.set(id, n);
@@ -1004,9 +1012,36 @@ function pushSound(s) {
   cfg.sounds.push(s); return true;
 }
 
+// Le dossier de sons est obligatoire des qu'une action cree un fichier
+// (import, YouTube, enregistrement, extrait MP3) : propose une fois le choix
+// (pickDir natif), puis le memorise dans settings.storageDir. Annuler =
+// annuler l'action, jamais de dossier implicite.
+async function ensureStorageDir() {
+  if (cfg.settings.storageDir) return true;
+  if (!(await confirmBox('Choisis ton dossier de sons',
+    'SoundFart y range les fichiers qu\'il crée : sons ajoutés (copiés), imports YouTube, enregistrements et extraits MP3.\n\nExemples : Documents\\SoundFart, E:\\Soundfart, une partition dédiée.',
+    'Choisir un dossier'))) {
+    toast('Action annulée : aucun dossier de sons choisi.', 'warn'); return false;
+  }
+  try {
+    const d = await window.sf.pickDir();
+    if (!d) { toast('Action annulée : aucun dossier choisi.', 'warn'); return false; }
+    cfg.settings.storageDir = d; save(); updateStorageUi();
+    toast('Dossier de sons : ' + d);
+    return true;
+  } catch (e) { logErr('pickDir', e); return false; }
+}
+
 async function addPaths(rawPaths) {
   const paths = await window.sf.expandPaths(rawPaths);
   if (!paths.length) { toast('Aucun fichier audio reconnu (mp3, wav, ogg, flac, m4a, aac, opus).', 'warn'); return; }
+  if (!(await ensureStorageDir())) return;
+  let imported;
+  try { imported = await window.sf.importFiles(paths, cfg.settings.storageDir); }
+  catch (e) { logErr('importFiles', e); toast('Import impossible : ' + (e && e.message || e), 'warn'); return; }
+  const ok = imported.filter((r) => r.path && !r.error);
+  const failed = imported.length - ok.length;
+  if (!ok.length) { toast(failed ? 'Copie des sons impossible — voir le journal.' : 'Aucun fichier audio reconnu.', 'warn'); return; }
   const known = new Set(cfg.sounds.map((s) => s.path.toLowerCase()));
   const catId = catById(cfg.ui.cat) ? cfg.ui.cat : null;
   const now = Date.now();
@@ -1015,19 +1050,20 @@ async function addPaths(rawPaths) {
   // batch et config:save depasse 5 Mo -> sauvegardes silencieusement KO.
   const room = Math.max(0, 5000 - cfg.sounds.length);
   let truncated = false;
-  for (const p of paths) {
+  for (const r of ok) {
     if (n >= room) { truncated = true; break; }
-    if (known.has(p.toLowerCase())) continue;
-    known.add(p.toLowerCase());
-    const base = p.split(/[\\/]/).pop().replace(/\.[^.]+$/, '');
+    if (known.has(r.path.toLowerCase())) continue;
+    known.add(r.path.toLowerCase());
+    const base = (r.label || r.path.split(/[\\/]/).pop()).replace(/\.[^.]+$/, '');
     cfg.sounds.push({
-      id: uid(), name: base, path: p, categoryId: catId, volume: 100, addedAt: now + n, plays: 0,
+      id: uid(), name: base, path: r.path, categoryId: catId, volume: 100, addedAt: now + n, plays: 0,
       favorite: false, norm: 1, shortcut: null, trimStart: 0, trimEnd: null, fadeIn: 0, fadeOut: 0,
     });
     n++;
   }
   if (n) { save(); renderAll(); }
-  toast(n ? `${n} son(s) ajouté(s).${truncated ? ' (limite de 5000 sons atteinte)' : ''}` : (truncated ? 'Limite de 5000 sons atteinte — retirez des sons pour en ajouter.' : 'Ces sons sont déjà dans la liste.'));
+  const extra = [truncated ? ' (limite de 5000 sons atteinte)' : '', failed ? ` ${failed} fichier(s) non copié(s).` : ''].join('');
+  toast(n ? `${n} son(s) ajouté(s).${extra}` : (known.size ? 'Ces sons sont déjà dans la liste.' : 'Aucun son ajouté.') + extra);
 }
 
 async function removeSound(s) {
@@ -1422,6 +1458,12 @@ async function init() {
     checkTimer = setTimeout(() => checkMissing().catch((e) => logErr('checkMissing', e)), 400);
   });
   $('#cableBannerBtn').addEventListener('click', () => showCableScreen());
+  $('#storageBannerBtn').addEventListener('click', async () => {
+    try {
+      const d = await window.sf.pickDir();
+      if (d) { cfg.settings.storageDir = d; save(); updateStorageUi(); toast('Dossier de sons : ' + d); }
+    } catch (e) { logErr('pickDir', e); }
+  });
   // devicechange peut spammer (casque, bluetooth...) : debounce puis re-resolution des peripheriques
   let devTimer = null;
   navigator.mediaDevices.addEventListener('devicechange', () => {
@@ -1514,6 +1556,7 @@ async function init() {
   applyShortcuts().catch((e) => logErr('applyShortcuts', e));
   updateCableUi();
   showCableScreen();
+  updateStorageUi();
   if (cablePresent()) runAutoSetup();
   window.sf.onMicWatchOff && window.sf.onMicWatchOff(() => {
     toast('Entrée micro modifiée pendant la session — surveillance auto suspendue (réglages → surveillance micro).', 'warn');

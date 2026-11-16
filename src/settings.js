@@ -17,12 +17,14 @@ function exportConfig() {
 // Pre-rempli avec le dernier choix (lastDestDir) ou le dossier de stockage.
 function askDestDir(extraButtons, extraNodes) {
   return new Promise((resolve) => {
-    const inp = el('input', { type: 'text', value: cfg.settings.lastDestDir || cfg.settings.storageDir || '' });
+    const inp = el('input', { type: 'text', value: cfg.settings.storageDir || cfg.settings.lastDestDir || '' });
     // input DOIT etre dans .field : sinon il garde le style natif (fond
     // blanc) avec le texte clair herite -> illisible (retour terrain).
     inp.style.width = '100%';
     modal('Dossier de destination', [
-      field('Dossier', inp, 'Le fichier sera enregistré dans ce dossier (sous-dossier imports/ ou recordings/ selon la source). Laisse vide pour le dossier SoundFart par défaut.'),
+      field('Dossier', inp, cfg.settings.storageDir
+        ? 'Laisse vide pour utiliser ton dossier de sons principal.'
+        : 'Choisis le dossier où le fichier sera enregistré — ce sera aussi ton dossier de sons principal.'),
       ...(extraNodes || []),
     ], [
       ...(extraButtons || []),
@@ -32,11 +34,23 @@ function askDestDir(extraButtons, extraNodes) {
         const d = inp.value.trim();
         // storageRoot() ignore silencieusement les chemins relatifs :
         // mieux vaut refuser ici que d'enregistrer « ailleurs » que l'UI.
+        // Sans dossier choisi ET sans dossier principal : refuser — sinon
+        // storageRoot('') enverrait le fichier dans %APPDATA% (hors modele).
+        if (!d && !cfg.settings.storageDir) {
+          inp.style.borderColor = 'var(--danger, #ef4444)';
+          return;
+        }
         if (d && !/^[a-zA-Z]:[\\/]/.test(d) && !d.startsWith('\\\\')) {
           inp.style.borderColor = 'var(--danger, #ef4444)';
           return; // reste dans la modale, pas de resolve
         }
-        if (d) { cfg.settings.lastDestDir = d; } else { delete cfg.settings.lastDestDir; }
+        if (d) {
+          cfg.settings.lastDestDir = d;
+          // Premier choix explicite = le dossier de sons principal (modele
+          // « un seul dossier ») ; ensuite lastDestDir reste un simple dernier
+          // choix sans ecraser storageDir.
+          if (!cfg.settings.storageDir) { cfg.settings.storageDir = d; updateStorageUi(); }
+        } else { delete cfg.settings.lastDestDir; }
         save();
         resolve(d || ''); c();
       } },
@@ -164,14 +178,15 @@ function settingsModal() {
     stopCleanup = disarm;
   });
 
-  // dossier de stockage des fichiers crees par l'app (imports YouTube, enregistrements, extraits)
-  // Vrai dossier de donnees (userData : SoundFart-data portable, %APPDATA% sinon).
+  // dossier de stockage des fichiers crees par l'app (sons copies, imports
+  // YouTube, enregistrements, extraits) — obligatoire des la 1re creation.
+  // userData = %APPDATA%\SoundFart (reglages/outils), independent du dossier sons.
   window.sf.getDataDir().then((d) => {
-    const lbl = 'Dossier de données : ' + d + ' — les fichiers vont dans imports/, recordings/, cuts/ à l\'intérieur';
-    dirLbl.textContent = s.storageDir || lbl;
-    resetDirBtn.onclick = () => { s.storageDir = ''; dirLbl.textContent = lbl; };
+    const lbl = 'Réglages et outils : ' + d;
+    if (!s.storageDir) dirLbl.textContent = 'Non choisi — sera demandé à la prochaine création de fichier';
+    resetDirBtn.onclick = () => { s.storageDir = ''; dirLbl.textContent = 'Non choisi — sera demandé à la prochaine création de fichier'; updateStorageUi(); };
   }).catch((e) => logErr('getDataDir', e));
-  const dirLbl = el('div', { class: 'hint path', text: (s.storageDir || 'Dossier de données par défaut') + ' — les fichiers vont dans imports/, recordings/, cuts/ à l\'intérieur' });
+  const dirLbl = el('div', { class: 'hint path', text: (s.storageDir || 'Non choisi — sera demandé à la prochaine création de fichier') + ' — sons ajoutés dans sons/, YouTube dans imports/, micro dans recordings/, extraits dans cuts/' });
   const openDirBtn = el('button', { class: 'ghost', text: 'Ouvrir', title: 'Ouvre le dossier de stockage dans l\'Explorateur', onclick: () => window.sf.openDir(s.storageDir || '') });
   const pickDirBtn = el('button', { text: 'Choisir…', title: 'Choisit le dossier racine où SoundFart range ses fichiers (imports/, recordings/, cuts/).', onclick: async () => {
     try {
@@ -179,7 +194,7 @@ function settingsModal() {
       if (d) { s.storageDir = d; dirLbl.textContent = d; }
     } catch (e) { logErr('pickDir', e); }
   } });
-  const resetDirBtn = el('button', { class: 'ghost', text: 'Réinitialiser', onclick: () => { s.storageDir = ''; dirLbl.textContent = 'Dossier SoundFart par défaut (SoundFart-data) — les fichiers vont dans imports/, recordings/, cuts/ à l\'intérieur'; } });
+  const resetDirBtn = el('button', { class: 'ghost', text: 'Réinitialiser', title: 'Oublie le dossier choisi : il sera redemandé à la prochaine création de fichier.', onclick: () => { s.storageDir = ''; dirLbl.textContent = 'Non choisi — sera demandé à la prochaine création de fichier'; } });
   const orphanBtn2 = el('button', { text: 'Parcourir les fichiers non ajoutés…', onclick: () => orphanImportsModal().catch((e) => logErr('orphanImports', e)) });
   const voiceDsp = el('input', { type: 'checkbox', checked: s.voiceDsp !== false, title: 'Applique aux sons de la VOIX uniquement (jamais aux sons de la soundboard) : annulation d\'écho, suppression de bruit et filtre de souffle. Décoche si ta voix sonne étouffée ou si tu utilises déjà un filtre Discord/Teams.' });
   const voiceLvl = el('select', {},
@@ -298,9 +313,9 @@ function settingsModal() {
       field('Imports non ajoutés', orphanBtn2,
         'Fichiers présents dans imports/ mais pas encore dans ta bibliothèque (téléchargements YouTube dont la fenêtre a été fermée sans « Ajouter »).'),
     ]},
-    { cat: 'Bibliothèque', icon: '🗄', label: 'Données & stockage', desc: 'Où SoundFart range les fichiers qu\'il crée (imports YouTube, enregistrements, extraits MP3).', nodes: [
-      field('Dossier de stockage', el('div', { class: 'row' }, dirLbl, pickDirBtn, openDirBtn, resetDirBtn),
-        'Dossier par défaut des fichiers créés par SoundFart (imports YouTube, enregistrements, extraits MP3) — un choix de dossier est aussi proposé avant chaque ajout.'),
+    { cat: 'Bibliothèque', icon: '🗄', label: 'Données & stockage', desc: 'Où SoundFart range les fichiers qu\'il crée et où sont ses réglages. Ton dossier de sons est choisi une fois ; les réglages restent dans %APPDATA%\\SoundFart.', nodes: [
+      field('Dossier de sons', el('div', { class: 'row' }, dirLbl, pickDirBtn, openDirBtn, resetDirBtn),
+        'Tous les fichiers créés par SoundFart vont dans ce dossier : sons ajoutés copiés dans sons/, imports YouTube dans imports/, enregistrements dans recordings/, extraits MP3 dans cuts/. Obligatoire dès le premier ajout — un choix est aussi proposé à chaque action.'),
     ]},
     { cat: 'Général', icon: '⚙', label: 'Général', desc: 'Raccourcis globaux et sauvegarde de la configuration.', nodes: [
       field('Raccourci global STOP', el('div', { class: 'row' }, stopBtn), stopHint),

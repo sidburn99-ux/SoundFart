@@ -248,6 +248,13 @@ function editSound(s) {
         if (!dur) { toast('Attend le chargement de l\'onde.', 'warn'); return; }
         exportBusy = true;
         try {
+          // Dossier de sons obligatoire : pickDir natif (confirmBox detruirait
+          // cette modale — slot modal() unique).
+          if (!cfg.settings.storageDir) {
+            const d = await window.sf.pickDir();
+            if (!d) { toast('Export annulé : aucun dossier choisi.', 'warn'); return; }
+            cfg.settings.storageDir = d; updateStorageUi(); save();
+          }
           const out = await window.sf.mediaCut({ input: s.path, start: outStart(), end: outEnd() ?? dur, dir: cfg.settings.storageDir || '' });
           if (typeof out !== 'string' || !out) throw new Error('réponse media:cut invalide');
           // confirmBox DETRUIT cette modale (slot unique) : on persiste les

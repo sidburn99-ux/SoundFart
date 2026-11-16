@@ -77,11 +77,12 @@ function youtubeModal() {
   const prog = el('div', { class: 'hint' });
   const bar = el('div', { class: 'ytbar' }, el('i'));
   const barFill = bar.firstChild;
-  // Destination choisie AVANT le telechargement via pickDir natif :
-  // askDestDir utilise modal() (slot unique) et detruirait cette modale,
-  // rendant la progression invisible et l'echec silencieux (SF-REL-0067).
-  let destDir = cfg.settings.lastDestDir || cfg.settings.storageDir || '';
-  const destLabel = el('span', { class: 'hint', text: destDir || '(dossier SoundFart par défaut)' });
+  // Destination : le dossier de sons choisi (storageDir) est le defaut ;
+  // lastDestDir/Changer… restent des exceptions par telechargement.
+  // pickDir natif (jamais askDestDir/confirmBox : slot modal() unique,
+  // detruirait cette modale — SF-REL-0067).
+  let destDir = cfg.settings.storageDir || cfg.settings.lastDestDir || '';
+  const destLabel = el('span', { class: 'hint', text: destDir || '(choisis un dossier)' });
   const destBtn = el('button', { text: 'Changer…', onclick: async () => {
     try {
       const d = await window.sf.pickDir();
@@ -147,6 +148,16 @@ function youtubeModal() {
     }
     if (hasTimeline && (isNaN(start) || isNaN(end) || !(end > start))) {
       prog.textContent = 'Heure invalide : la fin doit être après le début.'; return;
+    }
+    // Dossier de sons obligatoire : pickDir natif ne detruit pas la modale.
+    if (!destDir) {
+      try {
+        const d = await window.sf.pickDir();
+        if (!d) { prog.textContent = 'Téléchargement annulé : aucun dossier choisi.'; return; }
+        destDir = d; cfg.settings.lastDestDir = d;
+        if (!cfg.settings.storageDir) { cfg.settings.storageDir = d; updateStorageUi(); }
+        save(); destLabel.textContent = d;
+      } catch (e) { logErr('pickDir', e); prog.textContent = 'Choix du dossier impossible.'; return; }
     }
     busy = true;
     dl = null;

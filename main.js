@@ -38,7 +38,7 @@ function execFileTracked(file, args, opts = {}) {
     });
   });
 }
-const { AUDIO_EXT, VIRTUAL_RE: VIRTUAL_RE_MAIN, parseEndpoints, parseGet, findCableCapture, chooseRestoreIds, expandPathsAsync, writeRecording } = require('./lib/audio-utils');
+const { AUDIO_EXT, VIRTUAL_RE: VIRTUAL_RE_MAIN, parseEndpoints, parseGet, findCableCapture, chooseRestoreIds, expandPathsAsync, writeRecording, isUsablePath } = require('./lib/audio-utils');
 let win = null;
 
 // ---------- journal d'erreurs : SoundFart-data\soundfart.log ----------
@@ -120,16 +120,58 @@ if (!isPrimary) {
   });
 }
 
-// Mode portable complet : dans l'exe portable, config/outils/logs vivent dans
-// « SoundFart-data » a cote de l'exe (PORTABLE_EXECUTABLE_DIR est pose par
-// electron-builder). Repli silencieux sur %APPDATA% si non accessible.
-if (process.env.PORTABLE_EXECUTABLE_DIR && !process.argv.includes('--test-profile')) {
-  const dataDir = path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'SoundFart-data');
+// Donnees utilisateur : %APPDATA%\SoundFart (defaut Electron) — reglages et
+// outils standard Windows, plus lies au dossier de l'exe portable.
+// Migration unique depuis l'ancien SoundFart-data : config, marqueur micro,
+// outils et fichiers crees sont copies une fois, les chemins de la config
+// reecrits vers le nouveau dossier. SoundFart-data devient obsolete.
+const portableDataDir = process.env.PORTABLE_EXECUTABLE_DIR && !process.argv.includes('--test-profile')
+  ? path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'SoundFart-data') : null;
+if (portableDataDir) {
+  const appData = app.getPath('userData');
   try {
-    fs.mkdirSync(dataDir, { recursive: true });
-    fs.accessSync(dataDir, fs.constants.W_OK);
-    app.setPath('userData', dataDir);
-  } catch {}
+    const oldCfg = path.join(portableDataDir, 'config.json');
+    // Marqueur de migration : SoundFart-data est la source de verite UNE
+    // fois — les configs %APPDATA% anterieures ne sont que des restes de
+    // sessions dev (npm start). Sans marqueur, une config AppData existante
+    // (meme perimee) bloquait la migration et l'app tournait sur un profil
+    // etrangere. Le marqueur empeche toute re-migration ulterieure.
+    const migrated = path.join(appData, '.migrated-from-portable');
+    if (portableDataDir !== appData && fs.existsSync(oldCfg) && !fs.existsSync(migrated)) {
+      fs.mkdirSync(appData, { recursive: true });
+      const ts = new Date().toISOString().replace(/[:.]/g, '-');
+      // Backup des eventuelles configs AppData precedentes (restes dev) :
+      // jamais d'ecrasement silencieux de donnees utilisateur.
+      for (const f of ['config.json', 'config.json.bak']) {
+        try {
+          const p = path.join(appData, f);
+          if (fs.existsSync(p)) fs.renameSync(p, p + '.pre-migration-' + ts);
+        } catch {}
+      }
+      // JSON echappe les backslashes (\\) : on remplace la forme echappee
+      // PUIS la forme brute pour couvrir les deux ecritures possibles.
+      const fromJ = portableDataDir.replace(/\\/g, '\\\\');
+      const toJ = appData.replace(/\\/g, '\\\\');
+      const rewrite = (f) => {
+        const t = fs.readFileSync(path.join(portableDataDir, f), 'utf-8');
+        fs.writeFileSync(path.join(appData, f), t.split(fromJ).join(toJ).split(portableDataDir).join(appData));
+      };
+      for (const f of ['config.json', 'config.json.bak', 'audio-restore.json']) {
+        try { if (fs.existsSync(path.join(portableDataDir, f))) rewrite(f); } catch {}
+      }
+      // Fichiers crees par l'app (sons recopies, imports, enregistrements,
+      // extraits, outils, seeds) : copies pour ne casser aucune reference
+      // de la config migree. Une copie locale, une seule fois.
+      for (const d of ['tools', 'imports', 'recordings', 'cuts', 'default-sounds']) {
+        try {
+          const src = path.join(portableDataDir, d);
+          if (fs.existsSync(src)) fs.cpSync(src, path.join(appData, d), { recursive: true, force: true });
+        } catch (e) { log('[migration] copie ' + d + ' : ' + e.message, 'warn'); }
+      }
+      try { fs.writeFileSync(migrated, new Date().toISOString()); } catch {}
+      log('[migration] donnees reprises de SoundFart-data vers ' + appData);
+    }
+  } catch (e) { log('[migration] ' + e.message, 'warn'); }
 }
 
 // Mode test : --test-profile isole config/outils/logs dans %TEMP%\SoundFart-test (config reelle intacte)
@@ -374,6 +416,66 @@ H('files:pickDir', async () => {
     properties: ['openDirectory', 'createDirectory'],
   });
   return r.canceled ? null : r.filePaths[0];
+});
+
+// Import avec copie : les sons ajoutes sont COPIES dans <storageRoot>/sons/
+// (dossier choisi par l'utilisateur) — la bibliotheque devient autonome et ne
+// depend plus des emplacements d'origine. Dedoublonnage nom+taille+echantillons :
+// un fichier deja present est reutilise, jamais recopie. Copie .part+rename.
+const sameFileQuick = async (a, b) => {
+  // Compare taille implicite faite par l'appelant + 4 KiB en tete et en queue.
+  const rd = async (p, off, len) => {
+    const fd = await fs.promises.open(p, 'r');
+    try {
+      const buf = Buffer.alloc(len);
+      const { bytesRead } = await fd.read(buf, 0, len, off);
+      return buf.subarray(0, bytesRead);
+    } finally { await fd.close(); }
+  };
+  const sa = await fs.promises.stat(a), sb = await fs.promises.stat(b);
+  if (sa.size !== sb.size) return false;
+  const n = Math.min(4096, sa.size);
+  const [ha, hb, ta, tb] = await Promise.all([rd(a, 0, n), rd(b, 0, n), rd(a, Math.max(0, sa.size - n), n), rd(b, Math.max(0, sb.size - n), n)]);
+  return ha.equals(hb) && ta.equals(tb);
+};
+
+H('files:import', async (_e, paths, dir) => {
+  if (!Array.isArray(paths) || !paths.length || paths.length > 2000 || paths.some((p) => typeof p !== 'string')) throw new Error('chemins invalides');
+  const root = storageRoot(dir);
+  if (!isUsablePath(root)) throw new Error('dossier de stockage invalide');
+  const dest = path.join(root, 'sons');
+  await fs.promises.mkdir(dest, { recursive: true });
+  const out = [];
+  for (const src of paths) {
+    const ext = path.extname(src).toLowerCase();
+    if (!AUDIO_EXT.includes(ext)) continue;
+    const st = await fs.promises.stat(src).catch(() => null);
+    if (!st || !st.isFile()) { out.push({ path: src, label: '', error: 'illisible' }); continue; }
+    const base = path.basename(src);
+    const stem = base.slice(0, base.length - ext.length) || base;
+    let reused = null, target = null;
+    for (let i = 0; i < 1000 && !target && !reused; i++) {
+      const cand = path.join(dest, i === 0 ? base : `${stem} (${i})${ext}`);
+      const cst = await fs.promises.stat(cand).catch(() => null);
+      if (!cst) target = cand;
+      else if (cst.size === st.size && await sameFileQuick(src, cand).catch(() => false)) reused = cand;
+    }
+    if (reused) { out.push({ path: reused, label: stem }); continue; }
+    if (!target) { out.push({ path: src, label: '', error: 'nom introuvable' }); continue; }
+    const tmp = target + '.part';
+    try {
+      await fs.promises.copyFile(src, tmp);
+      const cst = await fs.promises.stat(tmp);
+      if (cst.size !== st.size) throw new Error('copie incomplète');
+      await fs.promises.rename(tmp, target);
+    } catch (e2) {
+      try { await fs.promises.unlink(tmp); } catch {}
+      out.push({ path: src, label: '', error: e2.message });
+      continue;
+    }
+    out.push({ path: target, label: stem });
+  }
+  return out;
 });
 
 H('file:read', async (_e, p) => {
