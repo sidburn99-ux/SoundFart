@@ -77,6 +77,31 @@ Vérifiable ici : `node --check`, `npm test`, `npm run dist`, build `.bat`/`.ps1
 - Restauration micro réelle sur matériel (AudioEndpoint.exe compilé à l'usage) : le budget 8 s est prouvé sur `execFileSync` générique, pas sur le vrai binaire.
 - Comportement `normalizeCfg` dans l'UI réelle (purge de sons à chemin invalide) : logique testée unitairement via `isUsablePath`, pas rejouée en interface.
 
+## Campagne audits autonomes ×10 (16/11/2026, branche `fix/audio-robustness`)
+
+10 itérations : 3 audits parallèles par sous-agents (domaines renderer, recorder/AudioTap, lib/preload/media-tools) + revue directe `main.js`, `app.js` core, scripts, `package.json`. ~20 constats réels corrigés en 7 commits unitaires.
+
+### Corrigé (vérifié : node --check + npm test 57/57 + npm run dist + smoke --test-profile propre)
+
+- **Micro bypassait le gain master** (`app.js`) : `src.connect(cable.lim)` en amont de `bus` → master=0 % ne coupait pas la voix sur Discord. Branché sur `bus` (master + limiteur). **Changement de comportement audible — à valider terrain.**
+- **`normalizeAll(host)` invisible** : le panneau réglages fermé ne stoppait pas la boucle (computeNorm sur toute la bibliothèque en arrière-plan) → test `host.isConnected`.
+- **Éditeur** : `pointercancel` non géré (drag fantôme déplaçait le marqueur), `timeAt` NaN si `r.width=0`, `catch loadWave` loggé.
+- **Enregistreur** : `closedDuringRec` posé seulement si `rec.state!=='inactive'` → un `onstop` en vol ouvrait sa modale et détruisait une autre modale ; `actx` suspendu → toast (fichier silencieux sinon invisible) ; catches `audioTapStop`/`rec.stop` loggés.
+- **YouTube** : `e.message` undefined possible → fallback ; nom de pré-écoute non trimé.
+- **`normalize.js`** : `ctx.resume().catch({})` → logErr.
+- **`media-tools.js`** : `downloadFile` laissait des fichiers partiels → unlink avant reject ; `httpsGetText` sans deadline totale (slow-drip bloquait `ytdlpPromise` à jamais) → 60 s ; `findFile` readdirSync non protégé ; template yt-dlp non échappé (`%` dans storageRoot cassait tout import) ; ménage `imports/` étendu aux audio complets des tags avortés ; timeout `runYt` marqué `timedOut` → le retry ne force plus une maj yt-dlp ~100 Mo pour un contenu trop long (timeout 2 min conservé, règle projet).
+- **Audits propres, rien à corriger** : `main.js` (watchdog, IPC, menu, AudioTap, will-quit), `lib/audio-utils.js` (math BS.1770 vérifiée ligne à ligne par le subagent), `lib/media-permission.js`, `preload.js` (parité complète 23 invoke + 3 send + 7 on), `package.json`, `.bat`/`.ps1`, `tap-processor.js`.
+
+### « À valider » / non vérifié (campagne)
+
+- **Micro → bus** : niveau vocal perçu change (~master) — valider sur appel Discord.
+- **`runYt` timedOut** : le retry sur timeout ne se fait plus que si la maj n'est pas à jour — comportement voulu, à observer sur un import long.
+- **Ménage audio orphelin** : suppression de fichiers `sf-<vieux-tag>-*.mp3` — vérifié statiquement (tags uniques par requête, `newest` protégé), pas en réel.
+- Race `normBtn` vs « Enregistrer » dans l'éditeur (gain perdu si enregistrement pendant computeNorm) — laissée, demande un choix produit (désactiver Enregistrer pendant le calcul).
+- `dl = null` symétrique dans youtube.js — chemin quasi-mort, non appliqué (cosmétique).
+
+## Campagne de fiabilisation (15/11/2026)
+
 ## Chantier audio-robustesse (16/11/2026, branche `fix/audio-robustness`)
 
 Crash renderer `-1/143` (SF-REL-0611) + dette technique restante. Baseline : `npm test` 56/56, `node --check` OK, `npm run dist` OK, smoke exe propre (AudioContext créés, aucune erreur `[page]` nouvelle — les 7 occurrences `[page]` du log test datent du 15/11).
