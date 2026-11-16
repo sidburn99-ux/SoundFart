@@ -60,7 +60,10 @@ async function normalizeAll(host) {
     closeP = modal('Normalisation de la bibliothèque', [prog, hint], [{ label: 'Fermer', onclick: (c) => c() }], { onClose: () => { cancelled = true; } });
   }
   for (const s of targets) {
-    if (cancelled) break;
+    // Le panneau peut etre ferme pendant la boucle (modal settings
+    // detruite) : sans ce test, normalizeAll continuait en invisible —
+    // computeNorm sur toute la bibliotheque, save() et renderAll().
+    if (cancelled || (host && !host.isConnected)) break;
     prog.textContent = `${done + 1} / ${targets.length} — ${s.name || 'son'}`;
     try { s.norm = await computeNorm(s.path); } catch (e) { failed++; logErr('computeNorm', e); /* garder s.norm : un echec ne doit pas effacer un reglage perso */ }
     prog.textContent = `${++done} / ${targets.length}`;
@@ -82,7 +85,7 @@ async function testNormLufs(targetLufs) {
   if (!out) { toast('Choisis d\'abord une « écoute locale » dans les réglages.', 'warn'); return; }
   try {
     const ctx = out.ctx;
-    if (ctx.state !== 'running') ctx.resume().catch(() => {});
+    if (ctx.state !== 'running') ctx.resume().catch((e) => logErr('testNormLufs resume', e));
     const target = Number.isFinite(+targetLufs) ? Math.min(0, Math.max(-40, +targetLufs)) : normLufsTarget();
     const dur = 1.2, n = Math.floor(dur * ctx.sampleRate);
     const buf = ctx.createBuffer(1, n, ctx.sampleRate);
