@@ -231,7 +231,9 @@ function modal(title, body, buttons, opts = {}) {
     const appEl = document.getElementById('app');
     if (appEl) appEl.inert = false;
     if (modalClose === close) modalClose = null;
-    if (opts.onClose) opts.onClose();
+    // onClose avant resolve : un onClose qui jette ne doit PAS empecher
+    // la resolution — sinon la promesse du dialogue reste pendue a jamais.
+    try { if (opts.onClose) opts.onClose(); } catch (e) { logErr('modal onClose', e); }
     // FERMETURE PAR ECHAP/ BACKDROP : les promesses des dialogues
     // (askText/confirmBox/askDestDir) doivent etre resolues — sinon un
     // await reste pendu a jamais (ex. enregistrement perdu en silence
