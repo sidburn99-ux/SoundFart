@@ -28,13 +28,7 @@ function execFileTracked(file, args, opts = {}) {
     let out = '', err = '', done = false;
     const timer = opts.timeout ? setTimeout(() => { if (!done) { done = true; try { p.kill(); } catch {} reject(new Error('délai dépassé')); } }, opts.timeout) : null;
     if (p.stdout) p.stdout.on('data', (d) => { if (out.length < 4 * 1024 * 1024) out += d; });
-    // opts.errTail : garder uniquement les N derniers octets de stderr
-    // (rolling) — pour les outils verbeux dont le resume utile est a la FIN
-    // (ex. ffmpeg ebur128 : des centaines de lignes « t: » avant le Summary).
-    if (p.stderr) p.stderr.on('data', (d) => {
-      if (opts.errTail) { err += d; if (err.length > opts.errTail * 2) err = err.slice(-opts.errTail); }
-      else if (err.length < 65536) err += d;
-    });
+    if (p.stderr) p.stderr.on('data', (d) => { if (err.length < 65536) err += d; });
     p.on('error', (e) => { if (!done) { done = true; if (timer) clearTimeout(timer); reject(e); } });
     p.on('close', (code) => {
       if (done) return;

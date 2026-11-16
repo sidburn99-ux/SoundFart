@@ -878,7 +878,6 @@ async function measureForNorm(path) {
   return {
     lufs,
     truePeakDb: peak > 0 ? 20 * Math.log10(peak) : -Infinity,
-    degraded: true,
   };
 }
 
@@ -931,7 +930,7 @@ async function normalizeAll(host) {
 // mesuree puis ramenee exactement au LUFS saisi — joue UNIQUEMENT sur
 // l'ecoute locale, jamais sur le cable Discord (tes potes n'ont pas a
 // entendre le test).
-async function testNormTarget(targetLufs) {
+async function testNormLufs(targetLufs) {
   const out = audio.mon;
   if (!out) { toast('Choisis d\'abord une « écoute locale » dans les réglages.', 'warn'); return; }
   try {
@@ -966,7 +965,7 @@ async function testNormTarget(targetLufs) {
     src.onended = () => { try { g.disconnect(); } catch {} };
     src.start();
     toast('Test : loudness ' + target + ' LUFS — écouté sur « ' + (cfg.settings.monLabel || 'écoute locale') + ' » uniquement.');
-  } catch (e) { logErr('testNormTarget', e); toast('Test impossible : ' + (e && e.message || e), 'warn'); }
+  } catch (e) { logErr('testNormLufs', e); toast('Test impossible : ' + (e && e.message || e), 'warn'); }
 }
 
 // ================================================================ utilitaires
@@ -1506,20 +1505,20 @@ function settingsModal() {
   const autoMic = el('input', { type: 'checkbox', checked: !!s.autoSwitchMic, title: 'Au lancement, l\'entrée micro Windows bascule sur « CABLE Output » (pour que Discord capte ta voix via le câble), puis revient à ton vrai micro à la fermeture ou en cas de crash.' });
   const watchMic = el('input', { type: 'checkbox', checked: s.watchdogMic !== false, title: 'Revérifie périodiquement que l\'entrée micro est toujours sur le câble. Se met en pause pour la session si tu changes le micro toi-même (Discord inclus).' });
 
-  const normTargetIn = el('input', { type: 'number', min: -40, max: 0, step: 1, value: normLufsTarget(), title: 'Loudness cible en LUFS (volume perçu, pas le pic). -18 LUFS par défaut. Plus haut (proche de 0) = plus fort, plus bas = plus doux. Le limiteur en aval absorbe les dépassements.' });
+  const normLufsIn = el('input', { type: 'number', min: -40, max: 0, step: 1, value: normLufsTarget(), title: 'Loudness cible en LUFS (volume perçu, pas le pic). -18 LUFS par défaut. Plus haut (proche de 0) = plus fort, plus bas = plus doux. Le limiteur en aval absorbe les dépassements.' });
   // Persiste la valeur des que le champ est valide — sinon « Normaliser
   // ce son » (editeur) ou un « Fermer » utilisaient l'ancienne cible.
-  normTargetIn.addEventListener('change', () => {
-    const nl = +normTargetIn.value;
+  normLufsIn.addEventListener('change', () => {
+    const nl = +normLufsIn.value;
     if (Number.isFinite(nl) && nl <= 0) { s.normLufs = Math.max(-40, nl); save(); }
   });
-  const normTestBtn = el('button', { class: 'ghost', text: 'Tester', title: 'Joue 1,2 s de bruit dont la loudness est exactement au niveau saisi — sur ton écoute locale uniquement (pas sur Discord).', onclick: () => testNormTarget(normTargetIn.value) });
+  const normTestBtn = el('button', { class: 'ghost', text: 'Tester', title: 'Joue 1,2 s de bruit dont la loudness est exactement au niveau saisi — sur ton écoute locale uniquement (pas sur Discord).', onclick: () => testNormLufs(normLufsIn.value) });
   const normProg = el('div', {});
   const normAllBtn = el('button', { text: 'Normaliser toute la bibliothèque', title: 'Ramène la loudness perçue de chaque son au niveau LUFS ci-contre (la valeur saisie est appliquée d\'abord). Les fichiers audio ne sont jamais modifiés — seul le gain en lecture change. La progression s\'affiche ici, le panneau reste ouvert.', onclick: async () => {
     // La valeur tapee est appliquee d'abord (le panneau ne se ferme plus) ;
     // la progression s'affiche en ligne dans normProg, « Appliquer » reste
     // utilisable pendant la normalisation.
-    const nl = +normTargetIn.value;
+    const nl = +normLufsIn.value;
     if (Number.isFinite(nl) && nl <= 0) { s.normLufs = Math.max(-40, nl); save(); }
     normAllBtn.disabled = true;
     try { await normalizeAll(normProg); } finally { normAllBtn.disabled = false; }
@@ -1588,7 +1587,7 @@ function settingsModal() {
     { label: 'Niveaux audio', nodes: [
       field('Niveaux audio', el('div', {},
         el('div', { class: 'row' },
-          el('span', { class: 'hint', text: 'Cible loudness (LUFS) :' }), normTargetIn, el('span', { class: 'hint', text: 'LUFS' }), normTestBtn, normAllBtn),
+          el('span', { class: 'hint', text: 'Cible loudness (LUFS) :' }), normLufsIn, el('span', { class: 'hint', text: 'LUFS' }), normTestBtn, normAllBtn),
         normProg),
         'Ramène la loudness perçue de chaque son au niveau cible sans dépasser le plafond de pic (-1 dBFS). Mesure 100 % interne (BS.1770), aucun téléchargement — les fichiers ne sont pas modifiés.'),
       field('Réinitialiser', el('div', { class: 'row' }, resetSoundsBtn),
@@ -1642,7 +1641,7 @@ function settingsModal() {
       s.storageDir = s.storageDir || '';
       s.autoSwitchMic = autoMic.checked;
       s.watchdogMic = watchMic.checked;
-      const nl = +normTargetIn.value;
+      const nl = +normLufsIn.value;
       s.normLufs = (Number.isFinite(nl) && nl <= 0) ? Math.max(-40, nl) : defaults().settings.normLufs;
       save(); c();
       if (await applyAudio().catch((e) => { logErr('applyAudio', e); return false; })) toast('Réglages audio appliqués.');
