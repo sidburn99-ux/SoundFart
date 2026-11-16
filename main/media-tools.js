@@ -9,7 +9,7 @@ const { spawn } = require('child_process');
 const { AUDIO_EXT, safeName, cbOrNoop } = require('../lib/audio-utils');
 
 function createMediaTools(deps) {
-  const { log, execFileTracked, trackChild, H, toolSane, discardCorruptTool, toolsDir, storageRoot, getWin } = deps;
+  const { log, execFileTracked, trackChild, killTree, H, toolSane, discardCorruptTool, toolsDir, storageRoot, getWin } = deps;
 // ---------- ffmpeg : coupe physique des extraits (MP3) ----------
 function findFile(dir, name, depth = 0) {
   if (depth > 4) return null;

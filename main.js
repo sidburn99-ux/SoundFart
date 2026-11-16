@@ -457,7 +457,7 @@ H('rec:save', async (_e, opts) => {
 // ---------- media : ffmpeg + yt-dlp (main/media-tools.js) ----------
 // Enregistre les handlers IPC media:cut / yt:* (ffmpeg + yt-dlp).
 createMediaTools({
-  log, execFileTracked, trackChild, H, toolSane, discardCorruptTool,
+  log, execFileTracked, trackChild, killTree, H, toolSane, discardCorruptTool,
   toolsDir, storageRoot, getWin: () => win,
 });
 
@@ -558,8 +558,8 @@ async function ensureAudioTool() {
 
 // execFileSync : reserve aux chemins de sortie (will-quit/uncaughtException) ou
 // le process va mourir de toute facon. Tout chemin IPC utilise audioExecP.
-function audioExecSync(tool, args) {
-  return execFileSync(tool, args, { encoding: 'utf8', timeout: 15000, windowsHide: true });
+function audioExecSync(tool, args, timeoutMs) {
+  return execFileSync(tool, args, { encoding: 'utf8', timeout: timeoutMs || 15000, windowsHide: true });
 }
 
 // parseEndpoints/parseGet/findCableCapture viennent de lib/audio-utils.js.
@@ -586,16 +586,27 @@ async function restoreMicNowP(tool) {
 // Variante synchrone : uniquement pour will-quit / uncaughtException ou le
 // process se termine — un execFile async ne pourrait pas finir a temps.
 function restoreMicNow(tool) {
+  // Budget global : will-quit/uncaughtException ne doivent jamais geler la
+  // fermeture. 3 appels x 15 s = ~45 s de blocage possible si AudioEndpoint
+  // se fige (COM). On borne a 8 s au total ; en cas de dépassement le
+  // marqueur audio-restore.json est conserve et la restauration sera
+  // retentee au prochain lancement (restoreMicNowP / garde externe).
+  const deadline = Date.now() + 8000;
+  const syncT = (args) => {
+    const left = deadline - Date.now();
+    if (left <= 0) throw new Error('budget temps de restauration epuise');
+    return audioExecSync(tool, args, Math.min(5000, Math.ceil(left)));
+  };
   try {
     if (!tool || !fs.existsSync(restoreFile())) return false;
     const prev = JSON.parse(fs.readFileSync(restoreFile(), 'utf-8'));
-    const eps = parseEndpoints(audioExecSync(tool, ['list']));
+    const eps = parseEndpoints(syncT(['list']));
     let cur = { console: '', comm: '', multi: '' };
-    try { cur = parseGet(audioExecSync(tool, ['get', 'capture'])); } catch {}
+    try { cur = parseGet(syncT(['get', 'capture'])); } catch {}
     const r = chooseRestoreIds(eps, prev, cur);
     const cId = r.consoleId, mId = r.commId;
     if (!cId && !mId) return false;
-    audioExecSync(tool, ['set', 'capture', cId || mId, mId || cId, r.multiId || cId || mId]);
+    syncT(['set', 'capture', cId || mId, mId || cId, r.multiId || cId || mId]);
     try { fs.unlinkSync(restoreFile()); } catch {}
     return true;
   } catch { return false; }
