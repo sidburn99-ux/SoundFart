@@ -1,7 +1,9 @@
 'use strict';
 
 const SR = 48000;
-const VIRTUAL_RE = /cable|virtual|voicemeeter|vb-audio/i;
+// Source unique : lib/audio-utils.js (SFUtils) — la copie locale avait
+// diverge possible entre main et renderer.
+const VIRTUAL_RE = window.SFUtils.VIRTUAL_RE;
 const PALETTE = ['#8b5cf6', '#ec4899', '#f97316', '#22c55e', '#06b6d4', '#eab308', '#ef4444', '#3b82f6'];
 const THUMB_EMOJIS = ['💨', '🔊', '📢', '🎺', '🦖', '🤖', '👽', '🔥', '⚡', '🍕', '🎮', '🏆', '💣', '🧨', '🎉', '😱', '🤣', '🤡', '👻', '🐔', '🐸', '🐵', '🦁', '🐯', '🐙', '🚀', '🌈', '🍔', '🍿', '🎯', '🎲', '🃏', '🎰', '📯', '🎷', '🎸', '🥁', '🎻', '🎤', '📻', '🔔', '⏰', '💎', '🪙', '🎁', '🍩', '🧃', '🥤', '👑', '🃏'];
 
