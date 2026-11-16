@@ -187,7 +187,15 @@ function editSound(s) {
     startPreview(Math.min(Math.max(t, ts + 0.02), te - 0.02));
   }
   const preview = () => startPreview();
-  const reset = () => { ts = 0; te = dur; fiIn.value = 0; foIn.value = 0; sync(); draw(); };
+  // « Tout » = tous les parametres AUDIO : volume, normalisation, decoupe,
+  // fondus. Nom/categorie/favori/raccourci gardes (identite du son, pas un
+  // traitement) — sinon un clic imprudent effacait le raccourci configure.
+  const reset = () => {
+    ts = 0; te = dur; fiIn.value = 0; foIn.value = 0;
+    vol.value = 100; volLbl.textContent = '100%';
+    norm = 1; normVal.textContent = '×1';
+    sync(); draw();
+  };
   // Applique les editions en cours au modele : partage entre « Enregistrer »
   // et l'export MP3 (qui rouvre l'editeur — sans ca les edits etaient perdus).
   const collectEdits = () => {
