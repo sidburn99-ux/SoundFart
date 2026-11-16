@@ -227,6 +227,7 @@ function editSound(s) {
         exportBusy = true;
         try {
           const out = await window.sf.mediaCut({ input: s.path, start: outStart(), end: outEnd() ?? dur, dir: cfg.settings.storageDir || '' });
+          if (typeof out !== 'string' || !out) throw new Error('réponse media:cut invalide');
           // confirmBox DETRUIT cette modale (slot unique) : on persiste les
           // edits courants d'abord (collectEdits : les champs saisis, pas
           // seulement trim/fades), puis on rouvre l'editeur apres la decision
