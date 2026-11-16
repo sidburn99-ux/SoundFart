@@ -1327,6 +1327,14 @@ async function init() {
       const prev = { cable: s.cableId, mon: s.monId, mic: s.micId };
       const hadCable = cablePresent();
       await refreshDevices(false);
+      // Forensique crash -1/143 : tracer les transitions de peripheriques —
+      // un device qui disparait peut preceder de quelques secondes le crash
+      // AudioContext ; sans cette ligne le log ne montre pas le déclencheur.
+      if (s.cableId !== prev.cable || s.monId !== prev.mon || s.micId !== prev.mic) {
+        uiLog('devicechange: cable=' + (prev.cable || 'defaut') + '->' + (s.cableId || 'defaut') +
+          ' mon=' + (prev.mon || 'defaut') + '->' + (s.monId || 'defaut') +
+          ' mic=' + (prev.mic || 'defaut') + '->' + (s.micId || 'defaut'));
+      }
       resolveDevices();
       updateCableUi();
       // ne reconstruit les sorties que si un peripherique configure a disparu

@@ -1117,6 +1117,20 @@ app.whenReady().then(() => {
   app.quit();
 });
 
+// Forensique crash renderer (-1/143) : le service audio WebAudio tourne dans
+// un processus utilitaire Chromium — ses crashes (audio device error) ne
+// passent ni par render-process-gone ni forcement par Crashpad. On journalise
+// chaque mort de processus enfant avec raison/exitCode/serviceName.
+app.on('child-process-gone', (_e, details) => {
+  try {
+    const d = details || {};
+    log('[child-gone] ' + JSON.stringify({
+      type: d.type, name: d.name, reason: d.reason, exitCode: d.exitCode,
+      serviceName: d.serviceName, serviceFilePath: d.serviceFilePath,
+    }), 'warn');
+  } catch {}
+});
+
 app.on('window-all-closed', () => app.quit());
 // Filet de securite : une exception fatale ne doit pas laisser le micro coince sur le cable.
 process.on('uncaughtException', (e) => {
