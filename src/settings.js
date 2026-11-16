@@ -18,10 +18,11 @@ function exportConfig() {
 function askDestDir() {
   return new Promise((resolve) => {
     const inp = el('input', { type: 'text', value: cfg.settings.lastDestDir || cfg.settings.storageDir || '' });
+    // input DOIT etre dans .field : sinon il garde le style natif (fond
+    // blanc) avec le texte clair herite -> illisible (retour terrain).
     inp.style.width = '100%';
     modal('Dossier de destination', [
-      el('div', { class: 'hint', text: 'Le fichier sera enregistré dans ce dossier (sous-dossier imports/ ou recordings/ selon la source). Laisse vide pour le dossier SoundFart par défaut.' }),
-      inp,
+      field('Dossier', inp, 'Le fichier sera enregistré dans ce dossier (sous-dossier imports/ ou recordings/ selon la source). Laisse vide pour le dossier SoundFart par défaut.'),
     ], [
       { label: 'Annuler', onclick: (c) => { resolve(null); c(); } },
       { label: 'Choisir…', onclick: async () => { try { const d = await window.sf.pickDir(); if (d) inp.value = d; } catch (e) { logErr('pickDir', e); } } },
@@ -261,9 +262,6 @@ function settingsModal() {
       field('Mon micro', micSel, 'Le vrai micro est ★ ; les périphériques virtuels (CABLE Output, Voicemeeter…) sont ⚠ déconseillés ici.'),
       el('label', { class: 'check' }, mix,
         el('span', { text: 'Mixer mon micro dans la sortie Discord (sinon tes potes n\'entendent que les sons). Décoche si tu utilises « Écouter ce périphérique » de Windows.' })),
-      el('label', { class: 'check' }, voiceDsp,
-        el('span', { text: 'Réduction de bruit et écho sur la voix uniquement — n\'affecte pas les sons. Le gain micro reste indépendant du volume general.' })),
-      el('div', { class: 'row' }, el('span', { class: 'hint', text: 'Intensité :' }), voiceLvl),
       field('Bascule micro automatique', el('label', { class: 'check' }, autoMic,
         el('span', { text: 'Au lancement, SEUL le micro (entrée Windows) passe sur « CABLE Output » et revient à ton micro à la fermeture — tes sorties (Discord, écoute locale) restent sur tes périphériques habituels. Dans Discord, choisis « Défaut » comme périphérique d\'entrée pour que ça suive.' }))),
       field('Surveillance micro automatique', el('label', { class: 'check' }, watchMic,
@@ -273,6 +271,13 @@ function settingsModal() {
           toast('Restauration du micro demandée — si l\'entrée était bloquée sur le câble, elle revient sur ton micro.', 'info');
         } }),
         'À utiliser si ton micro Windows est resté bloqué sur « CABLE Output » (coupure, crash). Ramène l\'entrée sur ton vrai micro.'),
+    ]},
+    { label: 'Voix', nodes: [
+      field('Traitement vocal', el('label', { class: 'check' }, voiceDsp,
+        el('span', { text: 'Réduction de bruit et écho sur la voix uniquement — n\'affecte pas les sons. Le gain micro reste indépendant du volume general.' })),
+        'Agit sur le micro envoyé à Discord : annulation d\'écho, suppression de bruit et filtre passe-bande (coupe les graves de clavier et le souffle). Décoche si ta voix sonne étouffée ou si tu utilises déjà un filtre Discord/Teams.'),
+      field('Intensité', el('div', { class: 'row' }, voiceLvl),
+        'Léger = peu de coupe · Normal = équilibré · Fort = bruit de clavier/fond très atténué (la voix peut paraître plus compressée).'),
     ]},
     { label: 'Niveaux audio', nodes: [
       field('Niveaux audio', el('div', {},

@@ -16,10 +16,11 @@ async function recorderModal() {
   let closedDuringRec = false; // modale fermee PENDANT une prise : pas de modale resultat (elle detruirait une modale ouverte entre-temps)
   let tapNode = null, pcmQ = [], pcmSeen = false, tapLost = false, pcmDrops = 0, pcmQBytes = 0;
   let analyser = null, meterRaf = 0;
-  // Pas de disconnect() sur l'analyser : il reste dans le graphe
+  // Pas de disconnect() ni d'analyser=null : le noeud reste dans le graphe
   // comp -> analyser -> dest jusqu'a actx.close() — le couper ici
-  // rendrait la fin d'enregistrement silencieuse.
-  const stopMeter = () => { if (meterRaf) { cancelAnimationFrame(meterRaf); meterRaf = 0; } analyser = null; meterBar.style.display = 'none'; };
+  // rendrait la fin d'enregistrement silencieuse, et nuller analyser
+  // empêchait startMeter de jamais afficher la jauge (retour terrain).
+  const stopMeter = () => { if (meterRaf) { cancelAnimationFrame(meterRaf); meterRaf = 0; } meterBar.style.display = 'none'; };
   const startMeter = () => {
     stopMeter();
     if (!analyser) return;
