@@ -138,3 +138,18 @@ test('loudnessFromPcm : ordre de grandeur sur bruit et sine', () => {
   assert.ok(lNoise > -30 && lNoise < -5, 'noise ' + lNoise);
   assert.ok(lSine > -30 && lSine < 0, 'sine ' + lSine);
 });
+
+// loudnessFromPcmAsync : meme resultat que la version synchrone,
+// mais yield toutes les ~2 M frames (UI non gelee sur fichiers longs).
+test('loudnessFromPcmAsync : identique a loudnessFromPcm', async () => {
+  const sr = 48000, n = sr * 3; // 3 s stéréo
+  const mk = (ph) => { const d = new Float32Array(n); for (let i = 0; i < n; i++) d[i] = 0.3 * Math.sin(2 * Math.PI * 440 * i / sr + ph); return d; };
+  const chs = [mk(0), mk(0.7)];
+  const sync = U.loudnessFromPcm(chs, sr);
+  const asy = await U.loudnessFromPcmAsync(chs, sr);
+  assert.ok(Number.isFinite(sync) && Number.isFinite(asy));
+  assert.equal(asy, sync, 'async doit etre bit-identique au synchrone');
+  // et sur un buffer avec des tranches multiples (petit chunkForce)
+  const asy2 = await U.loudnessFromPcmAsync(chs, sr, 1000);
+  assert.equal(asy2, sync, 'avec petit chunk aussi');
+});

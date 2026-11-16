@@ -10,9 +10,18 @@ async function measureForNorm(path) {
   const buf = await getBuffer(path);
   const chs = [];
   for (let c = 0; c < buf.numberOfChannels; c++) chs.push(buf.getChannelData(c));
-  const lufs = window.SFUtils.loudnessFromPcm(chs, buf.sampleRate);
+  const lufs = await window.SFUtils.loudnessFromPcmAsync(chs, buf.sampleRate);
+  // Pic echantillon par tranches avec yield : le scan synchrone gelait
+  // l'UI plusieurs secondes sur les fichiers longs (normalisation).
   let peak = 0;
-  for (const d of chs) for (let i = 0; i < d.length; i++) { const a = Math.abs(d[i]); if (a > peak) peak = a; }
+  const CHUNK = 1 << 21;
+  for (const d of chs) {
+    for (let i = 0; i < d.length; i += CHUNK) {
+      const end = Math.min(d.length, i + CHUNK);
+      for (let j = i; j < end; j++) { const a = Math.abs(d[j]); if (a > peak) peak = a; }
+      if (end < d.length) await new Promise((r) => setTimeout(r, 0));
+    }
+  }
   return {
     lufs,
     truePeakDb: peak > 0 ? 20 * Math.log10(peak) : -Infinity,
