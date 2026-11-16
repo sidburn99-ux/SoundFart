@@ -83,7 +83,7 @@ Vérifiable ici : `node --check`, `npm test`, `npm run dist`, build `.bat`/`.ps1
 
 ### Corrigé (vérifié : node --check + npm test 57/57 + npm run dist + smoke --test-profile propre)
 
-- **Micro bypassait le gain master** (`app.js`) : `src.connect(cable.lim)` en amont de `bus` → master=0 % ne coupait pas la voix sur Discord. Branché sur `bus` (master + limiteur). **Changement de comportement audible — à valider terrain.**
+- ~~**Micro bypassait le gain master**~~ **ANNULÉ par décision produit** : la voix est reconnectée directement sur `lim` (amont de `bus`) — le réglage master reste celui de la soundboard, la voix garde son propre réglage (Windows/Discord). Limiteur conservé en aval pour la protection crête. `npm test` 57/57 + `npm run dist` OK.
 - **`normalizeAll(host)` invisible** : le panneau réglages fermé ne stoppait pas la boucle (computeNorm sur toute la bibliothèque en arrière-plan) → test `host.isConnected`.
 - **Éditeur** : `pointercancel` non géré (drag fantôme déplaçait le marqueur), `timeAt` NaN si `r.width=0`, `catch loadWave` loggé.
 - **Enregistreur** : `closedDuringRec` posé seulement si `rec.state!=='inactive'` → un `onstop` en vol ouvrait sa modale et détruisait une autre modale ; `actx` suspendu → toast (fichier silencieux sinon invisible) ; catches `audioTapStop`/`rec.stop` loggés.
@@ -94,7 +94,6 @@ Vérifiable ici : `node --check`, `npm test`, `npm run dist`, build `.bat`/`.ps1
 
 ### « À valider » / non vérifié (campagne)
 
-- **Micro → bus** : niveau vocal perçu change (~master) — valider sur appel Discord.
 - **`runYt` timedOut** : le retry sur timeout ne se fait plus que si la maj n'est pas à jour — comportement voulu, à observer sur un import long.
 - **Ménage audio orphelin** : suppression de fichiers `sf-<vieux-tag>-*.mp3` — vérifié statiquement (tags uniques par requête, `newest` protégé), pas en réel.
 - Race `normBtn` vs « Enregistrer » dans l'éditeur (gain perdu si enregistrement pendant computeNorm) — laissée, demande un choix produit (désactiver Enregistrer pendant le calcul).
