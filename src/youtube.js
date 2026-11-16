@@ -90,7 +90,9 @@ function youtubeModal() {
       if (offProg) offProg();
       offProg = window.sf.onYtProgress(setProg);
       const r = await window.sf.ytDownload({ url: urlIn.value.trim(), start: hasTimeline ? start : 0, end: hasTimeline ? end : 0, dir: destDir, full: !hasTimeline });
-      dl = { path: r.path, sectioned: r.sectioned, start: hasTimeline ? start : 0, end: hasTimeline ? end : null };
+      // Contrat IPC : un path non-string creerait un son invalide silencieusement.
+      if (!r || typeof r.path !== 'string' || !r.path) throw new Error('réponse yt:download invalide');
+      dl = { path: r.path, sectioned: !!r.sectioned, start: hasTimeline ? start : 0, end: hasTimeline ? end : null };
       // Une AUTRE modale est ouverte (pas la notre ni un residu askDestDir
       // deja ferme -> modalClose null) : ne pas la detruire. Le fichier est
       // dans imports/ — on donne le chemin.
