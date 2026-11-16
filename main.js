@@ -531,6 +531,7 @@ const toolHash = (csPath) => {
 };
 
 let csQueue = Promise.resolve(); // une seule compilation C# a la fois, toutes sources confondues
+let lastToolErr = ''; // dernier echec de compilation d'outil natif (remonte a l'UI)
 
 // Sonde d'integrite minimale : un binaire tronque/corrompu (download
 // interrompu, AV, disque plein) restait « present » via existsSync et
@@ -578,12 +579,18 @@ async function doCompileCs(csName, exeBase) {
   return target;
 }
 
+// Backoff compile C# : sans lui, un csc.exe absent/inoperant relancait une
+// compilation (timeout 60 s) + une erreur a chaque tick de 30 s du watchdog
+// (~1400 lignes d'erreur/jour). 10 min entre deux tentatives ; un succes
+// (binaire produit) reinitialise immediatement.
+let audioToolFailAt = 0;
 async function ensureAudioTool() {
   const p = audioToolPath();
-  if (toolSane(p, 4096)) return p;
+  if (toolSane(p, 4096)) { audioToolFailAt = 0; return p; }
+  if (Date.now() - audioToolFailAt < 10 * 60 * 1000) return null;
   if (fs.existsSync(p)) discardCorruptTool(p, 'AudioEndpoint');
-  try { return await compileCs('AudioEndpoint', 'AudioEndpoint'); }
-  catch (e) { lastToolErr = e.message; log('[audio] compilation AudioEndpoint: ' + e.message, 'error'); return null; }
+  try { const t = await compileCs('AudioEndpoint', 'AudioEndpoint'); audioToolFailAt = 0; return t; }
+  catch (e) { audioToolFailAt = Date.now(); lastToolErr = e.message; log('[audio] compilation AudioEndpoint: ' + e.message, 'error'); return null; }
 }
 
 // execFileSync : reserve aux chemins de sortie (will-quit/uncaughtException) ou

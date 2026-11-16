@@ -305,7 +305,7 @@ async function ytdlpInstalledVersion() {
     if (meta && meta.version) return meta.version;
   } catch {}
   try {
-    const { stdout } = await execFileTracked(ytdlpPath(), ['--version'], { timeout: 15000 });
+    const { stdout } = await execFileTracked(ytdlpPath(), ['--version', '--ignore-config'], { timeout: 15000 });
     const v = String(stdout).trim().split(/\s+/)[0];
     return /^\d{4}\.\d{2}\.\d{2}$/.test(v) ? v : null;
   } catch { return null; }
@@ -401,7 +401,7 @@ function runYt(args, onProgress) {
   return new Promise((resolve, reject) => {
     // stdin ignore : un outil externe ne doit pas heriter d'un pipe ouvert
     // (yt-dlp/ffmpeg peuvent y attendre une saisie et pendre).
-    const p = trackChild(spawn(ytdlpPath(), args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }));
+    const p = trackChild(spawn(ytdlpPath(), ['--ignore-config', ...args], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }));
     const rec = { p, cancelled: false };
     activeYt = rec;
     const release = () => { if (activeYt === rec) activeYt = null; };
@@ -484,7 +484,7 @@ H('yt:info', async (_e, url) => {
   ytProgress(-1);
   // execFileTracked (et non execFileP) : le process est suivi dans
   // childProcs et tue au will-quit — un yt:info en vol ne survit pas.
-  const { stdout } = await execFileTracked(ytdlpPath(), ['--dump-single-json', '--no-playlist', '--no-warnings', url], { timeout: 120000, windowsHide: true }); // stdout plafonne a 4 Mo par execFileTracked (maxBuffer n'existe pas sur spawn)
+  const { stdout } = await execFileTracked(ytdlpPath(), ['--ignore-config', '--dump-single-json', '--no-playlist', '--no-warnings', url], { timeout: 120000, windowsHide: true }); // stdout plafonne a 4 Mo par execFileTracked (maxBuffer n'existe pas sur spawn)
   let j;
   try { j = JSON.parse(stdout); }
   catch (e) { throw new Error('yt-dlp a renvoyé des métadonnées illisibles : ' + e.message); }

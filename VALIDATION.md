@@ -23,7 +23,7 @@
 - [x] Importer des fichiers audio (MP3/WAV, noms accents/espaces) → apparaissent en bibliothèque. **[U] 16/11**.
 - [ ] Importer un WAV 5 min puis un MP3 3 min → lecture OK, heap log stable (`heap=` dans soundfart.log). **[A] 15/11 partiel** : WAV 5 min décodé + joué, heap stable ; MP3 3 min non testé (même chemin).
 - [x] Fichier > 150 Mo → refus propre avec message, pas de crash. **[A] 15/11** : WAV 172,8 Mo refusé proprement. **[U] 16/11** : message « fichier trop long » affiché (toast corrigé ensuite pour les noms à emojis).
-- [x] **Limite de durée** `maxSoundDur` (défaut 45 s, 0 = illimité) → lecture bornée + toast une fois. **[U] 16/11 : reporté — non testé.**
+- [ ] **Limite de durée** `maxSoundDur` (défaut 45 s, 0 = illimité) → lecture bornée + toast une fois. **[U] 16/11 : reporté — non testé.** *(non coché : reporté par l'utilisateur)*
 
 ## B. Périphériques
 
@@ -60,7 +60,7 @@
 
 ## E. Import YouTube / ffmpeg
 
-- [x] URL valide → Analyser → infos correctes → téléchargement → « Ajouter à la bibliothèque » → son jouable. **[U] 16/11**, y compris une vidéo de **19 min**.
+- [x] URL valide → Analyser → infos correctes → téléchargement → « Ajouter à la bibliothèque » → son jouable. **[U] 16/11**, y compris une vidéo de **19 min** *(import/ajout validé ; la lecture est bornée à `maxSoundDur` = 45 s par défaut — non testée)*.
 - [x] **Annuler le téléchargement** → modale fermée proprement, pas de pseudo-erreur, pas de second yt-dlp (bug « repli audio complet » corrigé 16/11). **[U] 16/11**.
 - [x] Erreurs YouTube en français (privée, indisponible, réseau). **[U] 16/11**.
 - [x] Extrait avec timeline → MP3 de la bonne durée. **[U] 16/11** (extraits validés ; **[A]** chemin `media:cut`).

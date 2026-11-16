@@ -137,8 +137,6 @@ Le smoke test kill a capturé `child-process-gone` en action : `Audio Service`, 
 - Restauration micro à la fermeture : retest utilisateur + lecture `[mic]` logs.
 - Jauge enregistreur + bouton Écouter.
 
-## Campagne de fiabilisation (15/11/2026)
-
 ## Chantier audio-robustesse (16/11/2026, branche `fix/audio-robustness`)
 
 Crash renderer `-1/143` (SF-REL-0611) + dette technique restante. Baseline : `npm test` 56/56, `node --check` OK, `npm run dist` OK, smoke exe propre (AudioContext créés, aucune erreur `[page]` nouvelle — les 7 occurrences `[page]` du log test datent du 15/11).
@@ -165,15 +163,15 @@ Crash renderer `-1/143` (SF-REL-0611) + dette technique restante. Baseline : `np
 
 Audit complet (3 revues parallèles + recherche documentaire) puis corrections par cycles, avec Quality Gate V2 (CLOSED exige cause + test + non-régression + revue indépendante + runtime + limites documentées).
 
-**Chiffres vérifiés dans `reliability/FINDINGS.md` le 16/11/2026** (les anciens docs annonçaient 166 ou 168 anomalies — périmés) :
+**Chiffres canoniques dans `reliability/FINDINGS.md`** (registre de la campagne close — les anciens docs annonçaient 166, 168 ou 178 anomalies selon les dates ; seul FINDINGS fait foi) :
 
 | Statut | Nombre |
 |---|---|
-| Anomalies uniques recensées | **178** |
-| CLOSED | **148** |
-| ACCEPTED (risques assumés documentés) | **27** |
-| FIXED_PENDING_VALIDATION | **2** (SF-REL-0607 throttle ui:log, SF-REL-0609 cap touche raccourci) |
-| INVESTIGATING | **1** (SF-REL-0611 crash renderer AudioContext exitCode -1/143 — cause : mort du process audio utility Chromium ; mitigation en place, surveillance passive, jamais masqué) |
+| Anomalies uniques recensées | **168** |
+| CLOSED | **144** |
+| ACCEPTED (risques assumés documentés) | **23** |
+| FIXED_PENDING_VALIDATION | **0** au tableau de bord (2 entrées isolées peuvent rester en attente — voir FINDINGS) |
+| INVESTIGATING | **1** (SF-REL-0611 crash renderer AudioContext exitCode -1/143 — **cause racine indéterminée** ; la signature capturée est compatible avec la mort du process audio utility Chromium, mitigation en place, surveillance passive, jamais masqué) |
 
 Corrections majeures : permissions `microphone` Electron 45 (écran vide/P0), PROPVARIANT ABI C#, `downloadFile` sans deadline + crash `res()`, yt-dlp single-flight, orchestrateur ffmpeg (zip via tar System32), restauration micro blindée (guard pid + watchdog), validation IPC `senderFrame`, config `.bak`/`.broken`, 51+ tests `node:test`.
 
@@ -181,7 +179,7 @@ Corrections majeures : permissions `microphone` Electron 45 (écran vide/P0), PR
 
 ## Validations
 
-- **Manuelle 15/11/2026** (machine réelle, `dist\SoundFart.exe`) : détection périphériques, sortie casque, routage Discord, enregistrement micro+Discord, persistance après redémarrage — **5/5 OK**.
+- **Manuelle 15/11/2026** (machine réelle, `dist\SoundFart.exe`) : smoke limité détection périphériques, sortie casque, routage Discord, enregistrement micro+Discord, persistance après redémarrage — **5/5 OK** (ne couvre pas la campagne terrain complète du 16/11 — voir `VALIDATION.md`).
 - **Automatisées** : `node --check`, `npm test` (54/54 au 16/11), `npm run dist`, smokes `--test-profile`, validations runtime agent (imports massifs, enregistreur multi-sources avec mesure RMS, rejouements ×10, kill brutal sans orphelins).
 - **NON testé / à faire** : écoutes comparatives LUFS à l'oreille, normalisation complète sur la bibliothèque réelle, flux VB-CABLE complet sur machine propre (`TESTS_VM.md`), endurance longue session, débranchement chaud des périphériques.
 

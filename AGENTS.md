@@ -32,6 +32,7 @@ src/recorder.js  # enregistreur multi-sources
 src/youtube.js   # import YouTube (yt-dlp)
 src/index.html   # page unique (CSP stricte)   ·   src/style.css : thème
 src/tap-processor.js  # AudioWorklet : PCM AudioTap -> graphe audio
+src/voice-gate.js     # AudioWorklet : traitement vocal (filtre + noise gate)
 lib/audio-utils.js    # fonctions pures partagées main/renderer (window.SFUtils)
 lib/media-permission.js # décision permissions média (getUserMedia/displayMedia)
 test/            # node:test (npm test) + drivers CDP manuels cdp-*.js (VALIDATION.md)
@@ -48,7 +49,7 @@ Contraintes à ne pas casser :
 - PCM AudioTap : float32 **stéréo** 48 kHz = **8 octets/frame** — tout découpage aligné (`main.js` tapPcmRem) ; worklet : `outputChannelCount:[2]`, `numberOfInputs:0`, `'flush'` avant `rec.start`.
 - Restauration micro : uniquement si `audio-restore.json` existe — jamais forcer un virtuel→non-virtuel sans lui, jamais écraser un choix manuel.
 - Crash renderer `AudioContext` (exitCode -1/143) : bug connu non résolu — le signaler s'il réapparaît, ne pas le masquer.
-- `yt-dlp`/`ffmpeg` : versions épinglées + SHA-256 ; `runYt` timeout 2 min ; `yt:download` template unique par requête.
+- `yt-dlp`/`ffmpeg` : versions épinglées + SHA-256 (yt-dlp auto-mis à jour ~hebdo vérifiée par hash, `--ignore-config` appliqué) ; `runYt` timeout 2 min ; `yt:download` template unique par requête.
 - `config.json` : écriture atomique + `.bak` ; corrompu → `.broken-<ts>` + fallback `.bak` ; `normalizeCfg` valide/déduplique à l'import.
 
 ## Commandes

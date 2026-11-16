@@ -68,7 +68,8 @@ Clique **Appliquer**. Le bandeau en bas de fenêtre affiche les routes actives (
 - **Découper / fondus** : « Modifier » → onde avec repères roses + fondus d'entrée/sortie.
 - **YouTube** : bouton « 📺 YouTube » → colle le lien. **Laisse début/fin vides** pour récupérer l'audio complet, ou précise une timeline (`02:15` ou secondes) pour un extrait. L'extrait est **physiquement découpé en MP3** quand ffmpeg est disponible (téléchargé une fois, ~115 Mo) ; sinon audio complet + découpe logicielle dans l'éditeur.
 - **Couper un son en MP3** : « Modifier » (✎) → règle début/fin → « MP3 de l'extrait » → tu peux remplacer le fichier par le petit MP3.
-- **Enregistreur** : « 🎙 Enregistreur » dans la barre latérale. Tu peux mixer plusieurs sources : **micro**, **audio du PC** (voix Discord, musique — capture système) et **câble SoundFart** (sons + micro mixé). Coche « Audio du PC » pour enregistrer une conversation Discord complète.
+- **Enregistreur** : « 🎙 Enregistreur » dans la barre latérale. Tu peux mixer plusieurs sources : **micro**, **audio du PC** (voix Discord, musique — capture système) et **câble SoundFart** (sons + micro mixé). Coche « Audio du PC » pour enregistrer une conversation Discord complète. Pendant la prise, une **jauge de niveau** montre le signal ; à l'arrêt tu peux **écouter la prise avant de sauvegarder** et **la rogner** (champs début/fin → WAV sans perte).
+- **Traitement vocal** : ⚙ Paramètres → Micro & voix → « Traitement vocal » (réduction bruit/écho sur ta voix uniquement, sans toucher aux sons) avec intensité Léger / Normal / Fort / **Max** — si ta voix sonne étouffée, baisse l'intensité.
 - **Sauvegarde** : ⚙ Paramètres → Général → « Exporter la configuration » (récupère tout sauf les fichiers audio ; pour changer de PC, replace les fichiers au même endroit ou utilise « Retrouver le fichier… » sur les cartes marquées).
 
 ## 6. Dépannage
@@ -77,7 +78,7 @@ Clique **Appliquer**. Le bandeau en bas de fenêtre affiche les routes actives (
 |---|---|---|
 | Pas de son dans Discord | CABLE Output pas sélectionné dans Discord, ou mauvaise sortie dans SoundFart | Vérifie les deux sens (sections 3 et 4) |
 | « Fichier introuvable » sur une carte | Le fichier a été déplacé/supprimé | Clique le badge ou clic droit → « Retrouver le fichier… » |
-| Fenêtre noire au démarrage | Fichiers `src/` manquants à côté de `main.js` | Vérifie que tous les `.js` de `src/` (`app.js`, `normalize.js`, `edit-sound.js`, `settings.js`, `recorder.js`, `youtube.js`, `tap-processor.js`) sont présents |
+| Fenêtre noire au démarrage | Fichiers `src/` manquants à côté de `main.js` | Vérifie que tous les `.js` de `src/` (`app.js`, `normalize.js`, `edit-sound.js`, `settings.js`, `recorder.js`, `youtube.js`, `tap-processor.js`, `voice-gate.js`) sont présents |
 | « Micro inaccessible » | Permission Windows refusée | Paramètres Windows → Confidentialité → Micro |
 | Erreurs techniques | — | `SoundFart-data\soundfart.log` (`%APPDATA%\SoundFart\soundfart.log` en repli) + F12 pour la console |
 

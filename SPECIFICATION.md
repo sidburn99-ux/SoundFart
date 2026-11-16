@@ -10,10 +10,10 @@
 
 **SoundFart** est une soundboard Windows pour Discord, développée en **Electron 45** (JavaScript vanilla, zéro framework, zéro dépendance runtime). Objectif : jouer des sons dans un salon vocal Discord via un câble virtuel audio (VB-CABLE), pendant qu'on joue, avec une interface sombre et compacte.
 
-- **Livrable** : `dist\SoundFart.exe` portable (~375 Mo, compression `store`). Aucun prérequis pour l'utilisateur final **hors** : VB-CABLE (installé manuellement, requis pour la diffusion Discord) ; `csc.exe` du .NET Framework (présent sur tout Windows 10/11) pour compiler les outils audio au premier usage.
+- **Livrable** : `dist\SoundFart.exe` portable (~375 Mo, compression `store`). Aucun prérequis pour l'utilisateur final **hors** : VB-CABLE (installé manuellement, requis pour la diffusion Discord) ; `csc.exe` du .NET Framework 4.x (généralement présent sur Windows 10/11 ; son absence est gérée proprement — bascule micro et AudioTap indisponibles, le reste fonctionne) pour compiler les outils audio au premier usage.
 - **Config** : `SoundFart-data\config.json` à côté de l'exe (repli `%APPDATA%\SoundFart\`) — les sons sont des **références** à des fichiers existants, jamais copiés ni modifiés.
 - **Journal** : `SoundFart-data\soundfart.log`.
-- **Outils téléchargés au premier usage** dans `SoundFart-data\tools\` : `yt-dlp.exe` (~15 Mo, import YouTube), `ffmpeg.exe` (~115 Mo, coupes MP3), `AudioEndpoint-<hash>.exe` + `AudioTap-<hash>.exe` (compilés localement depuis les `.cs` via le `csc.exe` de .NET Framework — bascule micro et capture loopback).
+- **Outils téléchargés au premier usage** dans `SoundFart-data\tools\` : `yt-dlp.exe` (~15 Mo, import YouTube — version de repli épinglée + SHA-256, **auto-mise à jour** ~hebdo vérifiée par hash), `ffmpeg.exe` (~100 Mo, coupes MP3), `AudioEndpoint-<hash>.exe` + `AudioTap-<hash>.exe` (compilés localement depuis les `.cs` via le `csc.exe` de .NET Framework — bascule micro et capture loopback).
 
 ## Architecture
 
@@ -27,8 +27,11 @@ lib/media-permission.js  décision permissions média (getUserMedia/displayMedia
 src/app.js       renderer core : état/config, moteur Web Audio, rendu, init
 src/normalize.js normalisation LUFS · src/edit-sound.js éditeur de son
 src/settings.js  réglages + export/import · src/recorder.js enregistreur
-src/youtube.js   import YouTube — scripts classiques chargés avant app.js
+src/youtube.js   import YouTube + récupération imports orphelins — scripts
+                 classiques chargés avant app.js
                  (portée globale partagée, init() voit tout)
+src/tap-processor.js  AudioWorklet : PCM AudioTap → graphe audio
+src/voice-gate.js     AudioWorklet : traitement vocal (filtre + noise gate)
 src/index.html   markup · src/style.css : thème sombre
 ```
 
@@ -36,11 +39,11 @@ Sécurité : CSP stricte (`default-src 'self'`), `contextIsolation`, `sandbox`, 
 
 ### Trajet audio (cartographie des chemins critiques)
 
-**Lecture soundboard** : `fichier → sf:readFile (main, ≤512 Mo) → decodeAudioData → cache LRU 256 Mo (entrée >256 Mo non cachée, fichier >150 Mo refusé avant décodage) → AudioBufferSourceNode+GainNode par sortie → bus→DynamicsCompressor→destination`. Sorties : `cable` (périphérique `cableId`, vers Discord via VB-CABLE) et `mon` (`monId`, écoute locale) — dédupliquées par deviceId. `playGen` invalide les lectures en vol au STOP ; `voices` suit chaque voix, `onended` ou watchdog `dur+15 s` la retire ; `stopAll` stoppe sources+gains.
+**Lecture soundboard** : `fichier → file:read (main, ≤150 Mo refusé avant décodage, réponse plafonnée) → decodeAudioData (file bornée, PCM >512 Mo refusé) → cache LRU 256 Mo (entrée >256 Mo non cachée) → AudioBufferSourceNode+GainNode par sortie → bus→DynamicsCompressor→destination`. Sorties : `cable` (périphérique `cableId`, vers Discord via VB-CABLE) et `mon` (`monId`, écoute locale) — dédupliquées par deviceId. `playGen` invalide les lectures en vol au STOP ; `voices` suit chaque voix, `onended` ou watchdog `dur+15 s` la retire ; `stopAll` stoppe sources+gains.
 
-**Enregistrement** : 3 sources mixées dans un `MediaRecorder` — micro (`getUserMedia` + EC/NS/AGC), audio du PC (`AudioTap.exe` WASAPI loopback → PCM stéréo 48 kHz float32, 8 o/frame → stdout → IPC `sf:tapPcm` → `tapPcmRem` aligné → AudioWorklet `tap-processor` → `comp`), câble (`getUserMedia` sur CABLE Output ou repli worklet). `flush` du worklet avant `rec.start`. Mort du tap → `sf:tapDead` → arrêt + toast.
+**Enregistrement** : 3 sources mixées dans un `MediaRecorder` — micro (`getUserMedia` + EC/NS/AGC), audio du PC (`AudioTap.exe` WASAPI loopback → PCM stéréo 48 kHz float32, 8 o/frame → stdout → IPC `sf:tapPcm` → `tapPcmRem` aligné → AudioWorklet `tap-processor` → `comp`), câble (`getUserMedia` sur CABLE Output ; le repli worklet/`systemStream` ne concerne que la source « audio du PC »). `flush` du worklet avant `rec.start`. Mort du tap → `sf:tapDead` → arrêt + toast.
 
-**Routage micro → Discord** : `autoSwitchMic` fait basculer l'entrée Windows par défaut sur CABLE Output (`AudioEndpoint.exe set`, rôles console+comm+multi), écrit `audio-restore.json` (ids d'origine + owner=pid) puis spawn `guard` détaché (pid+StartTime anti-réutilisation). Restauration : will-quit, `uncaughtException`, guard si mort du parent, watchdog 30 s (suspendu si l'entrée change hors SoundFart). Micro physique → `getUserMedia` → `lim` (compresseur) → bus câble — le master ne couvre que les sons.
+**Routage micro → Discord** : `autoSwitchMic` fait basculer l'entrée Windows par défaut sur CABLE Output (`AudioEndpoint.exe set`, rôles console+comm+multi), écrit `audio-restore.json` (ids d'origine + owner=pid) puis spawn `guard` détaché (pid+StartTime anti-réutilisation). Restauration : will-quit, `uncaughtException`, guard si mort du parent, watchdog 30 s (suspendu si l'entrée change hors SoundFart). Micro physique → `getUserMedia` → `voice-gate` AudioWorklet optionnel (filtre passe-bande + noise gate, intensités Léger/Normal/Fort/Max via `settings.voiceDsp`, repli direct si le module échoue) → `lim` (compresseur) → bus câble — **le master soundboard ne couvre pas la voix** (micro et sons découplés).
 
 **Cycle de vie** : `applyAudio` sérialisé (`audioApplyChain`) → `teardownAudio` (stopAll, playGen++, endVoice, ctx.close, micStream.stop) → `makeOutput` par sortie (`setSinkId`, écoute `statechange` : suspended/interrupted/closed logués). `devicechange` débouncé 500 ms → refreshDevices+resolveDevices+applyAudio. Render-process-gone → 1 reload max.
 
@@ -75,7 +78,7 @@ Sécurité : CSP stricte (`default-src 'self'`), `contextIsolation`, `sandbox`, 
 - Dans « Tous les sons » et « Favoris » : en-têtes de groupe (couleur, nom, nombre) ; « Sans catégorie » en dernier.
 
 ### 5. Diffusion audio
-- Clic = lecture **immédiate** vers la sortie « Discord » configurée (ex. `CABLE Input`) **et** vers l'écoute locale (casque) — un `AudioContext` Web Audio par route.
+- Clic = lecture **immédiate** vers la sortie « Discord » configurée (ex. `CABLE Input`) **et** vers l'écoute locale (casque) — un `AudioContext` par sortie, **partagé** quand câble et écoute pointent sur le même périphérique (réduit la surface du crash `-1/143`).
 - **Limiteur** anti-saturation sur chaque sortie, volume maître global (0-100 %).
 - Volume par son (0-300 %), badge si ≠ 100 %.
 - **Normalisation** : par son (gain calculé sur la **loudness intégrée** EBU R128/BS.1770 — mesure **100 % JS** `SFUtils.loudnessFromPcm`, coefficients exacts validés contre ffmpeg ebur128 à ~0,05 LU ; aucune dépendance externe, l'app reste portable — cible `settings.normLufs` en LUFS, défaut -18, bornée -40–0) et « toute la bibliothèque » — non destructive, badge ⚖. **Plafond de pic** : `normGain` borne le gain pour ne pas dépasser -1 dBFS sur le pic échantillon (approximation par le bas du True Peak interpolé, ~1 dB de marge), plafond ×4 conservé. Fichiers < 400 ms : une seule zone d'énergie (comportement voulu pour les impacts). Bouton « Tester » : bruit rose de 1,2 s calé sur la cible LUFS, écoute locale uniquement. **Migration v1→v2** : les `s.norm` issues de l'ancienne normalisation par pic sont invalidées (×1) au chargement — volumes manuels, découpes, favoris, catégories et raccourcis préservés.
@@ -91,8 +94,8 @@ Sécurité : CSP stricte (`default-src 'self'`), `contextIsolation`, `sandbox`, 
 
 ### 7. Import YouTube
 - Coller un lien → `yt-dlp` (téléchargé auto) analyse titre/durée.
-- **Timeline vide** (début+fin) → **audio complet** du média ; timeline renseignée → extraction de l'extrait (timeline partielle = début sans fin refusée avec message explicite).
-- **Si ffmpeg présent** : vrai MP3 de l'extrait (`--download-sections`) ; sinon audio complet + trim non destructif.
+- **Timeline vide** (début+fin) → **audio complet** du média ; timeline renseignée → extraction de l'extrait. Règles : « fin sans début » et « début non nul sans fin » refusées avec message explicite ; « début=0 sans fin » = audio complet.
+- **Si ffmpeg présent** : vrai MP3 de l'extrait (`--download-sections`) ; sinon — ou si la coupe sectionnée échoue — repli audio complet + trim non destructif. Bouton **Annuler** (`yt:cancel`) tue yt-dlp/ffmpeg et ferme la modale ; l'annulation n'est jamais relancée par le repli.
 - Préécoute, nom + catégorie, ajout direct. Barre de progression.
 - Conforme : yt-dlp standard, pas de contournement de DRM (responsabilité utilisateur).
 
@@ -107,20 +110,23 @@ Sécurité : CSP stricte (`default-src 'self'`), `contextIsolation`, `sandbox`, 
   - **Micro** : périphérique au choix, avec traitement vocal (echoCancellation, noiseSuppression, autoGainControl) — la voix seule est traitée.
   - **Audio du PC** : `AudioTap.exe` (C#, WASAPI loopback) sort du **PCM float32 stéréo 48 kHz sur stdout** → relayé par IPC (`sf:tapPcm`, aligné sur 8 octets/frame) → **AudioWorklet** (`src/tap-processor.js`) → limiteur → enregistreur. **Ce flux ne passe jamais par CABLE Input** → pas d'écho Discord par construction. Repli : `getDisplayMedia` + loopback `audio:'loopback'` si le tap/worklet échoue. Garde parent par temps (500 ms, anti-réutilisation de PID) : l'orphelin meurt avec le parent.
   - **Câble SoundFart** : captation de `CABLE Output` → sons de la soundboard + micro mixé.
+- **Jauge de niveau** en direct pendant la prise + **aperçu « Écouter » avant sauvegarde** (joue le buffer en mémoire sur l'écoute locale, suivi par le STOP global).
+- **Rogner avant sauvegarde** : champs Début/Fin → décodage + ré-encodage **WAV 16 bits** sans perte ; vide = fichier complet dans son format d'origine.
 - Durée affichée, préécoute de l'enregistrement, nom + catégorie, ajout direct à la bibliothèque (puis ouverture de l'éditeur pour découper).
 - Fichiers enregistrés en webm/opus (ou m4a/ogg selon support) dans `<stockage>/recordings/`, noms uniques.
 
 ### 10. Bascule automatique du micro Windows
-- Au lancement (si activé, défaut ON) : l'entrée micro Windows par défaut passe sur **CABLE Output** via `AudioEndpoint.exe` (C#, Core Audio `IMMDeviceEnumerator` + `IPolicyConfig.SetDefaultEndpoint`, rôles console + multimedia + communications).
+- Basculé au lancement **et** rejoué sur `devicechange` (si entrée requise disparue), à l'application des réglages et à l'import de config — jamais d'écrasement d'un choix manuel (placeholder « (choisir…) » si aucun micro configuré).
 - Le périphérique d'origine (ex. G930) est mémorisé dans `audio-restore.json`.
 - **Restauration** : uniquement si `audio-restore.json` existe (preuve d'une vraie bascule SoundFart) — à la fermeture propre, après crash/kill du process (`AudioEndpoint.exe guard <pid>` détaché, vérifie `owner` dans `audio-restore.json` + `StartTime` du process contre la réutilisation de PID), sur `uncaughtException`, et **manuellement** via le bouton « Restaurer mon micro Windows » des réglages. Sans marqueur, SoundFart ne touche **jamais** au micro (choix manuel respecté, même si l'entrée est sur un périphérique virtuel). `unhandledRejection` ne restaure pas (log seulement).
 - **Watchdog** (réglage `watchdogMic`, défaut ON) : `execFile` async toutes les 30 s, anti-chevauchement ; si l'entrée est modifiée hors SoundFart, la surveillance est **suspendue pour la session** (impossible de distinguer l'utilisateur d'une app tierce comme Discord).
 - Discord doit utiliser « Défaut » comme entrée pour suivre la bascule (documenté).
 
 ### 11. Stockage configurable
-- Réglage « Dossier de stockage » : les fichiers **créés** par l'app (imports YouTube, enregistrements, extraits MP3) vont dans `<dossier>/imports|recordings|cuts/`. Avant chaque import YouTube et chaque enregistrement, un sélecteur de dossier est proposé (dernier dossier mémorisé dans `lastDestDir`).
-- **5 sons par défaut** copiés une fois dans `<stockage>/default-sounds/` à la première installation (la bibliothèque référence ces copies).
-- **Pas de migration** d'une éventuelle ancienne config `%APPDATA%\SoundFart` vers `SoundFart-data` : utiliser Export/Import JSON ou copier manuellement `config.json`.
+- Réglage « Dossier de stockage » : les fichiers **créés** par l'app (imports YouTube, enregistrements, extraits MP3) vont dans `<dossier>/imports|recordings|cuts/`. YouTube propose le dernier dossier utilisé avant téléchargement ; l'enregistreur demande le dossier après l'arrêt, avant sauvegarde (`lastDestDir` mémorisé).
+- **5 sons par défaut** copiés dans `<stockage>/default-sounds/` à la première installation ; **re-seed** automatique si la bibliothèque redevient vide ou si des fichiers par défaut manquent/sont tronqués.
+- **Migration** : les chemins de l'ancienne app Python `DiscordSoundboard` sont migrés automatiquement au premier lancement (`config.json` → `.bak` conservé).
+- **Imports orphelins** : les fichiers présents dans `imports/` sans entrée en bibliothèque sont listés via `imports:list` — Paramètres → Bibliothèque → « fichiers non ajoutés » permet de les ajouter (nom, taille, date) sans toucher aux fichiers.
 - **Mode portable complet** : dans l'exe portable, `userData` = `SoundFart-data/` à côté de l'exe (config, outils compilés, logs, caches Electron) via `PORTABLE_EXECUTABLE_DIR` ; repli `%APPDATA%\SoundFart` si non accessible. `--test-profile` isole dans `%TEMP%\SoundFart-test`.
 - **VB-CABLE** : jamais embarqué ni installé (licence VB-Audio). L'utilisateur l'installe depuis https://vb-audio.com/Cable/ ; sans câble, écran d'accueil « VB-CABLE requis » + bandeau permanent, flux câble et bascule micro auto désactivés — un autre périphérique de sortie virtuelle (ex. Voicemeeter) reste sélectionnable manuellement ; détection à chaud par `devicechange`.
 
@@ -130,7 +136,7 @@ Sécurité : CSP stricte (`default-src 'self'`), `contextIsolation`, `sandbox`, 
 - Les sons originaux ne sont **jamais** copiés.
 
 ### 13. Menu application (F11)
-- Menu natif Windows togglé par **F11** (Alt fonctionne aussi).
+- Menu natif Windows togglé par **F11** (le comportement Alt+F4 relève du menu Windows, pas de l'app).
 - Fichier : Ajouter (Ctrl+O), YouTube, Enregistreur, Exporter/Importer config, Quitter.
 - Édition : Rechercher (Ctrl+F). Audio : Stopper tous les sons (raccourci STOP), Réglages.
 - Affichage : vue courante (radio, catégories synchronisées) + « Regrouper par catégorie ».
@@ -150,7 +156,7 @@ Sécurité : CSP stricte (`default-src 'self'`), `contextIsolation`, `sandbox`, 
 - **Capture « Audio du PC »** : flux PCM AudioTap→worklet mesuré non nul en local (peak=179205), mais **non validé en appel Discord réel** (écho côté interlocuteur à vérifier).
 - **VB-CABLE** : non installé par SoundFart — toute la chaîne micro/câble/Discord reste à tester après installation manuelle du pilote.
 - **npm audit** : 6 vulnérabilités modérées dans `minimatch` (via electron-builder, dépendance de build **non embarquée** dans l'app) — non corrigées (le fix impose un downgrade cassant).
-- **Import YouTube** : nécessite réseau + yt-dlp ; ffmpeg téléchargé au 1er usage (~115 Mo).
+- **Import YouTube** : nécessite réseau + yt-dlp (auto-mis à jour ~hebdo, versions vérifiées SHA-256, `--ignore-config` pour ne pas hériter des réglages yt-dlp de l'utilisateur) ; ffmpeg téléchargé au 1er usage (~100 Mo).
 - Formats conteneurs exotiques (mkv, mov…) : décodage dépend de l'ffmpeg embarqué d'Electron, certains peuvent échouer.
 - Raccourcis globaux : testés à l'enregistrement, pas validés en jeu.
 - L'enregistreur multi-sources : micro + loopback + câble simultanés non testé en charge réelle.
