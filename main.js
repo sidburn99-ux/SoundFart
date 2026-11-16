@@ -593,8 +593,9 @@ async function restoreMicNowP(tool) {
     if (!args) return false;
     await audioExecP(tool, args);
     try { fs.unlinkSync(restoreFile()); } catch {}
+    log('[mic] restauration micro OK (async)');
     return true;
-  } catch { return false; }
+  } catch (e) { log('[mic] restauration async: ' + (e && e.message), 'warn'); return false; }
 }
 
 // Variante synchrone : uniquement pour will-quit / uncaughtException ou le
@@ -622,8 +623,9 @@ function restoreMicNow(tool) {
     if (!args) return false;
     syncT(args);
     try { fs.unlinkSync(restoreFile()); } catch {}
+    log('[mic] restauration micro OK (will-quit)');
     return true;
-  } catch { return false; }
+  } catch (e) { log('[mic] restauration will-quit: ' + (e && e.message), 'warn'); return false; }
 }
 
 // ---------- sons par defaut (base de bibliotheque, bundled dans l'exe) ----------
@@ -1173,8 +1175,11 @@ app.on('will-quit', () => {
   try {
     const tool = audioToolPath();
     if (fs.existsSync(restoreFile())) {
+      log('[mic] will-quit : marqueur present, restauration lancee');
       if (!fs.existsSync(tool)) log('[mic] restauration impossible : AudioEndpoint.exe absent', 'warn');
       else if (!restoreMicNow(tool)) log('[mic] restauration a la fermeture echouee — micro peut rester sur le peripherique virtuel', 'warn');
+    } else {
+      log('[mic] will-quit : pas de marqueur audio-restore (bascule jamais faite ou deja restauree)');
     }
   } catch (e) { log('[mic] restauration will-quit: ' + (e && e.message), 'warn'); }
 });
