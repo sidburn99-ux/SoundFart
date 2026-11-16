@@ -1341,7 +1341,8 @@ async function init() {
 
   // Bibliotheque vide (premier lancement) : injecter les sons par defaut bundled dans l'exe.
   if (!cfg.sounds.length && window.sf.seedSounds) {
-    const defs = await window.sf.seedSounds();
+    const raw = await window.sf.seedSounds().catch((e) => { logErr('seedSounds', e); return null; });
+    const defs = Array.isArray(raw) ? raw : [];
     const now = Date.now();
     defs.forEach((d, i) => {
       if (cfg.sounds.length >= 5000) return;
