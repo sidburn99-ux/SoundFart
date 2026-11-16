@@ -152,6 +152,8 @@ canvas.wave { display: block; width: 100%; height: 96px; background: var(--panel
 .badge.link:hover { background: color-mix(in srgb, var(--danger) 55%, transparent); }
 .ytbar { height: 8px; background: var(--line); border-radius: 99px; overflow: hidden; }
 .ytbar i { display: block; height: 100%; width: 0; background: var(--grad); transition: width .2s; }
+.rec-meter { height: 8px; background: var(--line); border-radius: 99px; overflow: hidden; }
+.rec-meter i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #4ade80, #facc15 60%, #f87171); transition: width .06s linear; }
 .pvtime { font-variant-numeric: tabular-nums; min-height: 1em; }
 
 /* ---- v1.3 : vignettes, dossier de stockage, bascule micro ---- */

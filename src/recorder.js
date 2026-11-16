@@ -15,6 +15,26 @@ async function recorderModal() {
   let dead = false; // passe a true a la fermeture : avorte les startBtn encore en vol
   let closedDuringRec = false; // modale fermee PENDANT une prise : pas de modale resultat (elle detruirait une modale ouverte entre-temps)
   let tapNode = null, pcmQ = [], pcmSeen = false, tapLost = false, pcmDrops = 0, pcmQBytes = 0;
+  let analyser = null, meterRaf = 0;
+  // Pas de disconnect() sur l'analyser : il reste dans le graphe
+  // comp -> analyser -> dest jusqu'a actx.close() — le couper ici
+  // rendrait la fin d'enregistrement silencieuse.
+  const stopMeter = () => { if (meterRaf) { cancelAnimationFrame(meterRaf); meterRaf = 0; } analyser = null; meterBar.style.display = 'none'; };
+  const startMeter = () => {
+    stopMeter();
+    if (!analyser) return;
+    const td = new Uint8Array(analyser.fftSize);
+    meterBar.style.display = '';
+    const tick = () => {
+      if (!analyser) return;
+      analyser.getByteTimeDomainData(td);
+      let peak = 0;
+      for (let i = 0; i < td.length; i += 4) { const v = Math.abs(td[i] - 128) / 128; if (v > peak) peak = v; }
+      meterFill.style.width = Math.min(100, peak * 140) + '%';
+      meterRaf = requestAnimationFrame(tick);
+    };
+    meterRaf = requestAnimationFrame(tick);
+  };
   const killTapNode = () => { if (tapNode) { try { tapNode.disconnect(); } catch {} tapNode = null; } pcmQ = []; pcmQBytes = 0; };
   // N'arrete le tap que s'il appartient a la session la plus recente :
   // sinon le cleanup d'une vieille modale tuerait l'enregistrement d'une
@@ -74,6 +94,12 @@ async function recorderModal() {
   const pcOn = el('input', { type: 'checkbox', checked: false, title: 'Enregistre tout ce que tu entends sur le PC (vidéo, jeu, musique) — capturé directement à la sortie, sans repasser par le câble.' });
   const cableOn = el('input', { type: 'checkbox', checked: false, title: 'Enregistre ce que SoundFart envoie vers Discord (les sons de la soundboard).' });
   const status = el('div', { class: 'hint', text: 'Choisis les sources, puis lance l\'enregistrement.' });
+  // Jauge de niveau en direct : une barre de « progression » n'a pas de sens
+  // (duree libre) — ce qui manque a l'utilisateur c'est de VOIR que le son
+  // est capte. AnalyserNode sur le mix -> pic RMS par frame.
+  const meterBar = el('div', { class: 'rec-meter' }, el('i'));
+  meterBar.style.display = 'none';
+  const meterFill = meterBar.firstChild;
   const nameIn = el('input', { type: 'text', value: 'Enregistrement ' + new Date().toLocaleString('fr-FR'), maxlength: 80 });
   const catSel = el('select', {},
     el('option', { value: '', text: 'Sans catégorie' }),
@@ -98,6 +124,7 @@ async function recorderModal() {
   const cleanup = () => {
     dead = true;
     if (recTimer) { clearInterval(recTimer); recTimer = null; }
+    stopMeter();
     if (offTapDead) offTapDead();
     if (offTapPcm) offTapPcm();
     // Enregistrement existant : on laisse onstop faire la sauvegarde + tout le
@@ -240,7 +267,12 @@ async function recorderModal() {
       const dest = actx.createMediaStreamDestination();
       const comp = actx.createDynamicsCompressor(); // evite l'ecrêtage quand plusieurs sources sont mixees
       comp.threshold.value = -12; comp.knee.value = 20; comp.ratio.value = 8;
-      comp.connect(dest);
+      // analyser dans le graphe : alimente la jauge de niveau ET reste
+      // transparent pour le signal (pas de modification du flux).
+      analyser = actx.createAnalyser();
+      analyser.fftSize = 512;
+      comp.connect(analyser);
+      analyser.connect(dest);
       streams.forEach((st) => actx.createMediaStreamSource(st).connect(comp));
       if (tapOn) {
         try {
@@ -280,6 +312,7 @@ async function recorderModal() {
       };
       rec.onstop = async () => {
         if (recTimer) { clearInterval(recTimer); recTimer = null; }
+        stopMeter();
         const recMime = rec ? rec.mimeType : '';
         try {
           const blob = new Blob(chunks, { type: recMime || mime || 'audio/webm' });
@@ -325,6 +358,7 @@ async function recorderModal() {
             field('Catégorie', catSel),
           ], [
             { label: 'Fermer', onclick: (c) => c() },
+            { label: 'Écouter', onclick: () => { if (recordedSound) play(recordedSound, { monitorOnly: true, preview: true }); } },
             { label: 'Ajouter à la bibliothèque', kind: 'primary', onclick: (c) => {
               if (!recordedSound) return;
               recordedSound.name = nameIn.value.trim() || recordedSound.name;
@@ -384,12 +418,14 @@ async function recorderModal() {
       }
       rec.start(250);
       recStart = Date.now();
+      startMeter();
       recTimer = setInterval(() => { status.textContent = '● Enregistrement… ' + fmtTime((Date.now() - recStart) / 1000); }, 250);
       status.textContent = '● Enregistrement…';
       startBtn.disabled = true; stopBtn.disabled = false;
       micSel.disabled = micOn.disabled = pcOn.disabled = cableOn.disabled = true;
     } catch (e) {
       window.sf.uiLog('recorder start: ' + (e && e.name) + ' ' + (e && e.message));
+      stopMeter();
       status.textContent = 'Source inaccessible : ' + e.message;
       // meme liberation que rec.onstop : pas de micro/tap/contexte leaving trainer
       streams.forEach((st) => st.getTracks().forEach((t) => t.stop()));
@@ -421,6 +457,7 @@ async function recorderModal() {
     field('Câble SoundFart', cableOn, 'Coche pour ajouter ce qui passe dans le câble virtuel (sons de la soundboard + micro mixé).'),
     el('div', { class: 'hint', text: 'Tu peux combiner plusieurs sources : elles sont mixées avec un limiteur anti-saturation. Le son est enregistré en qualité numérique, sans passer par les haut-parleurs.' }),
     el('div', { class: 'row' }, startBtn, stopBtn),
+    meterBar,
     status,
     field('Nom', nameIn),
     field('Catégorie', catSel),
