@@ -515,6 +515,16 @@ H('yt:download', async (_e, o) => {
       err.noRetry = true;
       throw err;
     }
+    // Ménage des artefacts de tentatives avortées : yt-dlp laisse des
+    // .part/.ytdl/.temp prefixés sf-<tag>- dans imports/ qu'aucun code
+    // ne relisait — ils s'accumulaient à chaque import raté.
+    try {
+      for (const f of fs.readdirSync(impDir)) {
+        if (tags.some((t) => f.startsWith('sf-' + t + '-')) && /\.(part|ytdl|temp)$/i.test(f)) {
+          try { fs.unlinkSync(path.join(impDir, f)); } catch {}
+        }
+      }
+    } catch {}
     ytProgress(-1);
     return { path: newest, sectioned };
   };
