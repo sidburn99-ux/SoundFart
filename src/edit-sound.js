@@ -165,7 +165,7 @@ function editSound(s) {
       volume: +vol.value,
       trimStart: from ?? outStart(),
       trimEnd: outEnd(),
-      fadeIn: +fiIn.value || 0, fadeOut: +foIn.value || 0,
+      fadeIn: Math.min(5000, Math.max(0, +fiIn.value || 0)), fadeOut: Math.min(5000, Math.max(0, +foIn.value || 0)),
       onProgress: (frac, absPos, regionDur, regionStart) => {
         if (frac == null) { pvPos = null; pvTime.textContent = ''; draw(); return; }
         pvPos = absPos;
@@ -193,8 +193,10 @@ function editSound(s) {
     s.norm = norm;
     s.trimStart = outStart();
     s.trimEnd = outEnd();
-    s.fadeIn = Math.max(0, +fiIn.value || 0);
-    s.fadeOut = Math.max(0, +foIn.value || 0);
+    // max=5000 est une indication UI : une saisie manuelle peut la
+    // depasser — borner a la meme valeur pour ne pas stocker d'aberration.
+    s.fadeIn = Math.min(5000, Math.max(0, +fiIn.value || 0));
+    s.fadeOut = Math.min(5000, Math.max(0, +foIn.value || 0));
   };
   let exportBusy = false; // anti double-clic : N mediaCut concurrents + N confirmBox
 
