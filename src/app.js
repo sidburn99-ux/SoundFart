@@ -72,7 +72,7 @@ function save() {
   }), 250);
 }
 window.addEventListener('beforeunload', () => {
-  if (cfg) { try { const p = window.sf.saveConfig(cfg); if (p && p.catch) p.catch(() => {}); } catch {} }
+  if (cfg) { try { const p = window.sf.saveConfig(cfg); if (p && p.catch) p.catch((e) => logErr('saveConfig', e)); } catch (e) { logErr('saveConfig', e); } }
   window.sf.restoreMic();
 });
 
@@ -92,7 +92,7 @@ function normalizeCfg(saved) {
   // 'false' (string truthy) ou des nombres invalides -> comportement
   // incoherent (micMix active, volumes aberrants).
   for (const k of ['micMix', 'autoSwitchMic', 'watchdogMic', 'groupByCat']) c.settings[k] = c.settings[k] === true;
-  if (!Number.isFinite(+c.settings.master)) c.settings.master = 80; else c.settings.master = Math.min(200, Math.max(0, +c.settings.master));
+  if (!Number.isFinite(+c.settings.master)) c.settings.master = 80; else c.settings.master = Math.min(100, Math.max(0, +c.settings.master));
   if (typeof c.settings.stopShortcut !== 'string' || c.settings.stopShortcut.length > 64) c.settings.stopShortcut = defaults().settings.stopShortcut;
   if (typeof c.settings.sort !== 'string' || !SORTS.some(([v]) => v === c.settings.sort)) c.settings.sort = 'added-desc';
   if (typeof c.settings.catSort !== 'string' || !CAT_SORTS.some(([v]) => v === c.settings.catSort)) c.settings.catSort = 'manual';
@@ -212,7 +212,6 @@ function toast(msg, kind = '') {
 }
 
 let modalClose = null;
-let modalSeq = 0; // jeton de possession : les flux async verifient que LEUR modale est encore affichee
 function modal(title, body, buttons, opts = {}) {
   const root = $('#modal-root');
   const appEl = document.getElementById('app');
@@ -246,15 +245,9 @@ function modal(title, body, buttons, opts = {}) {
     el('div', { class: 'modal-actions' },
       buttons.map((b) => el('button', { class: b.kind || '', text: b.label, onclick: () => b.onclick(close) }))));
   root.replaceChildren(el('div', { class: 'backdrop', onmousedown: (e) => { if (e.target === e.currentTarget) close(); } }, box));
-  close.token = ++modalSeq;
   modalClose = close;
   return close;
 }
-
-// true si la modale qui portait ce token est toujours celle affichee —
-// un flux async (yt-dlp, enregistrement) ne doit pas detruire une modale
-// ouverte entre-temps par l'utilisateur.
-function modalAlive(token) { return !!(modalClose && modalClose.token === token); }
 
 const field = (label, node, hint) =>
   el('div', { class: 'field' }, el('label', { text: label }), node, hint ? el('div', { class: 'hint', text: hint }) : null);
@@ -495,6 +488,10 @@ async function applyAudioInner() {
       else {
         // « default » pointerait sur CABLE Output depuis la bascule micro auto : on prend un vrai peripherique non virtuel
         let micDev = s.micId && s.micId !== 'default' ? s.micId : null;
+        // deviceId perime (peripherique retire alors que resolveDevices
+        // n'a pas tourne) : getUserMedia({exact}) jetterait NotFoundError —
+        // on retombe sur le premier vrai micro non virtuel.
+        if (micDev && !(audio.devices.inp || []).some((d) => d.deviceId === micDev)) micDev = null;
         if (!micDev) {
           const real = (audio.devices.inp || []).find((d) => d.deviceId !== 'default' && !VIRTUAL_RE.test(d.label || ''));
           micDev = real ? real.deviceId : (s.micId === 'default' ? 'default' : undefined);
@@ -825,10 +822,15 @@ function buildAccel(e) {
 // sinon (revue 0682).
 const RESERVED_SC = new Set(['ctrl+f', 'ctrl+o', 'f12', 'f11', 'ctrl+shift+i', 'alt+f4']);
 
+// Canonicalise l'accelerateur : 'Alt+Ctrl+S' et 'Ctrl+Alt+S' designent le
+// meme raccourci Windows — sans tri des modifieurs ils passaient la dedupe
+// mais Electron n'en enregistrait qu'un (SF-RELAudit : doublon possible).
+const ACC_MODS = ['ctrl', 'alt', 'shift', 'super', 'meta'];
 function normAccel(a) {
-  return (a || '').toLowerCase().replace(/\s+/g, '')
-    .replace(/commandorcontrol|cmdorctrl/g, 'ctrl')
-    .replace(/control/g, 'ctrl');
+  const parts = (a || '').toLowerCase().replace(/\s+/g, '').split('+').filter(Boolean)
+    .map((p) => p.replace(/commandorcontrol|cmdorctrl|control/g, 'ctrl'));
+  const mods = parts.filter((p) => ACC_MODS.includes(p)).sort((x, y) => ACC_MODS.indexOf(x) - ACC_MODS.indexOf(y));
+  return [...mods, ...parts.filter((p) => !ACC_MODS.includes(p))].join('+');
 }
 
 function findShortcutOwner(acc, excludeSoundId) {
@@ -1036,8 +1038,12 @@ async function newCategory() {
   save(); renderAll();
 }
 
+// Collator partage : le recreer a chaque tri/groupe coute inutilement
+// (visibleSounds et sortedCategories sont appelees a chaque rendu).
+const COL_LATIN = new Intl.Collator('fr', { numeric: true, sensitivity: 'base' });
+
 function sortedCategories() {
-  const col = new Intl.Collator('fr', { numeric: true, sensitivity: 'base' });
+  const col = COL_LATIN;
   const arr = [...cfg.categories];
   if (cfg.settings.catSort === 'count-desc') {
     // comptages precalcules : evite de refiltrer cfg.sounds a chaque comparaison (O(n log n) au lieu de O(n^2 log n))
@@ -1402,6 +1408,10 @@ function importConfig(onDone) {
       // pendant qu'un applyAudioInner est en vol pouvait etre suivi
       // d'une recreation avec l'ANCIENNE config (SF-REL-0619).
       cfg = normalizeCfg(parsed);
+      // Les voix en cours referenciaient l'ancienne config (chemins
+      // potentiellement differents) : on les arrete comme removeSound.
+      stopAll(true);
+      missing.clear();
       // Purge le cache decode : les AudioBuffer des anciens chemins ne
       // servent plus (jusqu'a 256 Mo d'orphelins sinon).
       bufCache.clear(); bufCacheBytes = 0; longWarned.clear(); bufInflight.clear();
@@ -1492,7 +1502,7 @@ function settingsModal() {
     const lbl = 'Dossier de données : ' + d + ' — les fichiers vont dans imports/, recordings/, cuts/ à l\'intérieur';
     dirLbl.textContent = s.storageDir || lbl;
     resetDirBtn.onclick = () => { s.storageDir = ''; dirLbl.textContent = lbl; };
-  }).catch(() => {});
+  }).catch((e) => logErr('getDataDir', e));
   const dirLbl = el('div', { class: 'hint path', text: (s.storageDir || 'Dossier de données par défaut') + ' — les fichiers vont dans imports/, recordings/, cuts/ à l\'intérieur' });
   const openDirBtn = el('button', { class: 'ghost', text: 'Ouvrir', title: 'Ouvre le dossier de stockage dans l\'Explorateur', onclick: () => window.sf.openDir(s.storageDir || '') });
   const pickDirBtn = el('button', { text: 'Choisir…', title: 'Choisit le dossier racine où SoundFart range ses fichiers (imports/, recordings/, cuts/).', onclick: async () => {
@@ -1511,6 +1521,7 @@ function settingsModal() {
   normLufsIn.addEventListener('change', () => {
     const nl = +normLufsIn.value;
     if (Number.isFinite(nl) && nl <= 0) { s.normLufs = Math.max(-40, nl); save(); }
+    else normLufsIn.value = normLufsTarget(); // valeur refusee : re-affiche la cible reelle
   });
   const normTestBtn = el('button', { class: 'ghost', text: 'Tester', title: 'Joue 1,2 s de bruit dont la loudness est exactement au niveau saisi — sur ton écoute locale uniquement (pas sur Discord).', onclick: () => testNormLufs(normLufsIn.value) });
   const normProg = el('div', {});
@@ -1658,7 +1669,7 @@ function settingsModal() {
 function visibleSounds() {
   const q = $('#search').value.trim().toLowerCase();
   const view = cfg.ui.cat;
-  const col = new Intl.Collator('fr', { numeric: true, sensitivity: 'base' });
+  const col = COL_LATIN;
   const sorts = {
     'name-asc': (a, b) => col.compare(a.name, b.name),
     'name-desc': (a, b) => col.compare(b.name, a.name),
@@ -1703,10 +1714,19 @@ function renderSidebar() {
     }
     nav.append(row);
   };
+  // Comptages en une seule passe : l'ancienne version refiltrait
+  // cfg.sounds par categorie -> O(categories x sons) a chaque rendu.
+  let favN = 0, noneN = 0;
+  const catCounts = new Map();
+  for (const s of cfg.sounds) {
+    if (s.favorite) favN++;
+    if (!soundHasCat(s)) noneN++;
+    if (s.categoryId) catCounts.set(s.categoryId, (catCounts.get(s.categoryId) || 0) + 1);
+  }
   item('all', 'Tous les sons', cfg.sounds.length, null);
-  item('fav', '★ Favoris', cfg.sounds.filter((s) => s.favorite).length, null);
-  item('none', 'Sans catégorie', cfg.sounds.filter((s) => !soundHasCat(s)).length, null);
-  for (const c of sortedCategories()) item(c.id, c.name, cfg.sounds.filter((s) => s.categoryId === c.id).length, c);
+  item('fav', '★ Favoris', favN, null);
+  item('none', 'Sans catégorie', noneN, null);
+  for (const c of sortedCategories()) item(c.id, c.name, catCounts.get(c.id) || 0, c);
 }
 
 function renderGrid() {
@@ -1791,7 +1811,7 @@ function pushMenuState() {
       stopShortcut: cfg.settings.stopShortcut || '',
       categories: sortedCategories().map((c) => ({ id: c.id, name: c.name })),
     });
-  } catch {}
+  } catch (e) { logErr('menuState', e); }
 }
 
 function renderAll() { renderSidebar(); renderGrid(); pushMenuState(); }
@@ -1826,6 +1846,9 @@ async function relocateSound(s) {
     toast('Ce chemin est déjà utilisé par un autre son.', 'warn'); return;
   }
   const oldPath = s.path;
+  // Arreter les voix qui jouent l'ancien chemin : sinon le son continue
+  // de jouer un fichier different de celui affiche (comme removeSound).
+  for (const v of [...voices]) if (v.soundId === s.id) stopVoice(v, true);
   s.path = p;
   cacheDelete(oldPath); // l'ancien buffer devient orphelin sinon
   missing.delete(s.id);
@@ -1853,8 +1876,8 @@ async function recorderModal() {
   let recordedSound = null, recTimer = null, recStart = 0, looseTracks = [];
   let dead = false; // passe a true a la fermeture : avorte les startBtn encore en vol
   let closedDuringRec = false; // modale fermee PENDANT une prise : pas de modale resultat (elle detruirait une modale ouverte entre-temps)
-  let tapNode = null, pcmQ = [], pcmSeen = false, tapLost = false, pcmDrops = 0;
-  const killTapNode = () => { if (tapNode) { try { tapNode.disconnect(); } catch {} tapNode = null; } pcmQ = []; };
+  let tapNode = null, pcmQ = [], pcmSeen = false, tapLost = false, pcmDrops = 0, pcmQBytes = 0;
+  const killTapNode = () => { if (tapNode) { try { tapNode.disconnect(); } catch {} tapNode = null; } pcmQ = []; pcmQBytes = 0; };
   const offTapDead = window.sf.onTapDead ? window.sf.onTapDead(() => {
     window.sf.uiLog('tapDead rec=' + (rec ? rec.state : 'null') + ' dead=' + dead);
     tapLost = true; // le tap est mort : ni enregistrement silencieux ni faux succes
@@ -1866,7 +1889,9 @@ async function recorderModal() {
     if (!pcmSeen) { pcmSeen = true; window.sf.uiLog('tapPcm: premier flux recu (' + ab.byteLength + 'o)'); }
     // transfer [ab] : evite le clone structure de chaque chunk PCM (frequence elevee)
     if (tapNode) { try { tapNode.port.postMessage(ab, [ab]); } catch {} }
-    else if (pcmQ.length < 600) pcmQ.push(ab);
+    // Borne en octets AUSSI : 600 chunks PCM 48 kHz stereo ≈ 115 Mo si le
+    // worklet tarde — la limite en nombre seul ne bornait rien.
+    else if (pcmQ.length < 600 && pcmQBytes + ab.byteLength < 64 * 1024 * 1024) { pcmQ.push(ab); pcmQBytes += ab.byteLength; }
     else if (!pcmDrops) { pcmDrops = 1; window.sf.uiLog('pcmQ saturee : chunks AudioTap jetes (renderer occupe)'); }
   }) : null;
 
@@ -2068,7 +2093,7 @@ async function recorderModal() {
           tapNode = new AudioWorkletNode(actx, 'tap-processor', { numberOfInputs: 0, outputChannelCount: [2] });
           pcConnected = true;
           pcmQ.forEach((ab) => tapNode.port.postMessage(ab, [ab]));
-          pcmQ = [];
+          pcmQ = []; pcmQBytes = 0;
         } catch (e) {
           window.sf.uiLog('tap worklet: ' + (e && e.message));
           killTapNode();
@@ -2284,7 +2309,7 @@ function youtubeModal() {
     } catch (e) { logErr('pickDir', e); }
   } });
 
-  let info = null, dl = null, offProg = null, busy = false, ytModalAlive = true;
+  let info = null, dl = null, offProg = null, busy = false;
   const setProg = (p) => {
     if (p === -1 || p == null) { prog.textContent = 'Téléchargement…'; barFill.style.width = '100%'; barFill.style.opacity = '.4'; }
     else { prog.textContent = 'Téléchargement… ' + p + ' %'; barFill.style.opacity = '1'; barFill.style.width = p + '%'; }
@@ -2424,7 +2449,7 @@ function youtubeModal() {
       save(); renderAll(); c();
       toast('Son YouTube ajouté : ' + dl.path);
     } },
-  ], { onClose: () => { ytModalAlive = false; if (offProg) { offProg(); offProg = null; } } });
+  ], { onClose: () => { if (offProg) { offProg(); offProg = null; } } });
 }
 
 // ================================================================ demarrage
@@ -2452,7 +2477,10 @@ async function init() {
   const groupCat = $('#groupCat');
   groupCat.checked = !!cfg.settings.groupByCat;
   groupCat.addEventListener('change', () => { cfg.settings.groupByCat = groupCat.checked; save(); renderAll(); });
-  $('#search').addEventListener('input', renderGrid);
+  // Debounce : chaque frappe reconstruisait tout le grid (filtre + tri +
+  // DOM) -> jank clavier sur une grosse bibliotheque.
+  let searchT = null;
+  $('#search').addEventListener('input', () => { clearTimeout(searchT); searchT = setTimeout(renderGrid, 120); });
   $('#addBtn').addEventListener('click', async () => { try { const p = await window.sf.pickFiles(); if (p.length) await addPaths(p); } catch (e) { logErr('pickFiles', e); } });
   $('#ytBtn').addEventListener('click', youtubeModal);
   $('#recBtn').addEventListener('click', () => recorderModal().catch((e) => toast('Enregistreur : ' + e.message, 'warn')));

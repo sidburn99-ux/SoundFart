@@ -253,6 +253,26 @@ test('safeName : jamais de nom Windows invalide, jamais vide', () => {
   }
   // Extreemement long -> tronque a 80
   assert.ok(U.safeName('y'.repeat(300)).length <= 80);
+  // Points/especes finaux : Windows les retire avant comparaison — le nom
+  // nettoye ne doit ni finir par '.' ni produire un nom vide.
+  for (const n of ['...', 'nom.', '  .  ', '...test...']) {
+    const s = U.safeName(n);
+    assert.ok(s && !/[. ]$/.test(s), 'safeName(' + JSON.stringify(n) + ') -> ' + JSON.stringify(s));
+  }
+  assert.equal(U.safeName('...'), 'son');
+});
+
+test('expandPaths : une string seule est traitee comme un chemin', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-exp-'));
+  try {
+    fs.writeFileSync(path.join(dir, 'a.wav'), 'x');
+    // String : iterees par caractere avant le fix -> resultait en [].
+    assert.deepEqual(U.expandPaths(dir + path.sep + 'a.wav'), [dir + path.sep + 'a.wav']);
+    // String dossier : retourne les audio dedans (profondeur 1).
+    const found = U.expandPaths(dir);
+    assert.equal(found.length, 1);
+    assert.ok(found[0].endsWith('a.wav'));
+  } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 });
 
 test('parseEndpoints : fuzz — jamais de crash, champs toujours des chaines', () => {

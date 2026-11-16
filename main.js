@@ -4,9 +4,7 @@ const fs = require('fs');
 const https = require('https');
 const os = require('os');
 const { spawn, execFile, execFileSync } = require('child_process');
-const { promisify } = require('util');
 const crypto = require('crypto');
-const execFileP = promisify(execFile);
 // Processus enfants long-terme (yt-dlp, ffmpeg) : Windows ne tue PAS les
 // enfants a la sortie du parent — on les suit pour les tuer au will-quit,
 // sinon un telechargement continue sans UI ni possibilite d'arret.
@@ -21,12 +19,12 @@ const trackChild = (p) => {
   return p;
 };
 const killTree = (pid) => { try { execFile('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true }, () => {}); } catch (e) { try { log('[killTree] ' + e.message, 'warn'); } catch {} } };
-// execFile avec handle suivi (execFileP/promisify ne donne pas le ChildProcess).
+// execFile avec handle suivi (promisify ne donne pas le ChildProcess).
 function execFileTracked(file, args, opts = {}) {
   return new Promise((resolve, reject) => {
     const p = trackChild(spawn(file, args, { ...opts, windowsHide: true }));
     let out = '', err = '', done = false;
-    const timer = opts.timeout ? setTimeout(() => { if (!done) { done = true; try { p.kill(); } catch {} reject(new Error('délai dépassé')); } }, opts.timeout) : null;
+    const timer = opts.timeout ? setTimeout(() => { if (!done) { done = true; try { killTree(p.pid); } catch {} reject(new Error('délai dépassé')); } }, opts.timeout) : null;
     if (p.stdout) p.stdout.on('data', (d) => { if (out.length < 4 * 1024 * 1024) out += d; });
     if (p.stderr) p.stderr.on('data', (d) => { if (err.length < 65536) err += d; });
     p.on('error', (e) => { if (!done) { done = true; if (timer) clearTimeout(timer); reject(e); } });
@@ -37,7 +35,7 @@ function execFileTracked(file, args, opts = {}) {
     });
   });
 }
-const { AUDIO_EXT, VIRTUAL_RE: VIRTUAL_RE_MAIN, parseEndpoints, parseGet, findCableCapture, chooseRestoreIds, safeName, expandPaths, expandPathsAsync, writeRecording, cbOrNoop } = require('./lib/audio-utils');
+const { AUDIO_EXT, VIRTUAL_RE: VIRTUAL_RE_MAIN, parseEndpoints, parseGet, findCableCapture, chooseRestoreIds, safeName, expandPathsAsync, writeRecording, cbOrNoop } = require('./lib/audio-utils');
 let win = null;
 
 // ---------- journal d'erreurs : SoundFart-data\soundfart.log ----------
@@ -276,7 +274,7 @@ ipcMain.on('menu:state', (e, s) => {
 ipcMain.on('ui:log', (e, m) => {
   // Strip les caracteres de controle : un message avec \r\n pourrait forger
   // des entrees de log au format timestamp/niveau.
-  if (fromApp(e) && uiLogAllowed('ui')) log('[ui] ' + String(m).replace(/[\r\n\x00-\x1f]/g, ' ').slice(0, 800));
+  if (fromApp(e) && uiLogAllowed('ui')) log('[ui] ' + String(m).slice(0, 4000).replace(/[\r\n\x00-\x1f]/g, ' ').slice(0, 800));
 });
 
 H('desktop:source', async () => {
@@ -288,6 +286,16 @@ H('desktop:source', async () => {
 
 H('app:version', () => app.getVersion());
 H('app:dataDir', () => app.getPath('userData'));
+
+// Lit config.json.bak avec la meme borne que config.json — utilise aux
+// deux endroits de repli (config absente et config corrompue).
+function readBakConfig(f) {
+  try {
+    if (fs.statSync(f + '.bak').size > 16 * 1024 * 1024) return null;
+    const b = JSON.parse(fs.readFileSync(f + '.bak', 'utf-8'));
+    return b && typeof b === 'object' && !Array.isArray(b) ? b : null;
+  } catch { return null; }
+}
 
 H('config:load', () => {
   const f = configFile();
@@ -302,14 +310,7 @@ H('config:load', () => {
       // config.json absente (supprimee ou deja renommee .broken-* apres un
       // crash) : tenter le .bak AVANT migrateOldConfig — il contient la
       // derniere config validee, sinon la bibliotheque repart vide.
-      try {
-        // Meme borne que config.json : un .bak geant pose a la main ne
-        // doit pas geler le demarrage.
-        if (fs.statSync(f + '.bak').size > 16 * 1024 * 1024) throw new Error('bak trop volumineux');
-        const b = JSON.parse(fs.readFileSync(f + '.bak', 'utf-8'));
-        if (b && typeof b === 'object' && !Array.isArray(b)) return b;
-      } catch {}
-      return migrateOldConfig();
+      return readBakConfig(f) || migrateOldConfig();
     }
     // Ne renommer en .broken-* que si le fichier est vraiment illisible comme
     // JSON : une erreur transitoire (EACCES, verrou AV/OneDrive) ne doit pas
@@ -321,13 +322,7 @@ H('config:load', () => {
     }
     // Dernier recours : la sauvegarde .bak (ecrite a chaque config:save) contient
     // la derniere config validee — mieux que de demarrer sur une bibliotheque vide.
-    // Mais seulement si c'est bien un objet config (pas un tableau/string).
-    try {
-      if (fs.statSync(f + '.bak').size > 16 * 1024 * 1024) throw new Error('bak trop volumineux');
-      const b = JSON.parse(fs.readFileSync(f + '.bak', 'utf-8'));
-      if (b && typeof b === 'object' && !Array.isArray(b)) return b;
-    } catch {}
-    return null;
+    return readBakConfig(f);
   }
 });
 
@@ -416,7 +411,7 @@ H('shortcuts:apply', (_e, entries) => {
     seen.add(accel);
     valid.push({ key, accel });
   }
-  if (list.length > 200) failed.push('…'); // marquee de troncature, pas une accel
+  if (list.length > 200 || valid.length > 200) failed.push('…'); // troncature : seules les 200 premieres sont enregistrees
   globalShortcut.unregisterAll();
   for (const { key, accel } of valid.slice(0, 200)) {
     try {
@@ -532,7 +527,11 @@ H('media:cut', async (_e, o) => {
   if (!Number.isFinite(+start) || +start < 0 || !Number.isFinite(+end) || +end <= +start) throw new Error('bornes de coupe invalides');
   const dur = +end - +start;
   if (dur > 30 * 60) throw new Error('extrait trop long (> 30 min)');
-  try { const st = await fs.promises.stat(input); if (!st.isFile()) throw new Error('pas un fichier'); } catch (e) { throw new Error('fichier source introuvable'); }
+  // Stat d'abord, isFile ensuite : un 'pas un fichier' (repertoire, device)
+  // avale par le catch devenait un « introuvable » mensonger.
+  const st = await fs.promises.stat(input).catch(() => null);
+  if (!st) throw new Error('fichier source introuvable');
+  if (!st.isFile()) throw new Error('pas un fichier');
   const fdir = await ensureFfmpeg();
   const outDir = path.join(storageRoot(dir), 'cuts');
   await fs.promises.mkdir(outDir, { recursive: true });
@@ -654,6 +653,25 @@ function downloadFile(url, dest, onProgress) {
   });
 }
 
+// GET HTTPS borne (1 Mo) pour les petites API JSON — pas de fichier.
+function httpsGetText(url) {
+  return new Promise((resolve, reject) => {
+    const req = https.get(url, { headers: { 'User-Agent': 'SoundFart' } }, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        res.resume();
+        try { return resolve(httpsGetText(new URL(res.headers.location, url).href)); } catch { return reject(new Error('redirection invalide')); }
+      }
+      if (res.statusCode !== 200) { res.resume(); return reject(new Error('HTTP ' + res.statusCode)); }
+      let got = 0; const chunks = [];
+      res.on('data', (c) => { got += c.length; if (got > 1024 * 1024) { req.destroy(new Error('reponse trop volumineuse')); return; } chunks.push(c); });
+      res.on('error', reject);
+      res.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')));
+    });
+    req.setTimeout(20000, () => req.destroy(new Error('timeout')));
+    req.on('error', reject);
+  });
+}
+
 function sha256File(p) {
   return new Promise((resolve, reject) => {
     const h = crypto.createHash('sha256');
@@ -747,10 +765,10 @@ async function maybeUpdateYtDlp(force = false) {
     let meta = {};
     try { meta = JSON.parse(fs.readFileSync(ytdlpMetaFile(), 'utf-8')) || {}; } catch {}
     if (!force && meta.at && Date.now() - meta.at < YTDLP_UPDATE_MS) return false;
-    const { stdout } = await execFileTracked('powershell.exe', ['-NoProfile', '-Command',
-      `(Invoke-RestMethod -Uri 'https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest' -Headers @{'User-Agent'='SoundFart'}).tag_name`],
-      { timeout: 20000 });
-    const latest = String(stdout).trim();
+    // GET JSON borne via https natif — plus de dependance a powershell.exe
+    // (Invoke-RestMethod) pour un simple appel d'API.
+    const body = await httpsGetText('https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest');
+    const latest = String(JSON.parse(body).tag_name || '').trim();
     if (!/^\d{4}\.\d{2}\.\d{2}$/.test(latest)) return false;
     const current = (await ytdlpInstalledVersion()) || YTDLP_VERSION;
     fs.writeFileSync(ytdlpMetaFile(), JSON.stringify({ version: current, at: Date.now() })); // horodate la verification
@@ -894,7 +912,7 @@ H('yt:download', async (_e, o) => {
     // Ne retenir qu'un fichier audio FINAL : yt-dlp peut laisser des
     // .part/.ytdl ou un artefact non audio avec le meme prefixe ; prendre
     // « le plus recent » sans filtre pouvait retourner un fichier inutilisable.
-    const AUDIO_OUT = ['.mp3', '.m4a', '.webm', '.opus', '.ogg', '.wav', '.flac', '.aac'];
+    const AUDIO_OUT = ['.mp3', '.m4a', '.webm', '.opus', '.ogg', '.wav', '.flac', '.aac', '.mp4', '.m4v', '.mov', '.mkv'];
     const created = fs.readdirSync(impDir).filter((f) => {
       if (!tags.some((t) => f.startsWith('sf-' + t + '-'))) return false;
       if (/\.(part|ytdl|temp)$/i.test(f)) return false;
@@ -1324,7 +1342,10 @@ H('audio:tapStart', async () => {
       }
     });
     proc.on('exit', () => {
-      const wasKilled = audioTapKilling;
+      // Marqueur PAR PROCESS : lire le global audioTapKilling ici cree une
+      // course — un ancien tap qui meurt tardivement remet le flag a false
+      // et le VRAI process tue verrait wasKilled=false -> faux tapDead.
+      const wasKilled = proc._sfKilled === true || audioTapKilling;
       audioTapKilling = false;
       // Sortie d'un processus obsolete (remplace entre-temps) : ne pas toucher
       // a la reference ni envoyer tapDead pour le NOUVEAU processus.
@@ -1357,6 +1378,7 @@ H('audio:tapStop', () => {
   tapEpoch++; // invalide tout tapStart en vol (compile/spawn a venir)
   if (audioTapProc) {
     audioTapKilling = true;
+    audioTapProc._sfKilled = true; // exit de CE process = arret volontaire
     try { audioTapProc.kill(); } catch { audioTapKilling = false; }
   }
   audioTapProc = null;

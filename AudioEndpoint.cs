@@ -134,7 +134,9 @@ internal static class AudioEndpoint
                 string id;
                 if (dev.GetId(out id) != 0 || string.IsNullOrEmpty(id)) continue; // endpoint sans id : fantome, inutilisable pour la restauration
                 string name = DeviceName(dev);
-                Console.WriteLine((flow == DataFlow.Render ? "render" : "capture") + "|" + id + "|" + name.Replace("\n", " ").Replace("|", "/"));
+                // \r isole (non suivi de \n) injecterait une fausse ligne dans
+                // la sortie -> endpoint fantome pour parseEndpoints.
+                Console.WriteLine((flow == DataFlow.Render ? "render" : "capture") + "|" + id + "|" + name.Replace("\r", " ").Replace("\n", " ").Replace("|", "/"));
             }
             // Pas de Marshal.Release(pColl) : GetObjectForIUnknown a cree un RCW
             // dont le finaliseur libere la reference (meme convention qu'AudioTap.cs).

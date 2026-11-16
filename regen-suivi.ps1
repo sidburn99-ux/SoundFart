@@ -12,7 +12,10 @@ $html = [System.IO.File]::ReadAllText($htmlPath, [System.Text.Encoding]::UTF8)
 # groupe .NET). '"' -> '\"' est conserve (inoffensif dans un template literal).
 $inj = $tsv.Replace('\', '\\').Replace('"', '\"').Replace('`', '\`').Replace('${', '\${')
 $inj = $inj.Replace("`r`n", '\n').Replace("`n", '\n')
-$m = [regex]::Match($html, '(?s)const TSV = `.*?`;')
+# Ancre sur la fin de la ligne d'injection : un « `; » present dans le TSV
+# (echappe en '\`') faisait matcher la regex non-greedy trop tot et
+# corrompait le HTML au run suivant.
+$m = [regex]::Match($html, '(?s)const TSV = `.*?`;\s*\r?\n')
 if (-not $m.Success) { Write-Error "const TSV introuvable dans suivi.html"; exit 1 }
 $html = $html.Remove($m.Index, $m.Length).Insert($m.Index, 'const TSV = `' + $inj + '`;')
 [System.IO.File]::WriteAllText($htmlPath, $html, $utf8)

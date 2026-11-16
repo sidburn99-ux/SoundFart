@@ -38,6 +38,26 @@ test('normGain : null/undefined ne devient pas 0 dBFS invente', () => {
   assert.equal(U.normGain({ lufs: null, truePeakDb: -20 }), null);
 });
 
+test('normGain : attenuation et cas limites', () => {
+  // Son trop fort : gain < 1 (attenue vers la cible)
+  const g = U.normGain({ lufs: -10, truePeakDb: -20, targetLufs: -18 });
+  assert.ok(g > 0 && g < 1, 'gain ' + g);
+  // truePeakDb = +Infinity -> plafond 0 -> null (pas de gain aberrant)
+  assert.equal(U.normGain({ lufs: -30, truePeakDb: Infinity, targetLufs: -18 }), null);
+  // Parametres personnalises
+  const g2 = U.normGain({ lufs: -30, truePeakDb: -40, targetLufs: -18, maxGain: 2 });
+  assert.ok(Math.abs(g2 - 2) < 0.02, 'maxGain ' + g2);
+});
+
+test('channelWeights : >2 canaux — LFE exclu, surrounds ponderes', () => {
+  const w6 = U.channelWeights(6);
+  assert.equal(w6.length, 6);
+  assert.equal(w6[5], 0, 'LFE (6e canal) doit peser 0');
+  assert.ok(Math.abs(w6[3] - 1.41) < 1e-9 && Math.abs(w6[4] - 1.41) < 1e-9, 'surrounds 1.41');
+  const w2 = U.channelWeights(2);
+  assert.deepEqual(w2, [1, 1]);
+});
+
 // ---------- isPreLufsConfig (migration) ----------
 test('isPreLufsConfig : v1 et absent = legacy, v2+ = preserve', () => {
   assert.equal(U.isPreLufsConfig(1), true);
