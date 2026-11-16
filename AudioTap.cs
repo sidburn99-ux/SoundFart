@@ -326,7 +326,13 @@ internal static class AudioTap
             }
             return "";
         }
-        catch { return ""; }
+        catch (Exception dex)
+        {
+            // Nom illisible : l'appelant rapporte « introuvable » generique —
+            // sans ce log, une panne du property store serait indiscernable.
+            try { Console.Error.WriteLine("AudioTap: DeviceName: " + dex.Message); } catch {}
+            return "";
+        }
         finally { PropVariantClear(pv); Marshal.FreeCoTaskMem(pv); } // libere le BSTR alloue par le store
     }
 
@@ -463,7 +469,7 @@ internal static class AudioTap
             + (sf.isFloat ? " float" : " int") + " -> " + df.channels + "ch " + df.rate + "Hz " + df.bits + "b"
             + (df.isFloat ? " float" : " int") + (convert ? " (conversion)" : " (copie)"));
 
-        // init capture loopback : buffer 1 s
+        // init capture loopback : buffer 200 ms (2 000 000 hns)
         Console.Error.WriteLine("AudioTap: init loopback...");
         // AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM est interdit avec LOOPBACK -> E_NOTIMPL
         try
