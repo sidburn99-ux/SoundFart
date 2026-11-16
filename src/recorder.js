@@ -2,13 +2,26 @@
 // enregistreur
 // Extrait de app.js — depend des globals du script principal (chargé en dernier).
 // ================================================================ enregistreur
+// Garde AudioTap : audioTapStop est un singleton global — une ancienne
+// session qui finit en async ne doit PAS tuer le tap d'une session plus
+// recente. Chaque audioTapStart reussi prend un jeton ; on n'arrete que
+// si le notre est toujours le dernier delivre.
+let tapGenCounter = 0, lastTapGen = 0;
+
 async function recorderModal() {
   let streams = [], actx = null, rec = null, chunks = [];
+  let myTapGen = 0; // jeton de la prise de tap par CETTE session (0 = pas de tap a nous)
   let recordedSound = null, recTimer = null, recStart = 0, looseTracks = [];
   let dead = false; // passe a true a la fermeture : avorte les startBtn encore en vol
   let closedDuringRec = false; // modale fermee PENDANT une prise : pas de modale resultat (elle detruirait une modale ouverte entre-temps)
   let tapNode = null, pcmQ = [], pcmSeen = false, tapLost = false, pcmDrops = 0, pcmQBytes = 0;
   const killTapNode = () => { if (tapNode) { try { tapNode.disconnect(); } catch {} tapNode = null; } pcmQ = []; pcmQBytes = 0; };
+  // N'arrete le tap que s'il appartient a la session la plus recente :
+  // sinon le cleanup d'une vieille modale tuerait l'enregistrement d'une
+  // nouvelle session (silencieux, sans tapDead car arret volontaire).
+  const stopTapIfMine = () => {
+    if (myTapGen && myTapGen === lastTapGen) window.sf.audioTapStop().catch(() => {});
+  };
   const offTapDead = window.sf.onTapDead ? window.sf.onTapDead(() => {
     window.sf.uiLog('tapDead rec=' + (rec ? rec.state : 'null') + ' dead=' + dead);
     tapLost = true; // le tap est mort : ni enregistrement silencieux ni faux succes
@@ -76,7 +89,7 @@ async function recorderModal() {
     if (st) st.getTracks().forEach((t) => t.stop());
     stopLoose();
     killTapNode();
-    window.sf.audioTapStop().catch(() => {});
+    stopTapIfMine();
     if (actx) { actx.close().catch(() => {}); actx = null; }
   };
 
@@ -97,7 +110,7 @@ async function recorderModal() {
     streams = [];
     stopLoose();
     killTapNode();
-    window.sf.audioTapStop().catch(() => {});
+    stopTapIfMine();
     if (actx) { actx.close().catch(() => {}); actx = null; }
   };
 
@@ -180,6 +193,7 @@ async function recorderModal() {
         try {
           const r = await window.sf.audioTapStart();
           tapOn = !!(r && r.ok);
+          if (tapOn) { myTapGen = ++tapGenCounter; lastTapGen = myTapGen; }
           if (!tapOn) window.sf.uiLog('audioTapStart: ' + (r && r.err));
         } catch (e) { window.sf.uiLog('audioTapStart: ' + e.message); }
         if (dead) { deadCleanup(); return; }
@@ -230,7 +244,7 @@ async function recorderModal() {
           killTapNode();
           // Sans cet arret, AudioTap continue de capturer le loopback
           // systeme pendant tout l'enregistrement (CPU + capture inutile).
-          window.sf.audioTapStop().catch(() => {});
+          stopTapIfMine();
           try {
             const st = await systemStream();
             if (dead) { deadCleanup(st); return; }
@@ -265,7 +279,7 @@ async function recorderModal() {
           streams.forEach((st) => st.getTracks().forEach((t) => t.stop()));
           stopLoose();
           killTapNode();
-          window.sf.audioTapStop().catch(() => {});
+          stopTapIfMine();
           if (actx) { actx.close().catch(() => {}); actx = null; }
           rec = null;
           startBtn.disabled = false; stopBtn.disabled = true;
@@ -318,7 +332,7 @@ async function recorderModal() {
           streams.forEach((st) => st.getTracks().forEach((t) => t.stop()));
           stopLoose();
           killTapNode();
-          window.sf.audioTapStop().catch(() => {});
+          stopTapIfMine();
           if (actx) { actx.close().catch(() => {}); actx = null; }
           rec = null;
           startBtn.disabled = false; stopBtn.disabled = true;
@@ -368,7 +382,7 @@ async function recorderModal() {
       streams.forEach((st) => st.getTracks().forEach((t) => t.stop()));
       stopLoose();
       killTapNode();
-      window.sf.audioTapStop().catch(() => {});
+      stopTapIfMine();
       if (actx) { actx.close().catch(() => {}); actx = null; }
       startBtn.disabled = false;
     }

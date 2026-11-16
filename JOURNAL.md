@@ -38,7 +38,7 @@ Corrections majeures : permissions `microphone` Electron 45 (écran vide/P0), PR
 ## Validations
 
 - **Manuelle 15/11/2026** (machine réelle, `dist\SoundFart.exe`) : détection périphériques, sortie casque, routage Discord, enregistrement micro+Discord, persistance après redémarrage — **5/5 OK**.
-- **Automatisées** : `node --check`, `npm test` (51/51 au 16/11), `npm run dist`, smokes `--test-profile`, validations runtime agent (imports massifs, enregistreur multi-sources avec mesure RMS, rejouements ×10, kill brutal sans orphelins).
+- **Automatisées** : `node --check`, `npm test` (54/54 au 16/11), `npm run dist`, smokes `--test-profile`, validations runtime agent (imports massifs, enregistreur multi-sources avec mesure RMS, rejouements ×10, kill brutal sans orphelins).
 - **NON testé / à faire** : écoutes comparatives LUFS à l'oreille, normalisation complète sur la bibliothèque réelle, flux VB-CABLE complet sur machine propre (`TESTS_VM.md`), endurance longue session, débranchement chaud des périphériques.
 
 ## Historique des versions

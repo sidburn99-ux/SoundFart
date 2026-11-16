@@ -30,7 +30,7 @@ function youtubeModal() {
     } catch (e) { logErr('pickDir', e); }
   } });
 
-  let info = null, dl = null, offProg = null, busy = false;
+  let info = null, dl = null, offProg = null, busy = false, analyzeBusy = false, analyzedUrl = null;
   const setProg = (p) => {
     if (p === -1 || p == null) { prog.textContent = 'Téléchargement…'; barFill.style.width = '100%'; barFill.style.opacity = '.4'; }
     else { prog.textContent = 'Téléchargement… ' + p + ' %'; barFill.style.opacity = '1'; barFill.style.width = p + '%'; }
@@ -39,7 +39,11 @@ function youtubeModal() {
   const analyzeBtn = el('button', { text: 'Analyser', onclick: async () => {
     const url = urlIn.value.trim();
     if (!YT_RE.test(url)) { infoBox.textContent = 'Ce lien ne ressemble pas à une URL YouTube.'; return; }
-    busy = true;
+    // Pas d'analyse pendant un telechargement : yt:info emet ytProgress(-1)
+    // qui ecraserait la barre du download, et les deux flaky flags
+    // shared 'busy' permettaient un double yt:download.
+    if (busy || analyzeBusy) return;
+    analyzeBusy = true;
     infoBox.textContent = 'Vérification de l\'outil de téléchargement…';
     try {
       if (offProg) offProg(); // un seul ecouteur ytprogress a la fois
@@ -47,19 +51,24 @@ function youtubeModal() {
       await window.sf.ytEnsure();
       infoBox.textContent = 'Lecture des infos de la vidéo…';
       info = await window.sf.ytInfo(url);
+      analyzedUrl = url;
       infoBox.textContent = `« ${info.title} » — durée ${fmtTime(info.duration)}.`;
       if (!nameIn.value) nameIn.value = String(info.title).slice(0, 80);
       endIn.placeholder = info.duration ? 'Fin (max ' + fmtTime(info.duration) + ')' : 'Fin';
     } catch (e) {
-      info = null;
+      info = null; analyzedUrl = null;
       infoBox.textContent = 'Analyse impossible : ' + e.message;
     } finally {
-      busy = false;
+      analyzeBusy = false;
     }
   } });
 
   const dlBtn = el('button', { text: 'Télécharger l\'extrait', onclick: async () => {
-    if (!info || busy) return;
+    if (!info || busy || analyzeBusy) return;
+    const curUrl = urlIn.value.trim();
+    // info correspond a analyzedUrl : si le lien a change depuis
+    // « Analyser », le nom/duree affiches ne decriraient pas le fichier.
+    if (curUrl !== analyzedUrl) { prog.textContent = 'Le lien a changé : relance « Analyser ».'; return; }
     const start = parseTs(startIn.value);
     const hasTimeline = endIn.value.trim() !== '' && startIn.value.trim() !== '';
     const end = endIn.value.trim() === '' ? 0 : parseTs(endIn.value);

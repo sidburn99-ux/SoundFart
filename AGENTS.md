@@ -33,7 +33,8 @@ src/youtube.js   # import YouTube (yt-dlp)
 src/index.html   # page unique (CSP stricte)   ·   src/style.css : thème
 src/tap-processor.js  # AudioWorklet : PCM AudioTap -> graphe audio
 lib/audio-utils.js    # fonctions pures partagées main/renderer (window.SFUtils)
-test/            # node:test (npm test)
+lib/media-permission.js # décision permissions média (getUserMedia/displayMedia)
+test/            # node:test (npm test) + drivers CDP manuels cdp-*.js (VALIDATION.md)
 AudioEndpoint.cs # bascule micro Windows (compilé csc.exe à la volée)
 AudioTap.cs      # loopback WASAPI -> PCM stdout
 assets/          # icône exe + sons par défaut

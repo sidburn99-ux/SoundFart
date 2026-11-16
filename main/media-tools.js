@@ -6,6 +6,7 @@ const path = require('path');
 const https = require('https');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
+const { AUDIO_EXT, safeName, cbOrNoop } = require('../lib/audio-utils');
 
 function createMediaTools(deps) {
   const { log, execFileTracked, trackChild, H, toolSane, discardCorruptTool, toolsDir, storageRoot, getWin } = deps;
@@ -450,7 +451,7 @@ H('yt:download', async (_e, o) => {
     // d'~80 Mo d'ffmpeg inutilement.
     const wantSection = !full && Number.isFinite(+start) && Number.isFinite(+end) && +end > +start;
     let ffDir = null;
-    if (wantSection) { try { ffDir = await ensureFfmpeg(); } catch {} }
+    if (wantSection) { try { ffDir = await ensureFfmpeg(); } catch (e) { log('[yt] ffmpeg indisponible pour la coupe, repli audio complet : ' + (e && e.message), 'warn'); } }
     if (wantSection && ffDir) {
       try {
         await runYt([...baseArgs, '--ffmpeg-location', ffDir, '-f', 'bestaudio', '-x', '--audio-format', 'mp3', '--download-sections', `*${start}-${end}`, url], ytProgress);
@@ -470,11 +471,10 @@ H('yt:download', async (_e, o) => {
     // Ne retenir qu'un fichier audio FINAL : yt-dlp peut laisser des
     // .part/.ytdl ou un artefact non audio avec le meme prefixe ; prendre
     // « le plus recent » sans filtre pouvait retourner un fichier inutilisable.
-    const AUDIO_OUT = ['.mp3', '.m4a', '.webm', '.opus', '.ogg', '.wav', '.flac', '.aac', '.mp4', '.m4v', '.mov', '.mkv'];
     const created = fs.readdirSync(impDir).filter((f) => {
       if (!tags.some((t) => f.startsWith('sf-' + t + '-'))) return false;
       if (/\.(part|ytdl|temp)$/i.test(f)) return false;
-      return AUDIO_OUT.includes(path.extname(f).toLowerCase());
+      return AUDIO_EXT.includes(path.extname(f).toLowerCase());
     }).map((f) => path.join(impDir, f))
       .filter((f) => { try { return fs.statSync(f).size > 0; } catch { return false; } });
     if (!created.length) throw new Error('Aucun fichier audio produit.');

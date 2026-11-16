@@ -50,7 +50,7 @@ function editSound(s) {
       norm = await computeNorm(s.path);
       normVal.textContent = '×' + norm;
       toast(`Volume normalisé : ×${norm}.`);
-    } catch { toast('Impossible d\'analyser ce fichier.', 'warn'); }
+    } catch (e) { logErr('computeNorm', e); toast('Impossible d\'analyser ce fichier.', 'warn'); }
   } });
 
   // ---- decoupage non destructif (le fichier d'origine n'est jamais modifie)

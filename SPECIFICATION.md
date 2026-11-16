@@ -18,9 +18,12 @@
 ## Architecture
 
 ```
-main.js          processus principal : IPC, config, fichiers, yt-dlp, ffmpeg,
+main.js          processus principal : IPC, config, fichiers,
                  raccourcis globaux, bascule micro Windows, menu F11, journal
+main/media-tools.js  ffmpeg (coupe MP3) + yt-dlp : createMediaTools(deps)
 preload.js       pont contextBridge sécurisé (contexte isolé, sandbox)
+lib/audio-utils.js   fonctions pures partagées main/renderer (window.SFUtils)
+lib/media-permission.js  décision permissions média (getUserMedia/displayMedia)
 src/app.js       renderer core : état/config, moteur Web Audio, rendu, init
 src/normalize.js normalisation LUFS · src/edit-sound.js éditeur de son
 src/settings.js  réglages + export/import · src/recorder.js enregistreur

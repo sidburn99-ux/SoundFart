@@ -1,7 +1,6 @@
 const { app, BrowserWindow, ipcMain, dialog, shell, session, Menu, globalShortcut, desktopCapturer, crashReporter, powerMonitor } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const https = require('https');
 const os = require('os');
 const { spawn, execFile, execFileSync } = require('child_process');
 const crypto = require('crypto');
@@ -36,7 +35,7 @@ function execFileTracked(file, args, opts = {}) {
     });
   });
 }
-const { AUDIO_EXT, VIRTUAL_RE: VIRTUAL_RE_MAIN, parseEndpoints, parseGet, findCableCapture, chooseRestoreIds, safeName, expandPathsAsync, writeRecording, cbOrNoop } = require('./lib/audio-utils');
+const { AUDIO_EXT, VIRTUAL_RE: VIRTUAL_RE_MAIN, parseEndpoints, parseGet, findCableCapture, chooseRestoreIds, expandPathsAsync, writeRecording } = require('./lib/audio-utils');
 let win = null;
 
 // ---------- journal d'erreurs : SoundFart-data\soundfart.log ----------
@@ -452,11 +451,11 @@ H('rec:save', async (_e, opts) => {
 });
 
 // ---------- media : ffmpeg + yt-dlp (main/media-tools.js) ----------
-const mediaTools = createMediaTools({
+// Enregistre les handlers IPC media:cut / yt:* (ffmpeg + yt-dlp).
+createMediaTools({
   log, execFileTracked, trackChild, H, toolSane, discardCorruptTool,
   toolsDir, storageRoot, getWin: () => win,
 });
-const { ensureFfmpeg, ensureYtDlp, runYt, maybeUpdateYtDlp } = mediaTools;
 
 // ---------- bascule automatique de l'entree micro (CABLE Output) ----------
 // Au lancement : si active, le peripherique d'enregistrement par defaut passe sur le cable virtuel.
@@ -480,6 +479,9 @@ function writeRestoreMarker(obj) {
 function spawnMicGuard(tool) {
   try {
     const g = spawn(tool, ['guard', String(process.pid), restoreFile()], { detached: true, stdio: 'ignore', windowsHide: true });
+    // 'error' async (exe disparu entre ensureAudioTool et le spawn) sans
+    // listener = uncaughtException -> crash de l'app.
+    g.on('error', (e) => log('[mic-guard] ' + (e && e.message), 'warn'));
     g.unref();
   } catch (e) { log('[mic-guard] spawn: ' + e.message, 'warn'); }
 }

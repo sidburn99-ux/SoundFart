@@ -401,7 +401,7 @@ async function makeOutput(deviceId) {
   try {
     await ctx.setSinkId(deviceId);
   } catch (e) {
-    ctx.close();
+    ctx.close().catch(() => {});
     throw e;
   }
   // Etat 'interrupted' (session Windows coupee sans devicechange) : sans
@@ -958,7 +958,7 @@ function moveCategory(c, dir) {
   const j = i + dir;
   if (i < 0 || j < 0 || j >= cfg.categories.length) return;
   [cfg.categories[i], cfg.categories[j]] = [cfg.categories[j], cfg.categories[i]];
-  save(); renderSidebar();
+  save(); renderAll(); // renderGrid ordonne les groupes via sortedCategories : renderSidebar seul laissait la grille perimee
 }
 
 async function renameCategory(c) {
@@ -1141,6 +1141,17 @@ function pushMenuState() {
 
 function renderAll() { renderSidebar(); renderGrid(); pushMenuState(); }
 
+// Resynchronise les controles du haut apres un import de config : leurs
+// options sont creees une seule fois dans init() — sans ca, tri/groupe/
+// volume master affichent l'ancienne config alors que cfg est deja remplace.
+function syncTopbarControls() {
+  const sortSel = $('#sort'); if (sortSel) sortSel.value = cfg.settings.sort;
+  const catSortSel = $('#catSort'); if (catSortSel) catSortSel.value = cfg.settings.catSort;
+  const groupCat = $('#groupCat'); if (groupCat) groupCat.checked = !!cfg.settings.groupByCat;
+  const master = $('#master');
+  if (master) { master.value = cfg.settings.master; const mv = $('#masterVal'); if (mv) mv.textContent = cfg.settings.master + '%'; }
+}
+
 function showCtx(e, s) {
   const item = (label, fn, cls) => el('button', { class: cls || '', text: label, onclick: fn });
   const m = $('#ctxmenu');
@@ -1158,7 +1169,7 @@ function showCtx(e, s) {
 async function relocateSound(s) {
   let paths;
   try { paths = await window.sf.pickFiles(); } catch (e) { logErr('pickFiles', e); return; }
-  const p = paths[0];
+  const p = Array.isArray(paths) ? paths[0] : null;
   if (!p) return;
   // Le filtre du dialogue est indicatif : valider l'extension ici sinon
   // file:check dirait « present » mais file:read refuserait au play.
@@ -1215,7 +1226,7 @@ async function init() {
   SORTS.forEach(([v, l]) => sortSel.append(el('option', { value: v, text: l, selected: v === cfg.settings.sort })));
   const catSortSel = $('#catSort');
   CAT_SORTS.forEach(([v, l]) => catSortSel.append(el('option', { value: v, text: l, selected: v === cfg.settings.catSort })));
-  catSortSel.addEventListener('change', () => { cfg.settings.catSort = catSortSel.value; save(); renderSidebar(); });
+  catSortSel.addEventListener('change', () => { cfg.settings.catSort = catSortSel.value; save(); renderAll(); });
   sortSel.addEventListener('change', () => { cfg.settings.sort = sortSel.value; save(); renderGrid(); });
   const groupCat = $('#groupCat');
   groupCat.checked = !!cfg.settings.groupByCat;
@@ -1242,7 +1253,7 @@ async function init() {
       else if (a === 'settings') { await refreshDevices(false); settingsModal(); }
       else if (a === 'stop') stopAll(false);
       else if (a === 'search') { const i = $('#search'); i.focus(); i.select(); }
-      else if (a === 'group') { cfg.settings.groupByCat = !cfg.settings.groupByCat; save(); renderAll(); }
+      else if (a === 'group') { cfg.settings.groupByCat = !cfg.settings.groupByCat; save(); const gc = $('#groupCat'); if (gc) gc.checked = !!cfg.settings.groupByCat; renderAll(); }
       else if (a.startsWith('view:')) { const v = a.slice(5); cfg.ui.cat = ['all', 'fav', 'none'].includes(v) || cfg.categories.some((c) => c.id === v) ? v : 'all'; save(); renderAll(); }
       else if (a === 'about') {
         const v = await window.sf.getVersion().catch(() => '?');

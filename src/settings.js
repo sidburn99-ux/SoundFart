@@ -27,6 +27,12 @@ function askDestDir() {
       { label: 'Choisir…', onclick: async () => { try { const d = await window.sf.pickDir(); if (d) inp.value = d; } catch (e) { logErr('pickDir', e); } } },
       { label: 'OK', kind: 'primary', onclick: (c) => {
         const d = inp.value.trim();
+        // storageRoot() ignore silencieusement les chemins relatifs :
+        // mieux vaut refuser ici que d'enregistrer « ailleurs » que l'UI.
+        if (d && !/^[a-zA-Z]:[\\/]/.test(d) && !d.startsWith('\\\\')) {
+          inp.style.borderColor = 'var(--danger, #ef4444)';
+          return; // reste dans la modale, pas de resolve
+        }
         if (d) { cfg.settings.lastDestDir = d; } else { delete cfg.settings.lastDestDir; }
         save();
         resolve(d || ''); c();
@@ -69,6 +75,14 @@ function importConfig(onDone) {
       await applyAudio();
       applyShortcuts();
       renderAll();
+      syncTopbarControls();
+      // autoSwitchMic/cableLabel peuvent avoir change : rejouer la bascule
+      // comme le fait « Appliquer » des reglages, sinon elle attend le
+      // prochain evenement (SF-REL revue import).
+      if (cablePresent()) window.sf.audioAutoSetup({ enabled: cfg.settings.autoSwitchMic, cableLabel: cfg.settings.cableLabel }).then((r) => {
+        if (r && r.changed) toast('Entrée micro basculée sur ' + r.device + ' (restaurée à la fermeture).');
+        else if (r && !r.ok) toast('Bascule micro auto impossible : ' + r.err, 'warn');
+      }).catch((e) => logErr('audioAutoSetup', e));
       checkMissing().catch((e) => logErr('checkMissing', e)); // re-verifie les chemins des sons importes
       toast('Configuration importée.');
       if (onDone) onDone();
