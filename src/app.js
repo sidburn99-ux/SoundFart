@@ -51,6 +51,7 @@ let cfg;
 let missing = new Set();
 const cardEls = new Map();
 const playingCount = new Map();
+const playingNames = new Map(); // id -> nom : couvre les aperçus (sons éphémères absents de cfg.sounds)
 let saveTimer;
 
 const defaults = () => ({
@@ -647,10 +648,10 @@ function showCableScreen() {
 
 function setPlaying(id, delta) {
   const n = (playingCount.get(id) || 0) + delta;
-  if (n <= 0) playingCount.delete(id); else playingCount.set(id, n);
+  if (n <= 0) { playingCount.delete(id); playingNames.delete(id); } else playingCount.set(id, n);
   const c = cardEls.get(id);
   if (c) c.classList.toggle('playing', n > 0);
-  const names = [...playingCount.keys()].map((i) => cfg.sounds.find((x) => x.id === i)?.name).filter(Boolean);
+  const names = [...playingCount.keys()].map((i) => playingNames.get(i) || cfg.sounds.find((x) => x.id === i)?.name).filter(Boolean);
   $('#nowplaying').textContent = names.length ? '▶ ' + names.join(' + ') : 'Prêt';
 }
 
@@ -729,6 +730,7 @@ function play(sound, opts = {}) {
       endVoice(voice);
       toast('Lecture interrompue : la sortie audio était suspendue.', 'warn');
     }, (dur + 15) * 1000);
+    playingNames.set(sound.id, sound.name || 'son');
     setPlaying(sound.id, +1);
     if (missing.delete(sound.id)) renderGrid();
     if (!opts.preview) { sound.plays = (sound.plays || 0) + 1; save(); }
