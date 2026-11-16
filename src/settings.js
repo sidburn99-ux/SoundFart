@@ -15,7 +15,7 @@ function exportConfig() {
 
 // Propose le dossier de destination avant un ajout (YouTube, enregistrement).
 // Pre-rempli avec le dernier choix (lastDestDir) ou le dossier de stockage.
-function askDestDir(extraButtons) {
+function askDestDir(extraButtons, extraNodes) {
   return new Promise((resolve) => {
     const inp = el('input', { type: 'text', value: cfg.settings.lastDestDir || cfg.settings.storageDir || '' });
     // input DOIT etre dans .field : sinon il garde le style natif (fond
@@ -23,6 +23,7 @@ function askDestDir(extraButtons) {
     inp.style.width = '100%';
     modal('Dossier de destination', [
       field('Dossier', inp, 'Le fichier sera enregistré dans ce dossier (sous-dossier imports/ ou recordings/ selon la source). Laisse vide pour le dossier SoundFart par défaut.'),
+      ...(extraNodes || []),
     ], [
       ...(extraButtons || []),
       { label: 'Annuler', onclick: (c) => { resolve(null); c(); } },
@@ -184,10 +185,11 @@ function settingsModal() {
   const voiceLvl = el('select', {},
     el('option', { value: '1', text: 'Léger' }),
     el('option', { value: '2', text: 'Normal' }),
-    el('option', { value: '3', text: 'Fort' }));
+    el('option', { value: '3', text: 'Fort' }),
+    el('option', { value: '4', text: 'Max' }));
   voiceLvl.value = String(s.voiceDspLvl ?? 2);
-  voiceLvl.title = 'Intensité du traitement vocal : Léger = peu de coupe, Normal = équilibré, Fort = bruit de clavier/fond très atténué (la voix peut paraître plus compressée).';
-  voiceLvl.addEventListener('change', () => { s.voiceDspLvl = Math.min(3, Math.max(1, +voiceLvl.value || 2)); save(); });
+  voiceLvl.title = 'Intensité du traitement vocal : Léger = peu de coupe, Normal = équilibré, Fort = clavier/fond atténué, Max = bande passante très resserrée (la voix peut paraître plus étouffée/filtrée).';
+  voiceLvl.addEventListener('change', () => { s.voiceDspLvl = Math.min(4, Math.max(1, +voiceLvl.value || 2)); save(); });
   const autoMic = el('input', { type: 'checkbox', checked: !!s.autoSwitchMic, title: 'Au lancement, l\'entrée micro Windows bascule sur « CABLE Output » (pour que Discord capte ta voix via le câble), puis revient à ton vrai micro à la fermeture ou en cas de crash.' });
   const watchMic = el('input', { type: 'checkbox', checked: s.watchdogMic !== false, title: 'Revérifie périodiquement que l\'entrée micro est toujours sur le câble. Se met en pause pour la session si tu changes le micro toi-même (Discord inclus).' });
 
@@ -281,7 +283,7 @@ function settingsModal() {
         el('span', { text: 'Réduction de bruit et écho sur la voix uniquement — n\'affecte pas les sons. Le gain micro reste indépendant du volume general.' })),
         'Agit sur le micro envoyé à Discord : annulation d\'écho, suppression de bruit et filtre passe-bande (coupe les graves de clavier et le souffle). Décoche si ta voix sonne étouffée ou si tu utilises déjà un filtre Discord/Teams.'),
       field('Intensité', el('div', { class: 'row' }, voiceLvl),
-        'Léger = peu de coupe · Normal = équilibré · Fort = bruit de clavier/fond très atténué (la voix peut paraître plus compressée).'),
+        'Léger = peu de coupe · Normal = équilibré · Fort = clavier/fond atténué · Max = voix très filtrée (bande passante étroite — testez sur Discord).'),
     ]},
     { cat: 'Bibliothèque', label: 'Bibliothèque', desc: 'Niveaux de lecture des sons : normalisation loudness (mesurée en interne, fichiers jamais modifiés) et durée maximale jouée.', nodes: [
       field('Niveaux audio', el('div', {},
@@ -354,7 +356,7 @@ function settingsModal() {
       s.autoSwitchMic = autoMic.checked;
       s.watchdogMic = watchMic.checked;
       s.voiceDsp = voiceDsp.checked;
-      s.voiceDspLvl = Math.min(3, Math.max(1, +voiceLvl.value || 2));
+      s.voiceDspLvl = Math.min(4, Math.max(1, +voiceLvl.value || 2));
       const nl = +normLufsIn.value;
       s.normLufs = (Number.isFinite(nl) && nl <= 0) ? Math.max(-40, nl) : defaults().settings.normLufs;
       const md = +maxDurIn.value;

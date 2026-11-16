@@ -99,7 +99,7 @@ function normalizeCfg(saved) {
   // traitement vocal (cle absente/invalide -> garde actif).
   c.settings.voiceDsp = c.settings.voiceDsp !== false;
   const vl = Math.round(+c.settings.voiceDspLvl);
-  c.settings.voiceDspLvl = (Number.isFinite(vl) && vl >= 1 && vl <= 3) ? vl : 2;
+  c.settings.voiceDspLvl = (Number.isFinite(vl) && vl >= 1 && vl <= 4) ? vl : 2;
   if (!Number.isFinite(+c.settings.master)) c.settings.master = 80; else c.settings.master = Math.min(100, Math.max(0, +c.settings.master));
   if (typeof c.settings.stopShortcut !== 'string' || c.settings.stopShortcut.length > 64) c.settings.stopShortcut = defaults().settings.stopShortcut;
   if (typeof c.settings.sort !== 'string' || !SORTS.some(([v]) => v === c.settings.sort)) c.settings.sort = 'added-desc';
@@ -571,14 +571,19 @@ async function applyAudioInner() {
             const VOICE_DSP = {
               1: { threshold: 0.0015, release: 0.35, highpass: 0.993, lowpass: 0.7 },
               2: { threshold: 0.003, release: 0.25, highpass: 0.99, lowpass: 0.5 },
-              3: { threshold: 0.01, release: 0.12, highpass: 0.98, lowpass: 0.35 },
+              // 3/4 : les clics clavier sont des transitoires FORTS — le gate
+              // ne peut pas les distinguer par amplitude. Ce qui les attenue
+              // est la bande passante resserree (voix ~300-3400 Hz, clics
+              // pleins spectre) + seuil plus haut + release plus court.
+              3: { threshold: 0.012, release: 0.1, highpass: 0.972, lowpass: 0.3 },
+              4: { threshold: 0.02, release: 0.06, highpass: 0.965, lowpass: 0.22 },
             };
             const out = audio.cable;
             out._vgMod = out._vgMod || out.ctx.audioWorklet.addModule('voice-gate.js');
             await out._vgMod;
             const gate = new AudioWorkletNode(out.ctx, 'voice-gate', {
               numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2],
-              processorOptions: VOICE_DSP[Math.min(3, Math.max(1, +(s.voiceDspLvl || 2)))],
+              processorOptions: VOICE_DSP[Math.min(4, Math.max(1, +(s.voiceDspLvl || 2)))],
             });
             src.connect(gate);
             gate.connect(out.lim);
@@ -847,7 +852,10 @@ function play(sound, opts = {}) {
       toast(`Impossible de lire « ${sound.name} » : fichier introuvable ou illisible.`, 'warn');
       missing.add(sound.id);
     } else {
-      toast(`Erreur de lecture de « ${sound.name} » : ${e && e.message || 'audio indisponible'}`, 'warn');
+      // Nom nettoye : un titre YouTube avec emojis/symboles rendait le
+      // toast illisible (« caracteres non necessaires » rapportes terrain).
+      const nm = String(sound.name || '').replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60) || 'son';
+      toast(`Erreur de lecture de « ${nm} » : ${e && e.message || 'audio indisponible'}`, 'warn');
     }
     renderGrid();
     return null;

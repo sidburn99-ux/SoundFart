@@ -355,13 +355,62 @@ async function recorderModal() {
               previewVoice = v;
             } catch (e) { logErr('previewRec', e); toast('Aperçu impossible : ' + (e && e.message), 'warn'); }
           };
-          const destDir = await askDestDir([{ label: 'Écouter', onclick: () => previewRec() }]);
+          // Rogner avant sauvegarde : decode la prise et ré-encode en WAV
+          // (PCM 16 bits) — les conteneurs MediaRecorder (webm/opus) ne sont
+          // pas découpables sans ré-encodage, et ffmpeg ne doit pas être
+          // téléchargé pour ça. WAV est dans AUDIO_EXT : lecture/éditeur OK.
+          const trimStartIn = el('input', { type: 'number', min: 0, step: 0.1, value: '0' });
+          const trimEndIn = el('input', { type: 'number', min: 0, step: 0.1, value: '' });
+          const encodeWav = (buf, startSec, endSec) => {
+            const sr = buf.sampleRate, nch = buf.numberOfChannels;
+            const s0 = Math.max(0, Math.floor(startSec * sr));
+            const s1 = Math.min(buf.length, Math.floor((endSec == null ? buf.duration : endSec) * sr));
+            const n = Math.max(1, s1 - s0);
+            const bytes = 44 + n * nch * 2;
+            const wa = new ArrayBuffer(bytes), dv = new DataView(wa);
+            const ws = (o, s) => { for (let i = 0; i < s.length; i++) dv.setUint8(o + i, s.charCodeAt(i)); };
+            ws(0, 'RIFF'); dv.setUint32(4, bytes - 8, true); ws(8, 'WAVEfmt ');
+            dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, nch, true);
+            dv.setUint32(24, sr, true); dv.setUint32(28, sr * nch * 2, true);
+            dv.setUint16(32, nch * 2, true); dv.setUint16(34, 16, true);
+            ws(36, 'data'); dv.setUint32(40, n * nch * 2, true);
+            const chans = []; for (let c = 0; c < nch; c++) chans.push(buf.getChannelData(c));
+            let o = 44;
+            for (let i = 0; i < n; i++) for (let c = 0; c < nch; c++) {
+              const v = Math.max(-1, Math.min(1, chans[c][s0 + i]));
+              dv.setInt16(o, v < 0 ? v * 0x8000 : v * 0x7FFF, true); o += 2;
+            }
+            return wa;
+          };
+          const trimNodes = [
+            field('Rogner (secondes)', el('div', { class: 'row' },
+              el('span', { class: 'hint', text: 'Début' }), trimStartIn,
+              el('span', { class: 'hint', text: 'Fin' }), trimEndIn),
+              'Laisse tel quel pour tout garder. Si tu rognes, le fichier est enregistré en WAV (plus lourd mais sans perte).'),
+          ];
+          const destDir = await askDestDir([{ label: 'Écouter', onclick: () => previewRec() }], trimNodes);
           if (destDir === null) {
             // La modale a ete detruite par askDestDir : status est detache,
             // seul un toast reste visible — l'utilisateur doit etre informe.
             toast('Enregistrement annulé (choix du dossier).', 'warn');
           } else {
-          const path = await window.sf.saveRecording({ data: ab, name: fname, ext: extFor(recMime || mime), dir: destDir || cfg.settings.storageDir || '' });
+          // Rogner si demande : decode -> slice -> WAV 16 bits. Toute
+          // erreur de decode retombe sur le fichier complet (jamais de
+          // perte silencieuse de la prise).
+          let saveData = ab, saveExt = extFor(recMime || mime);
+          const t0 = Math.max(0, +trimStartIn.value || 0);
+          const t1raw = trimEndIn.value.trim();
+          const t1 = t1raw === '' ? null : Math.max(0, +t1raw || 0);
+          if (t0 > 0.01 || (t1 != null && t1 > 0)) {
+            try {
+              const buf = await decoder.decodeAudioData(ab.slice(0));
+              const dur = buf.duration;
+              const end = (t1 != null && t1 > 0) ? Math.min(t1, dur) : dur;
+              if (end - t0 > 0.05) { saveData = encodeWav(buf, t0, end); saveExt = '.wav'; }
+              else toast('Rognage ignoré : la fenêtre demandée est vide.', 'warn');
+            } catch (e) { logErr('trimRec', e); toast('Rognage impossible — fichier complet sauvegardé.', 'warn'); }
+          }
+          const path = await window.sf.saveRecording({ data: saveData, name: fname, ext: saveExt, dir: destDir || cfg.settings.storageDir || '' });
           if (typeof path !== 'string' || !path) throw new Error('réponse rec:save invalide');
           recordedSound = {
             id: uid(), name: fname, path, volume: 100, plays: 0, addedAt: Date.now(),
