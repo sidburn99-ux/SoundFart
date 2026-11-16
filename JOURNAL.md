@@ -17,6 +17,36 @@
 - **Migration config v1→v2** : les anciens `s.norm` (basés pic) sont invalidés à ×1 ; volumes manuels, découpes, favoris, catégories, raccourcis préservés.
 - Correctifs : cible de normalisation persistée dès la saisie, progression de normalisation en ligne dans le panneau (qui reste ouvert), scan de pic exhaustif, **crash fatal corrigé dans `downloadFile`** (`res()` appelait la réponse HTTP au lieu de `resolve` — touchait tous les téléchargements d'outils).
 
+## Campagne audit auto (16/11/2026, branche `audit/auto-improve`)
+
+Boucle audit → correction → vérification, ~13 commits unitaires. Baseline : `npm test` 54/54, `node --check` OK sur 20 fichiers JS.
+
+### Corrigé (vérifié : node --check + npm test + npm run dist)
+
+- **Bug critique post-découpage** : `main/media-tools.js` utilisait `AUDIO_EXT`/`safeName`/`cbOrNoop` non injectés → `ReferenceError` sur `media:cut`, `downloadFile`, `runYt` (invisible à `node --check`/`npm test`). Corrigé via `require('../lib/audio-utils')`.
+- Cycle de vie process : `childProcs` retiré aussi sur `'exit'` (fenêtre de réutilisation de PID), `execFileTracked` timeout avec `p.kill()` fallback, `whenReady().then` avec `.catch` (zombie sans fenêtre sinon), `nameOf` filtré `flow='capture'`.
+- Téléchargements/outils : `httpsGetText` HTTPS-only + ≤5 redirections, `ffmpegDir()` fichier → `readdirSync` ENOTDIR permanent corrigé, `out.destroy()` sur dépassement 300 Mo, `runYt` stdin ignoré, tri `mtime`/`statSync` gardés (fichier disparu = plus de crash ENOENT), `yt-dlp.json` écriture atomique, ménage des `.part`/`.ytdl` orphelins dans `imports/`.
+- `spawnMicGuard` sans listener `'error'` → `uncaughtException` possible.
+- Renderer : race AudioTap inter-sessions (garde par génération — un vieux cleanup ne tue plus le tap d'une nouvelle session), YouTube `analyzeBusy`/`downloadBusy` séparés + `analyzedUrl` lie l'info au lien, `importConfig` → `syncTopbarControls()` + `audioAutoSetup` rejoué, `catSort`/`moveCategory` → `renderAll()` (grille périmée), checkbox « Par catégorie » sync menu F11, `askDestDir` refuse les chemins relatifs, `modal()` `onClose` protégé (promesse plus pendue), `nowplaying` affiche les aperçus, `seedSounds` non-tableau sécurisé, fondus bornés 5000 ms, `resetArmTimer` annulé à la fermeture, réponses IPC `ytDownload`/`mediaCut`/`saveRecording` validées, `file:read` message dossier dédié, `soundHasCat` O(1) via Set caché, `VIRTUAL_RE` sourcé depuis `SFUtils`.
+- Docs : GUIDE LUFS -30→-40, JOURNAL 51→54, SPEC +`lib/`+`main/`, README +SPEC/+FINDINGS.
+
+### « À valider » (non appliqué — risque de régression ou invérifiable ici)
+
+- **`setDisplayMediaRequestHandler`** : callback sans source vidéo pour une requête `video+audio` — le repli `getDisplayMedia` de l'enregistreur est probablement mort. Fix proposé : fournir `sources[0]` en vidéo ou documenter le repli comme mort. Vérifier par test réel avec « audio du PC » + tap en échec.
+- **`normalizeCfg`** : valider chemins absolus + extension `AUDIO_EXT` à l'import — risque d'écarter des sons existants d'anciennes configs.
+- **`audioExecSync`/`restoreMicNow`** : restauration synchrone ~45 s max dans `will-quit` ; dédup `restoreMicNowP`/`restoreMicNow` (~35 l.) — zone micro sensible, à faire en chantier dédié avec test VB-CABLE.
+- **`test/cdp-*.js`** : 14 drivers CDP dans `test/` — risque si `node --test` élargit son glob (Node ≥21/22 exécute tout `.js` sous `test/`). Déplacement vers `scripts/cdp/` proposé mais **AGENTS.md (intouchable) documente `test/` comme contenant les drivers** — à valider avec mise à jour d'AGENTS.
+- **`AudioEndpoint.cs`/`AudioTap.cs`** : déplacement éventuel vers `tools-cs/` — exige maj `build.bat` + toutes les références `__dirname` ; non vérifiable sans compile/runtime complet.
+- **`.gitignore` `.mp3`** : règle large qui empêcherait de committer un futur son par défaut — intention ambiguë, laissé tel quel.
+- **`enabled: !!opts.enabled`** dans `audio:autoSetup`/`audio:restore` : accepte `'false'` string comme actif — contrat IPC interne seulement, low impact.
+- **Fusion docs** : `README`/`GUIDE`/`SPECIFICATION`/`VALIDATION`/`TESTS_VM` ont des rôles distincts (présentation / utilisateur / technique / plans de test) — pas de fusion, aucun recouvrement significatif après corrections.
+- **`main/` vs `main.js`** : pas redondant — `main/` est un sous-dossier de modules CommonJS (`require('./main/media-tools')`), `main.js` est le point d'entrée.
+
+### Non vérifié dans cet environnement
+
+- UI interactive complète, IPC `yt:*`/`media:cut` réels, enregistreur multi-sources, routage audio — « À valider » terrain.
+- Smoke post-build : exe lancé, AudioContext créés, aucune erreur `[page]` dans `soundfart.log`.
+
 ## Campagne de fiabilisation (15/11/2026)
 
 Audit complet (3 revues parallèles + recherche documentaire) puis corrections par cycles, avec Quality Gate V2 (CLOSED exige cause + test + non-régression + revue indépendante + runtime + limites documentées).
