@@ -683,6 +683,26 @@ function resolveDevices() {
 // devicesDegraded : enumeration incomplete (permission refusee/transitoire)
 // — on NE affiche PAS l'ecran d'install VB-CABLE a tort : on pretend present
 // le temps que la prochaine enumeration reussie tranche.
+// Resultat partage des appels audioAutoSetup (init, devicechange, ecran cable) :
+// un etat coincide (entrees deja sur CABLE Output sans marqueur) merite une
+// proposition de reparation explicite — sans ca Discord restait sans micro.
+async function runAutoSetup() {
+  try {
+    const r = await window.sf.audioAutoSetup({ enabled: cfg.settings.autoSwitchMic, cableLabel: cfg.settings.cableLabel });
+    if (!r) return;
+    if (r.changed) toast('Entrée micro basculée sur ' + r.device + ' (restaurée à la fermeture).');
+    else if (r.stuckCable) {
+      uiLog('entrees deja sur le cable sans marqueur — proposition de reparation');
+      if (await confirmBox('Entrée micro coincée sur CABLE Output',
+        'Windows envoie déjà le micro sur « CABLE Output » sans bascule SoundFart (crash ou ancienne session). Discord risque de ne recevoir aucun micro.\n\nRéparer = rebascule l\'entrée Windows sur ton micro (Logitech G930).',
+        'Réparer')) {
+        window.sf.restoreMic(true);
+        toast('Entrée micro Windows : restauration demandée…');
+      }
+    } else if (!r.ok) toast('Bascule micro auto impossible : ' + r.err, 'warn');
+  } catch (e) { logErr('audioAutoSetup', e); }
+}
+
 const cablePresent = () => audio.devicesDegraded || audio.devices.out.some((d) => /cable/i.test(d.label));
 let cableScreenEl = null;
 
@@ -697,10 +717,7 @@ function cableScreen() {
       e.target.disabled = false;
     }
     if (cablePresent()) {
-      window.sf.audioAutoSetup({ enabled: cfg.settings.autoSwitchMic, cableLabel: cfg.settings.cableLabel }).then((r) => {
-        if (r && r.changed) toast('Entrée micro basculée sur ' + r.device + ' (restaurée à la fermeture).');
-        else if (r && !r.ok) toast('Bascule micro auto impossible : ' + r.err, 'warn');
-      }).catch((e) => logErr('audioAutoSetup', e));
+      runAutoSetup();
     } else {
       toast('Toujours absent — si tu viens d\'installer VB-CABLE, redémarre Windows : les périphériques n\'apparaissent qu\'après.', 'warn');
     }
@@ -1445,9 +1462,7 @@ async function init() {
       // Cable branche/installé a chaud : diffusion + bascule micro sans relancer l'app
       if (!hadCable && cablePresent()) {
         await applyAudio().catch((e) => logErr('applyAudio', e));
-        window.sf.audioAutoSetup({ enabled: s.autoSwitchMic, cableLabel: s.cableLabel }).then((r) => {
-          if (r && r.changed) toast('Entrée micro basculée sur ' + r.device + ' (restaurée à la fermeture).');
-        }).catch((e) => logErr('audioAutoSetup', e));
+        runAutoSetup();
       }
       } catch (e) { logErr('devicechange', e); }
     }, 500);
@@ -1499,10 +1514,7 @@ async function init() {
   applyShortcuts().catch((e) => logErr('applyShortcuts', e));
   updateCableUi();
   showCableScreen();
-  if (cablePresent()) window.sf.audioAutoSetup({ enabled: cfg.settings.autoSwitchMic, cableLabel: cfg.settings.cableLabel }).then((r) => {
-    if (r && r.changed) toast('Entrée micro basculée sur ' + r.device + ' (restaurée à la fermeture).');
-    else if (r && !r.ok) console.warn('bascule micro auto :', r.err);
-  }).catch((e) => logErr('audioAutoSetup', e));
+  if (cablePresent()) runAutoSetup();
   window.sf.onMicWatchOff && window.sf.onMicWatchOff(() => {
     toast('Entrée micro modifiée pendant la session — surveillance auto suspendue (réglages → surveillance micro).', 'warn');
   });

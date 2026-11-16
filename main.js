@@ -751,6 +751,10 @@ async function autoSetupImpl({ enabled, cableLabel }) {
       const m = readRestoreMarker();
       if (!m) {
         log('[mic] entrees deja sur le cable mais audio-restore.json absent — restauration finale non garantie', 'warn');
+        // Etat coincide (crash/pre-version sans marqueur) : on le signale au
+        // renderer qui propose une reparation — sans ca, Discord restait sur
+        // CABLE Output sans micro ni issue cote app.
+        return { ok: true, changed: false, device: target.name, stuckCable: true };
       } else if (m.owner !== process.pid) {
         // Marqueur d'une session MORTE (crash precedent, guard perdu) : sans
         // adoption, will-quit restaurerait quand meme (restoreMicNow ignore
@@ -780,6 +784,7 @@ async function autoSetupImpl({ enabled, cableLabel }) {
       // pu preceder ce set : on retente pour ne pas laisser le micro coince.
       if (quitting) { try { await restoreMicNowP(tool); } catch {} }
       if (!quitting) spawnMicGuard(tool);
+      log('[mic] bascule capture -> ' + target.name);
       return { ok: true, changed: true, device: target.name };
     }
   } catch (e) {
@@ -792,31 +797,32 @@ async function autoSetupImpl({ enabled, cableLabel }) {
 // Sinon, si une entree est coincee sur un peripherique virtuel (cable perdu,
 // guard mort), on la rebascule sur le defaut Windows non virtuel ou le 1er
 // peripherique non virtuel — filet de secours pour l'utilisateur.
-ipcMain.on('audio:restore', (e) => {
+ipcMain.on('audio:restore', (e, force) => {
   if (!fromApp(e)) return;
   // Serialise avec audio:autoSetup : deux 'set capture' AudioEndpoint ne
   // doivent jamais courir en parallele (watchdog/a4e403a pattern).
-  const run = autoSetupChain.then(() => audioRestoreImpl());
+  const run = autoSetupChain.then(() => audioRestoreImpl(force === true));
   autoSetupChain = run.catch(() => {});
 });
-async function audioRestoreImpl() {
+async function audioRestoreImpl(force) {
   if (quitting) return; // ne pas compiler/lancer AudioEndpoint pendant la sortie
   micSwitching = true;
   try {
     const tool = await ensureAudioTool();
     if (quitting) return;
     if (!tool) { log('[mic-restore] outil audio indisponible : ' + (lastToolErr || 'inconnu'), 'warn'); return; }
+    const hasMarker = fs.existsSync(restoreFile());
     // Securite : sans audio-restore.json, SoundFart n'a jamais bascule le micro
-    // (ou l'a deja restaure) -> on ne touche a RIEN, meme si une entree pointe
-    // sur un peripherique virtuel (choix volontaire possible : Voicemeeter,
-    // CABLE Output utilise par une autre app, etc.).
-    if (!fs.existsSync(restoreFile())) return;
+    // -> on ne touche a RIEN, sauf demande explicite (force = bouton reglages
+    // ou proposition apres detection d'un etat coincide sur le cable).
+    if (!hasMarker && !force) return;
     if (quitting) return; // will-quit gere deja la restauration synchrone
-    if (await restoreMicNowP(tool)) return;
+    if (hasMarker && await restoreMicNowP(tool)) return;
     if (quitting) return; // will-quit a deja restaure : ne pas re-spawner
     // restoreFile present = bascule faite par SoundFart mais restauration
-    // incomplete (cible introuvable, JSON corrompu...) : dernier recours borne,
-    // on sort les roles coinces sur un virtuel vers le premier non virtuel.
+    // incomplete (cible introuvable, JSON corrompu...) ; ou force sans
+    // marqueur : dernier recours borne, on sort les roles coinces sur un
+    // virtuel vers le defaut Windows non virtuel ou le 1er non virtuel.
     if (quitting) return; // will-quit gere deja la restauration
     const eps = parseEndpoints(await audioExecP(tool, ['list']));
     // flow='capture' comme chooseRestoreIds : un id render/capture
@@ -825,6 +831,15 @@ async function audioRestoreImpl() {
     const cur = parseGet(await audioExecP(tool, ['get', 'capture']));
     const stuck = [cur.console, cur.comm, cur.multi].some((id) => id && VIRTUAL_RE_MAIN.test(nameOf(id)));
     if (!stuck || quitting) return;
+    if (!hasMarker) {
+      // Force sans marqueur (action utilisateur explicite) : memes priorites
+      // que chooseRestoreIds — defaut Windows non virtuel, puis 1er non virtuel.
+      const args = micRestoreArgs(eps, cur, {});
+      if (!args) return;
+      await audioExecP(tool, args);
+      log('[mic-restore] force : entrees rebasculees hors peripherique virtuel', 'warn');
+      return;
+    }
     // Exiger un nom : un endpoint sans DeviceName passait VIRTUAL_RE.test('')
     // et etait traite comme « non virtuel » (memes regles que chooseRestoreIds).
     const fb = eps.find((e) => e.flow === 'capture' && e.name && !VIRTUAL_RE_MAIN.test(e.name));

@@ -275,7 +275,7 @@ function settingsModal() {
       field('Surveillance micro automatique', el('label', { class: 'check' }, watchMic,
         el('span', { text: 'Pendant que SoundFart tourne, revérifie régulièrement que l\'entrée micro est toujours sur le câble. Si tu changes le micro toi-même (ou qu\'une app le change), la surveillance se met en pause jusqu\'au prochain lancement.' }))),
       field('Récupération micro', el('button', { class: 'ghost', text: 'Restaurer mon micro Windows', title: 'Force le retour de l\'entrée micro Windows sur ton vrai micro — à utiliser si elle est restée bloquée sur « CABLE Output » (crash, coupure).', onclick: () => {
-          window.sf.restoreMic();
+          window.sf.restoreMic(true);
           toast('Restauration du micro demandée — si l\'entrée était bloquée sur le câble, elle revient sur ton micro.', 'info');
         } }),
         'À utiliser si ton micro Windows est resté bloqué sur « CABLE Output » (coupure, crash). Ramène l\'entrée sur ton vrai micro.'),

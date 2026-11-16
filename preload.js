@@ -24,7 +24,7 @@ contextBridge.exposeInMainWorld('sf', {
   saveRecording: (opts) => ipcRenderer.invoke('rec:save', opts),
   mediaCut: (opts) => ipcRenderer.invoke('media:cut', opts),
   audioAutoSetup: (opts) => ipcRenderer.invoke('audio:autoSetup', opts),
-  restoreMic: () => ipcRenderer.send('audio:restore'),
+  restoreMic: (force) => ipcRenderer.send('audio:restore', !!force),
   ytEnsure: () => ipcRenderer.invoke('yt:ensure'),
   ytInfo: (url) => ipcRenderer.invoke('yt:info', url),
   ytDownload: (opts) => ipcRenderer.invoke('yt:download', opts),
