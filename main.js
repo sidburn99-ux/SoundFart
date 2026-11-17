@@ -45,7 +45,25 @@ function execFileTracked(file, args, opts = {}) {
   });
 }
 const { AUDIO_EXT, VIRTUAL_RE: VIRTUAL_RE_MAIN, parseEndpoints, parseGet, findCableCapture, chooseRestoreIds, expandPathsAsync, writeRecording, isUsablePath } = require('./lib/audio-utils');
+// i18n partage main/renderer : cles = texte FR source, fallback francais.
+const SFI18n = require('./lib/i18n');
 let win = null;
+
+// Langue de l'UI cote main (menus natifs, boites de dialogue) : la config
+// vit dans le renderer — settings.lang est relu depuis config.json ici,
+// rafraichi a chaque config:save et au demarrage. Les menus sont reconstruits
+// au prochain menu:state/config:save apres un changement de langue.
+let uiLang = 'fr';
+function refreshUiLang() {
+  try {
+    const f = configFile();
+    if (fs.statSync(f).size > 16 * 1024 * 1024) return;
+    const c = JSON.parse(fs.readFileSync(f, 'utf-8'));
+    const l = c && c.settings && c.settings.lang;
+    uiLang = SFI18n.langs().includes(l) ? l : 'fr';
+  } catch { uiLang = 'fr'; }
+}
+const mt = (k, v) => { SFI18n.setLang(uiLang); return SFI18n.t(k, v); };
 
 // ---------- journal d'erreurs : SoundFart-data\soundfart.log ----------
 // Niveaux : info (defaut) / warn / error. Identifiant de session unique par
@@ -232,38 +250,38 @@ const sendMenu = (action) => () => { if (win && !win.isDestroyed()) { try { win.
 
 function buildMenu() {
   const st = menuState || {};
-  const views = [['all', 'Tous les sons'], ['fav', '★ Favoris'], ['none', 'Sans catégorie']]
+  const views = [[ 'all', mt('Tous les sons') ], [ 'fav', '★ ' + mt('Favoris') ], [ 'none', mt('Sans catégorie') ]]
     .concat((st.categories || []).map((c) => [c.id, c.name]));
   return Menu.buildFromTemplate([
-    { label: 'Fichier', submenu: [
-      { label: 'Ajouter des sons…', accelerator: 'CmdOrCtrl+O', click: sendMenu('add') },
-      { label: 'Importer depuis YouTube…', click: sendMenu('youtube') },
-      { label: 'Enregistreur', click: sendMenu('recorder') },
+    { label: mt('Fichier'), submenu: [
+      { label: mt('Ajouter des sons…'), accelerator: 'CmdOrCtrl+O', click: sendMenu('add') },
+      { label: mt('Importer depuis YouTube…'), click: sendMenu('youtube') },
+      { label: mt('Enregistreur'), click: sendMenu('recorder') },
       { type: 'separator' },
-      { label: 'Exporter la configuration…', click: sendMenu('export') },
-      { label: 'Importer une configuration…', click: sendMenu('import') },
+      { label: mt('Exporter la configuration…'), click: sendMenu('export') },
+      { label: mt('Importer une configuration…'), click: sendMenu('import') },
       { type: 'separator' },
-      { label: 'Quitter', role: 'quit' },
+      { label: mt('Quitter'), role: 'quit' },
     ]},
-    { label: 'Édition', submenu: [
-      { label: 'Rechercher un son…', accelerator: 'CmdOrCtrl+F', click: sendMenu('search') },
+    { label: mt('Édition'), submenu: [
+      { label: mt('Rechercher un son…'), accelerator: 'CmdOrCtrl+F', click: sendMenu('search') },
     ]},
-    { label: 'Audio', submenu: [
-      { label: 'Stopper tous les sons', click: sendMenu('stop') }, // pas d'accelerator : le globalShortcut gere le global, le menu doublait le declenchement
+    { label: mt('Audio'), submenu: [
+      { label: mt('Stopper tous les sons'), click: sendMenu('stop') }, // pas d'accelerator : le globalShortcut gere le global, le menu doublait le declenchement
       { type: 'separator' },
-      { label: 'Paramètres…', click: sendMenu('settings') },
+      { label: mt('Paramètres…'), click: sendMenu('settings') },
     ]},
-    { label: 'Affichage', submenu: [
-      { label: 'Vue', submenu: views.map(([id, name]) => ({
+    { label: mt('Affichage'), submenu: [
+      { label: mt('Vue'), submenu: views.map(([id, name]) => ({
         label: name, type: 'radio', checked: st.cat === id, click: sendMenu('view:' + id),
       })) },
       { type: 'separator' },
-      { label: 'Regrouper par catégorie', type: 'checkbox', checked: !!st.groupByCat, click: sendMenu('group') },
+      { label: mt('Regrouper par catégorie'), type: 'checkbox', checked: !!st.groupByCat, click: sendMenu('group') },
     ]},
-    { label: 'Aide', submenu: [
-      { label: 'Outils de développement', accelerator: 'F12', click: () => { if (win && !win.isDestroyed()) win.webContents.toggleDevTools(); } },
+    { label: mt('Aide'), submenu: [
+      { label: mt('Outils de développement'), accelerator: 'F12', click: () => { if (win && !win.isDestroyed()) win.webContents.toggleDevTools(); } },
       { type: 'separator' },
-      { label: 'À propos de SoundFart', click: sendMenu('about') },
+      { label: mt('À propos de SoundFart'), click: sendMenu('about') },
     ]},
   ]);
 }
@@ -358,6 +376,11 @@ H('config:save', (_e, cfg) => {
   } catch (e) { log('[config] sauvegarde .bak : ' + (e && e.message), 'warn'); }
   fs.writeFileSync(tmp, body, 'utf-8');
   fs.renameSync(tmp, f);
+  // La langue peut avoir change (settings.lang) : menus + dialogues natifs
+  // sont reconstruits immediatement — pas besoin d'attendre le menu:state
+  // du prochain rendu (qui de toute facon arrive juste apres).
+  refreshUiLang();
+  try { Menu.setApplicationMenu(buildMenu()); } catch {}
   return true;
 });
 
@@ -386,7 +409,7 @@ H('files:pick', async () => {
   // win detruit entre le dispatch IPC et l'ouverture : showOpenDialog
   // jetterait — undefined = dialogue sans parent, toujours fonctionnel.
   const r = await dialog.showOpenDialog(win && !win.isDestroyed() ? win : undefined, {
-    title: 'Ajouter des sons',
+    title: mt('Ajouter des sons'),
     properties: ['openFile', 'multiSelections'],
     filters: [{ name: 'Audio', extensions: AUDIO_EXT.map((e) => e.slice(1)) }],
   });
@@ -395,7 +418,7 @@ H('files:pick', async () => {
 
 H('files:pickDir', async () => {
   const r = await dialog.showOpenDialog(win && !win.isDestroyed() ? win : undefined, {
-    title: 'Choisir le dossier de stockage',
+    title: mt('Choisir le dossier de stockage'),
     properties: ['openDirectory', 'createDirectory'],
   });
   return r.canceled ? null : r.filePaths[0];
@@ -1171,7 +1194,7 @@ function createWindow() {
       // Second crash : la fenetre est morte sans diagnostic — on le dit
       // puis on QUITTE : une app sans renderer est un zombie, et le
       // will-quit restaure le micro proprement (SF-REL-0054).
-      dialog.showErrorBox('SoundFart', 'Le moteur audio a planté une seconde fois.\n\nRedémarre l\'application — si le problème revient, envoie soundfart.log au support.');
+      dialog.showErrorBox('SoundFart', mt('Le moteur audio a planté une seconde fois.\n\nRedémarre l\'application — si le problème revient, envoie soundfart.log au support.'));
       app.quit();
     }
   });
@@ -1182,14 +1205,14 @@ function createWindow() {
   win.webContents.on('responsive', () => log('[renderer] responsive a nouveau', 'info'));
   win.webContents.on('did-fail-load', (_e, code, desc, url) => {
     log(`[load] ${code} ${desc} ${url}`, 'error');
-    dialog.showErrorBox('SoundFart', `Impossible de charger l'interface (${desc}).\n\nVerifie que le dossier « src » (index.html, style.css, app.js) est bien a cote de main.js.`);
+    dialog.showErrorBox('SoundFart', mt('Impossible de charger l\'interface ({desc}).\n\nVerifie que le dossier « src » (index.html, style.css, app.js) est bien a cote de main.js.', { desc }));
   });
 
   // index.html est normalement dans « src » ; on accepte aussi le meme dossier que main.js
   const indexPath = [path.join(__dirname, 'src', 'index.html'), path.join(__dirname, 'index.html')].find((p) => fs.existsSync(p));
   if (!indexPath) {
     log('[load] index.html introuvable dans ' + __dirname, 'error');
-    dialog.showErrorBox('SoundFart', "Fichiers de l'interface introuvables.\n\nLe dossier « src » (contenant index.html, style.css et app.js) doit se trouver a cote de main.js.\n\nDossier actuel : " + __dirname);
+    dialog.showErrorBox('SoundFart', mt('Fichiers de l\'interface introuvables.\n\nLe dossier « src » (contenant index.html, style.css et app.js) doit se trouver a cote de main.js.\n\nDossier actuel : {dir}', { dir: __dirname }));
     app.quit();
     return;
   }
@@ -1197,6 +1220,7 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  refreshUiLang();
   Menu.setApplicationMenu(buildMenu());
   // Permissions audio : 'microphone' (Chromium recent separe micro de 'media'
   // — refuser 'microphone' vide enumerateDevices et refuse getUserMedia),
@@ -1270,7 +1294,7 @@ app.whenReady().then(() => {
   // Sans catch : une exception synchrone dans l'init deviendrait un
   // unhandledRejection — processus zombie sans fenetre ni window-all-closed.
   log('[fatal] init whenReady: ' + (e && e.stack || e), 'error');
-  try { dialog.showErrorBox('SoundFart', 'Erreur fatale au démarrage : ' + (e && e.message)); } catch {}
+  try { dialog.showErrorBox('SoundFart', mt('Erreur fatale au démarrage : {err}', { err: (e && e.message) })); } catch {}
   app.quit();
 });
 
