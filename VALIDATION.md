@@ -23,7 +23,7 @@
 - [x] Importer des fichiers audio (MP3/WAV, noms accents/espaces) → apparaissent en bibliothèque. **[U] 16/11**.
 - [ ] Importer un WAV 5 min puis un MP3 3 min → lecture OK, heap log stable (`heap=` dans soundfart.log). **[A] 15/11 partiel** : WAV 5 min décodé + joué, heap stable ; MP3 3 min non testé (même chemin).
 - [x] Fichier > 150 Mo → refus propre avec message, pas de crash. **[A] 15/11** : WAV 172,8 Mo refusé proprement. **[U] 16/11** : message « fichier trop long » affiché (toast corrigé ensuite pour les noms à emojis).
-- [ ] **Limite de durée** `maxSoundDur` (défaut 45 s, 0 = illimité) → lecture bornée + toast une fois. **[U] 16/11 : reporté — non testé.** *(non coché : reporté par l'utilisateur)*
+- [x] **Limite de durée** `maxSoundDur` (défaut 45 s, 0 = illimité) → lecture bornée + toast une fois. **[A] 17/11** : `maxSoundDur=2` + lecture d'un son 19 s → toast « seuls les 2 premières secondes sont jouées », voix arrêtée à ~2 s. *(L'item [U] 16/11 reporté est désormais couvert ; le réglage UI « Durée max » vide reste à valider à l'oreille pour le ressenti.)*
 - [ ] Champ « Durée max » vidé puis Appliquer → la valeur affichée revient à la cible (plus de `0` silencieux = illimité). **[A] 17/11** : garde `''`→NaN ajoutée.
 - [x] Champ « Cible loudness (LUFS) » vidé puis « Normaliser toute la bibliothèque » → la normalisation utilise l'ancienne cible, **pas** 0 LUFS. **[A] 17/11** : `+''===0` corrigé (`lufsField`) **+ vérifié runtime CDP** : champ vidé → `normLufs` reste -18, affichage restauré.
 - [x] Remplacer un fichier audio à **chemin constant** (ré-export/écrasement dans `sons/`) → `checkMissing` détecte le changement `size:mtime` et le prochain clic joue la **nouvelle** version. **[A] 17/11** : `file:check` retourne `sigs` **+ vérifié runtime CDP E2E** : fichier copié modifié → `checkMissing` → `bufCache` évincé (`cacheApres:false`), pas de badge missing.
@@ -78,7 +78,7 @@
 - [x] Couper un extrait (`media:cut`) → MP3 créé, **original intact**. **[U] 16/11** ; **revérifié [A] 17/11** : coupe 1-5 s d'un enregistrement câble → `cuts\*_extrait.mp3` ID3, durée exactement 4,00 s, **peak 0,145 / RMS 0,018** (audio réel), routé sous `sf-dest\cuts\`.
 - [x] Sans timeline → audio complet + trim dans l'éditeur. **[A] 17/11 — parcours UI complet validé** : modale → URL → « Analyser » (titre + durée 0:19 réels) → « Télécharger l'extrait » → « Ajouter à la bibliothèque » → son « Me at the zoo » dans la bibliothèque (33 sons), fichier `sf-dest\imports\*.webm` 252 Ko décodé 19 s / peak 0,32. (L'API directe `yt:download`/full avait aussi été validée.)
 - [ ] Débrancher le réseau pendant le téléchargement → erreur propre, pas de `.part` géant.
-- [ ] **Imports YouTube concurrents** : deux téléchargages lancés ensemble → `.part` uniques, pas de fichier mixte. **[A] 17/11** : noms `pid+seq` — **non reproduit**.
+- [x] **Imports YouTube concurrents** : deux téléchargages lancés ensemble → `.part` uniques, pas de fichier mixte. **[A] 17/11** : single-flight `ytDownloadBusy` prouvé — 1er `yt:download` OK (`imports\sf-*.webm`), 2ᵉ rejeté proprement « Un import YouTube est déjà en cours ». La concurrence au niveau `.part` est de fait impossible via l'API.
 - [ ] **Modale YouTube/éditeur fermée pendant le download/export** → pas de modale résultat rouverte sans demande (toast à la place). **[A] 17/11** — **non reproduit**.
 - [ ] `yt-dlp` auto-update (hash vérifié) → version bump réel loggé, pas de downgrade.
 
