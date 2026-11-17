@@ -47,7 +47,7 @@
 - [x] Micro seul → fichier non silencieux. **[U] 16/11** : sources micro/audio-PC validées à l'oreille.
 - [x] « Audio du PC » seul → musique système captée, non silencieuse (aussi à master 0 % — le master agit sur l'écoute, pas sur le flux capté). **[U] 16/11** ; **revérifié [A] 17/11** : source PC seule pendant `play()`×3 → webm 9 s peak 0,047 / RMS 0,005 (non nul).
 - [x] Câble seul → sons soundboard captés. **[A] 15/11** : RMS 0,0158 / peak 0,15 ; **revérifié [A] 17/11** : prise 7,4 s pendant lecture de 2 sons → webm décodé peak 0,151 / RMS 0,019, ajouté à la bibliothèque (32 sons).
-- [x] Micro + PC + câble simultanés → les 3 sources présentes. **[A] 15/11** : RMS 0,0216 / peak 0,26.
+- [x] Micro + PC + câble simultanés → les 3 sources présentes. **[A] 15/11** : RMS 0,0216 / peak 0,26 ; **revérifié [A] 17/11** : 3 sources ON + `play()`×3 → webm 11,2 s peak 0,18 / RMS 0,018 (mix + limiteur OK).
 - [x] **Jauge de niveau** visible et active pendant la prise. **[U] 16/11** (bug `startMeter`/`stopMeter` corrigé en route).
 - [x] **Écouter avant sauvegarde** : bouton « Écouter » dans le choix du dossier → joue la prise en mémoire sur l'écoute locale. **[U] 16/11**.
 - [x] **Rogner avant sauvegarde** (champs Début/Fin → WAV 16 bits). **[A] 17/11** : prise câble rogée Début=1/Fin=4 → `*.wav` RIFF stéréo 16 bits 48 kHz, durée **exactement 3,0 s**, taille cohérente (576 044 o). Pic 0 sur l'extrait = segment pré-lecture silencieux (les sons jouaient après 5 s) — cohérent, pas un défaut.
