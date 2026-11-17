@@ -309,7 +309,23 @@ async function recorderModal() {
       rec.onerror = () => {
         recFailed = true; // onstop sauvegardera le partiel, avec un statut honnete
         window.sf.uiLog('recorder onerror state=' + (rec ? rec.state : '?'));
-        try { if (rec && rec.state !== 'inactive') rec.stop(); } catch {}
+        if (rec && rec.state === 'inactive') {
+          // Passage a inactive SANS onstop (cas deja anticipe ligne ~306) :
+          // sans ca recTimer/status/micro/tap/actx restaient ouverts et
+          // l'UI affichait « Enregistrement… » sans rien enregistrer.
+          // On invoque onstop a la main : il sauve le partiel et nettoie.
+          const h = rec.onstop;
+          rec.onstop = null; // garde contre un double fire si 'stop' arrive quand meme
+          if (h) {
+            try {
+              const p = h();
+              if (p && typeof p.catch === 'function') p.catch((e2) => window.sf.uiLog('recorder onstop manuel: ' + (e2 && e2.message)));
+            } catch (e2) { window.sf.uiLog('recorder onstop manuel: ' + (e2 && e2.message)); }
+          }
+          return;
+        }
+        try { if (rec && rec.state !== 'inactive') rec.stop(); }
+        catch (e) { window.sf.uiLog('recorder rec.stop (onerror): ' + (e && e.message)); }
       };
       rec.onstop = async () => {
         if (recTimer) { clearInterval(recTimer); recTimer = null; }
@@ -335,10 +351,18 @@ async function recorderModal() {
           // decode et la joue sur l'ecoute locale sans rien ecrire. La voix
           // est enregistree dans voices/ pour que STOP et stopAll la
           // stoppent comme une lecture normale.
-          let previewVoice = null;
+          let previewVoice = null, previewBusy = false;
           const previewRec = async () => {
+            // Double-clic pendant le decodeAudioData : sans garde, deux voix
+            // seraient jouees et la premiere orpheline (seul STOP la stoppe).
+            if (previewBusy) return;
+            previewBusy = true;
             try {
-              if (previewVoice) { stopVoice(previewVoice, true); previewVoice = null; return; }
+              // voices.has : un STOP global a deja tue la voix sans passer
+              // par onended -> previewVoice serait perime et le clic
+              // stopperait une voix morte au lieu de relancer l'apercu.
+              if (previewVoice && voices.has(previewVoice)) { stopVoice(previewVoice, true); previewVoice = null; return; }
+              previewVoice = null;
               if (!audio.mon) { toast('Choisis une « écoute locale » dans les réglages pour pré-écouter.', 'warn'); return; }
               if (ab.byteLength > 150 * 1024 * 1024) { toast('Enregistrement trop lourd pour l\'aperçu — sauvegarde d\'abord.', 'warn'); return; }
               const buf = await decoder.decodeAudioData(ab.slice(0));
@@ -353,7 +377,18 @@ async function recorderModal() {
               src.onended = () => { try { g.disconnect(); } catch {} endVoice(v); if (previewVoice === v) previewVoice = null; };
               src.start();
               previewVoice = v;
+              // Watchdog identique a play() : contexte suspendu (veille) ->
+              // onended ne tire jamais, la voix resterait zombie dans voices/.
+              v.killTimer = setTimeout(() => {
+                if (!voices.has(v)) return;
+                try { src.stop(); } catch {}
+                try { g.disconnect(); } catch {}
+                endVoice(v);
+                if (previewVoice === v) previewVoice = null;
+                toast('Aperçu interrompu : la sortie audio était suspendue.', 'warn');
+              }, Math.ceil(buf.duration * 1000) + 15000);
             } catch (e) { logErr('previewRec', e); toast('Aperçu impossible : ' + (e && e.message), 'warn'); }
+            finally { previewBusy = false; }
           };
           // Rogner avant sauvegarde : decode la prise et ré-encode en WAV
           // (PCM 16 bits) — les conteneurs MediaRecorder (webm/opus) ne sont
@@ -420,7 +455,10 @@ async function recorderModal() {
           // Modale fermee pendant la prise : l'utilisateur a peut-etre ouvert
           // une autre modale entre-temps — ne pas la detruire. Le fichier est
           // sauvegarde ; on donne le chemin pour l'ajouter plus tard.
-          if (closedDuringRec) {
+          // modalClose non nul = une modale etrangere est ouverte MAINTENANT
+          // (phases trim+save sans modale : l'utilisateur a pu ouvrir
+          // l'editeur) — modal() la detruirait (slot unique).
+          if (closedDuringRec || modalClose) {
             toast('Enregistrement sauvegardé : ' + path + ' (ajoute-le via « + » si besoin).', 'info');
           } else {
           // askDestDir a remplace la modale enregistreur (slot unique) : sans
