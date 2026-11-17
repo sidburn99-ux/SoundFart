@@ -12,14 +12,18 @@
 //   GITHUB_BRANCH  : branche par defaut (var, optionnel, defaut "main")
 //
 // Limites : pas d'authentification cote client (l'URL n'est pas un secret
-// et ne peut pas en etre un dans un exe) — la validation stricte taille/
-// type + le depot prive sont la protection. Pas de rate-limit natif sans
-// KV : a ajouter si le volume le justifie (voir README.md).
+// et ne peut pas en etre un dans un exe) — la protection = validation
+// stricte taille/type/champs, re-sanitization du contenu, rate-limit
+// best-effort par IP (memoire d'isolate, cf. rateLimitOk ci-dessous) et
+// depot prive. Rate-limit a consolider avec KV si le volume le justifie.
 // ================================================================
 
 const MAX_BODY_BYTES = 128 * 1024;   // corps POST max
 const MAX_REPORTS = 20;               // rapports max par POST
 const MAX_REPORT_BYTES = 16 * 1024;   // taille max d'un rapport re-sanitize
+const RATE_WINDOW_MS = 60 * 1000;     // fenetre du rate-limit
+const RATE_MAX_PER_IP = 30;           // POST max / IP / fenetre (best-effort)
+const RATE_MAP_MAX = 5000;            // borne de la table IP en memoire
 const FIELD_MAX = {
   app: 64, version: 64, module: 32, type: 80,
   message: 4000, stack: 12000, timestamp: 64,
@@ -30,6 +34,74 @@ const EXTRA_MAX = 4000;
 const str = (v, max) => (typeof v === 'string' ? v.slice(0, max) : '');
 const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 
+// ----------------------------------------------------------------
+// Re-sanitization du CONTENU cote serveur : le client sanitise deja,
+// mais un client modifie ou un bug peut laisser passer chemins,
+// username, secrets ou query d'URL. Ce filet attrape les motifs
+// evidents sans prétendre à l'exhaustivité (le depot est prive).
+// ----------------------------------------------------------------
+const SECRET_RES = [
+  /\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi,
+  /\b(?:ghp|gho|ghu|ghs|ghr|github_pat)_[A-Za-z0-9_]{10,}/g,
+  /\b(?:sk|pk|xox[baprs]|AKIA)[A-Za-z0-9_-]{12,}/g,
+  /\b[A-Fa-f0-9]{40,}\b/g, // tokens hex longs (SHA-1 complet etc.)
+];
+const PATH_RES = [
+  /[A-Za-z]:\\\\[^\s"'`<>)\]]+/g,          // C:\Users\…
+  /\\\\[^\s"'`<>)\]]+/g,                  // \\serveur\partage
+  /\bfile:\/\/\/[^\s"'`<>)\]]+/gi,        // file:///…
+];
+const URL_Q_RE = /https?:\/\/[^\s"'`<>)\]]+/g;
+function scrubText(s) {
+  if (typeof s !== 'string') return s;
+  let out = s;
+  out = out.replace(URL_Q_RE, (u) => u.replace(/[?#][^\s"'`<>)\]]*$/, '?…'));
+  for (const re of PATH_RES) out = out.replace(re, '<path>');
+  for (const re of SECRET_RES) out = out.replace(re, (m, p1) => (p1 ? p1 + ' <redacted>' : '<redacted>'));
+  return out;
+}
+function scrubDeep(v, depth) {
+  if (depth > 4 || v == null) return v;
+  if (typeof v === 'string') return scrubText(v);
+  if (Array.isArray(v)) return v.slice(0, 50).map((x) => scrubDeep(x, depth + 1));
+  if (typeof v === 'object') {
+    const o = {};
+    for (const k of Object.keys(v).slice(0, 50)) o[String(k).slice(0, 80)] = scrubDeep(v[k], depth + 1);
+    return o;
+  }
+  return v;
+}
+
+// Rate-limit best-effort par IP : table en memoire de l'isolate.
+// Limites honnetes : pas partagee entre isolates, remise a zero au
+// cold start, IP spoofable via X-Forwarded-For (Cloudflare le fixe pour
+// les requetes reelles). Protection anti-rafale, pas anti-determination.
+const ipHits = new Map(); // ip -> [timestamps]
+function rateLimitOk(request) {
+  const ip = request.headers.get('CF-Connecting-IP')
+    || request.headers.get('X-Forwarded-For')?.split(',')[0].trim()
+    || 'inconnu';
+  const now = Date.now();
+  let arr = ipHits.get(ip);
+  if (!arr) {
+    if (ipHits.size >= RATE_MAP_MAX) {
+      // Borne memoire : purge les IPs dont la fenetre est vide.
+      for (const [k, v] of ipHits) {
+        const alive = v.filter((t) => now - t < RATE_WINDOW_MS);
+        if (alive.length) ipHits.set(k, alive); else ipHits.delete(k);
+      }
+      if (ipHits.size >= RATE_MAP_MAX) return true; // table saturee : on laisse passer (dispo > securite)
+    }
+    arr = [];
+    ipHits.set(ip, arr);
+  }
+  const alive = arr.filter((t) => now - t < RATE_WINDOW_MS);
+  if (alive.length >= RATE_MAX_PER_IP) { ipHits.set(ip, alive); return false; }
+  alive.push(now);
+  ipHits.set(ip, alive);
+  return true;
+}
+
 // Re-sanitization cote serveur : ne conserve QUE les champs connus, avec
 // des bornes — le client sanitise deja, ceci est une ceinture+bretelles
 // contre un client modifie ou un bug d'assainissement.
@@ -38,14 +110,14 @@ function cleanReport(r) {
   const out = {};
   for (const k of ['app', 'version', 'module', 'type', 'message', 'stack', 'timestamp']) {
     const v = str(r[k], FIELD_MAX[k]);
-    if (v) out[k] = v;
+    if (v) out[k] = scrubText(v);
   }
   if (typeof r.exitCode === 'number' && Number.isFinite(r.exitCode)) out.exitCode = r.exitCode;
   if (r.os && typeof r.os === 'object') {
     const os = {};
     for (const k of ['platform', 'release', 'version']) {
       const v = str(r.os[k], OS_MAX[k]);
-      if (v) os[k] = v;
+      if (v) os[k] = scrubText(v);
     }
     if (Object.keys(os).length) out.os = os;
   }
@@ -53,7 +125,7 @@ function cleanReport(r) {
     let j;
     try { j = JSON.stringify(r.extra); } catch { j = null; }
     if (j && j.length <= EXTRA_MAX) {
-      try { out.extra = JSON.parse(j); } catch {}
+      try { out.extra = scrubDeep(JSON.parse(j), 0); } catch {}
     }
   }
   if (!out.module || !out.type) return null; // rapport sans type = inutile
@@ -111,6 +183,13 @@ export default {
     if (!env.GITHUB_TOKEN || !env.GITHUB_REPO) {
       return Response.json({ error: 'service non configure' }, { status: 500 });
     }
+    const ctype = (request.headers.get('Content-Type') || '').toLowerCase();
+    if (!ctype.startsWith('application/json')) {
+      return Response.json({ error: 'application/json requis' }, { status: 415 });
+    }
+    if (!rateLimitOk(request)) {
+      return Response.json({ error: 'trop de requetes' }, { status: 429 });
+    }
     const len = Number(request.headers.get('Content-Length') || 0);
     if (len > MAX_BODY_BYTES) {
       return Response.json({ error: 'trop volumineux' }, { status: 413 });
@@ -136,11 +215,14 @@ export default {
 
     const date = new Date().toISOString().slice(0, 10);
     let stored = 0, failed = 0, skipped = 0;
+    const seen = new Set(); // dedup intra-batch : contenu identique = 1 PUT
     for (const raw of list) {
       const clean = cleanReport(raw);
       if (!clean) { skipped++; continue; }
       const content = JSON.stringify(clean, null, 2);
       const hash = await sha256Hex(content).then((h) => h.slice(0, 16));
+      if (seen.has(hash)) { skipped++; continue; }
+      seen.add(hash);
       const path = `reports/${date}/${hash}.json`;
       try {
         if (await putReport(env, path, content)) stored++;
