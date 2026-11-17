@@ -5,6 +5,7 @@ const os = require('os');
 const { spawn, execFile, execFileSync } = require('child_process');
 const crypto = require('crypto');
 const { createMediaTools } = require('./main/media-tools');
+const { createLinuxCable } = require('./main/linux-cable');
 // Processus enfants long-terme (yt-dlp, ffmpeg) : Windows ne tue PAS les
 // enfants a la sortie du parent — on les suit pour les tuer au will-quit,
 // sinon un telechargement continue sans UI ni possibilite d'arret.
@@ -710,6 +711,10 @@ createMediaTools({
   log, execFileTracked, trackChild, killTree, H, toolSane, discardCorruptTool,
   toolsDir, storageRoot, getWin: () => win,
 });
+
+// Câble virtuel Linux (null-sink PulseAudio/PipeWire) : status/ensure
+// idempotent, jamais de déchargement. No-op hors Linux.
+createLinuxCable({ log, execFileTracked, H });
 
 // ---------- bascule automatique de l'entree micro (CABLE Output) ----------
 // Au lancement : si active, le peripherique d'enregistrement par defaut passe sur le cable virtuel.

@@ -763,7 +763,9 @@ function resolveDevices() {
     if (!d && fallbackId) d = list.find((x) => x.deviceId === fallbackId);
     if (d) { s[idKey] = d.deviceId; s[lblKey] = d.label; } else { s[idKey] = ''; s[lblKey] = ''; }
   };
-  pick('cableId', 'cableLabel', audio.devices.out, /CABLE Input/i, null);
+  // Linux : le « câble » est le null-sink PulseAudio/PipeWire créé via pactl.
+  // Windows garde VB-CABLE (CABLE Input).
+  pick('cableId', 'cableLabel', audio.devices.out, IS_LINUX ? /soundfart/i : /CABLE Input/i, null);
   pick('monId', 'monLabel', audio.devices.out, null, 'default');
   pick('micId', 'micLabel', audio.devices.inp, null, 'default');
 }
@@ -1783,6 +1785,17 @@ async function init() {
   }
 
   renderAll();
+  // Linux : garantit le null-sink PulseAudio/PipeWire AVANT l'énumération
+  // (idempotent — le sink persiste entre lancements, ensure = no-op si
+  // déjà présent). No-op sous Windows ; une erreur pactl ne bloque pas
+  // le démarrage — le réglage audio reste utilisable sans le câble.
+  if (IS_LINUX && window.sf && window.sf.linuxAudioEnsure) {
+    try {
+      const r = await window.sf.linuxAudioEnsure();
+      if (r && r.ok && r.created) uiLog('linux-cable: null-sink créé');
+      else if (r && !r.ok) uiLog('linux-cable: ' + (r.error || 'ensure KO'));
+    } catch (e) { logErr('linuxAudioEnsure', e); }
+  }
   await refreshDevices(true);
   resolveDevices();
   save();
@@ -1816,7 +1829,7 @@ async function init() {
     if (s) play(s);
   });
   if (!cfg.settings.cableId) {
-    toast(t('Choisis ta sortie Discord (CABLE Input) dans les réglages audio.'), 'warn');
+    toast(t(IS_LINUX ? 'Choisis ta sortie Discord (SoundFart Cable) dans les réglages audio.' : 'Choisis ta sortie Discord (CABLE Input) dans les réglages audio.'), 'warn');
     settingsModal();
   } else if (ok) {
     updateRoutes();

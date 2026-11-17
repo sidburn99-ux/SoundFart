@@ -46,6 +46,8 @@ contextBridge.exposeInMainWorld('sf', {
   audioTapStart: () => ipcRenderer.invoke('audio:tapStart'),
   audioTapStop: () => ipcRenderer.invoke('audio:tapStop'),
   cableDownload: () => ipcRenderer.invoke('cable:openPage'),
+  linuxAudioStatus: () => ipcRenderer.invoke('linux:audioStatus'),
+  linuxAudioEnsure: () => ipcRenderer.invoke('linux:ensureCable'),
   openDir: (d) => ipcRenderer.invoke('shell:openDir', d),
   seedSounds: () => ipcRenderer.invoke('sounds:seed'),
   onTapDead: on('sf:tapDead'),
