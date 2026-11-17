@@ -76,7 +76,7 @@
 - [x] Erreurs YouTube en français (privée, indisponible, réseau). **[U] 16/11**.
 - [x] Extrait avec timeline → MP3 de la bonne durée. **[U] 16/11** (extraits validés ; **[A]** chemin `media:cut`).
 - [x] Couper un extrait (`media:cut`) → MP3 créé, **original intact**. **[U] 16/11**.
-- [ ] Sans timeline → audio complet + trim dans l'éditeur (partiellement couvert par les imports OK).
+- [ ] Sans timeline → audio complet + trim dans l'éditeur (partiellement couvert par les imports OK). **[A] 17/11** : `yt:info` + `yt:download` full sur « Me at the zoo » → webm 252 Ko dans `imports\`, décodé 19 s / peak 0,32 / RMS 0,05 (audio réel). Reste : passage par la modale UI + ajout bibliothèque.
 - [ ] Débrancher le réseau pendant le téléchargement → erreur propre, pas de `.part` géant.
 - [ ] **Imports YouTube concurrents** : deux téléchargages lancés ensemble → `.part` uniques, pas de fichier mixte. **[A] 17/11** : noms `pid+seq` — **non reproduit**.
 - [ ] **Modale YouTube/éditeur fermée pendant le download/export** → pas de modale résultat rouverte sans demande (toast à la place). **[A] 17/11** — **non reproduit**.
