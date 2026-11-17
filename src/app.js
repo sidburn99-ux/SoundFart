@@ -218,6 +218,9 @@ function normalizeCfg(saved) {
   // controle) pour les deux champs. isUsablePath = source unique SFUtils.
   if (st.storageDir != null && (typeof st.storageDir !== 'string' || (st.storageDir !== '' && !window.SFUtils.isUsablePath(st.storageDir)))) st.storageDir = '';
   if (st.lastDestDir != null && (typeof st.lastDestDir !== 'string' || (st.lastDestDir !== '' && !window.SFUtils.isUsablePath(st.lastDestDir)))) delete st.lastDestDir;
+  // crashReport : 'yes'/'no' explicites seulement — toute autre valeur
+  // (absent, 'true', bidon) = jamais demande -> la demande reapparait.
+  if (st.crashReport !== 'yes' && st.crashReport !== 'no') delete st.crashReport;
   const hasCat = (id) => c.categories.some((x) => x.id === id);
   if (!['all', 'none', 'fav'].includes(c.ui.cat) && !hasCat(c.ui.cat)) c.ui.cat = 'all';
   return c;
@@ -1490,6 +1493,75 @@ async function checkMissing() {
   if (changed) renderGrid();
 }
 
+// ================================================================ rapports d'erreurs (opt-in)
+// Le renderer ne fait que RELAYER les erreurs JS au main : c'est le main
+// (confiance elevee) qui decide si un rapport est collecte/envoye, selon
+// settings.crashReport. Aucun consentement = les evenements sont ignores.
+let rendErrWindow = 0, rendErrCount = 0;
+function reportRendererError(type, err) {
+  try {
+    if (!window.sf.reportError) return;
+    const now = Date.now();
+    if (now - rendErrWindow > 60000) { rendErrWindow = now; rendErrCount = 0; }
+    if (++rendErrCount > 20) return; // anti-spam : une erreur en boucle ne doit pas spammer
+    const e = err instanceof Error ? err : null;
+    window.sf.reportError({
+      type,
+      message: String((e && e.message) || (err && err.message) || err || '').slice(0, 1000),
+      stack: e && e.stack ? String(e.stack).slice(0, 8000) : '',
+    });
+  } catch {}
+}
+window.addEventListener('error', (e) => {
+  // Les erreurs de ressources (img/media) ne bouillonnent pas jusqu'a
+  // window sans capture : ici ne passent que les erreurs de script.
+  if (e.error || e.message) reportRendererError('error', e.error || e.message);
+});
+window.addEventListener('unhandledrejection', (e) => reportRendererError('unhandledrejection', e.reason));
+
+// Choix du consentement : 'yes'/'no' persistes dans cfg.settings.crashReport
+// puis signales au main (qui purge la file locale si != 'yes').
+function setCrashConsent(v, close) {
+  if (cfg) { cfg.settings.crashReport = v; save(); }
+  try { window.sf.reportConsent(v); } catch {}
+  if (close) close();
+  toast(v === 'yes'
+    ? 'Rapports d\'erreurs activés : les plantages anonymisés aident à corriger les bugs.'
+    : 'Rapports d\'erreurs désactivés : rien n\'est collecté ni envoyé.', 'info');
+}
+
+// Demande de consentement au premier lancement — AUCUNE preslection :
+// seuls « Accepter » et « Refuser » enregistrent un choix. Echap ou clic
+// sur le fond = « plus tard » : rien n'est ecrit, la demande revient au
+// prochain lancement (crashReport reste absent).
+function crashConsentModal() {
+  modal('Rapports d\'erreurs anonymisés', [
+    el('p', { text: 'Quand SoundFart plante (erreur JS, crash du moteur audio, fenêtre gelée), il peut envoyer un petit rapport de diagnostic pour m\'aider à corriger les bugs.' }),
+    el('ul', {}, [
+      el('li', { text: 'Envoyé : version de SoundFart et de Windows, type d\'erreur, message, stack trace, code de sortie.' }),
+      el('li', { text: 'Jamais envoyé : tes sons, tes fichiers audio, tes chemins, ta configuration, ton nom d\'utilisateur — les chemins sont remplacés par des placeholders avant tout envoi.' }),
+      el('li', { text: 'Utilisation : correction de bugs uniquement. Destination : serveur de collecte privé en HTTPS.' }),
+      el('li', { text: 'Facultatif : tu peux refuser ou changer d\'avis à tout moment dans Paramètres → Général. En cas de refus, rien n\'est collecté ni conservé pour envoi.' }),
+    ]),
+  ], [
+    { label: 'Refuser', onclick: (c) => setCrashConsent('no', c) },
+    { label: 'Accepter', kind: 'primary', onclick: (c) => setCrashConsent('yes', c) },
+  ]);
+}
+
+// La modale n'est pas bloquante pour l'initialisation, mais on attend
+// qu'aucune autre modale ne soit ouverte : sinon elle la remplacerait et
+// le « plus tard » passerait inapercu (premier lancement = reglages audio).
+function askCrashConsentWhenFree(tries) {
+  tries = tries || 0;
+  if (!cfg || cfg.settings.crashReport === 'yes' || cfg.settings.crashReport === 'no') return;
+  if (modalClose) {
+    if (tries < 120) setTimeout(() => askCrashConsentWhenFree(tries + 1), 500); // ~60 s max d'attente
+    return;
+  }
+  crashConsentModal();
+}
+
 // ================================================================ demarrage
 async function init() {
   // Telemetrie memoire periodique : performance.memory (Chromium) permet de
@@ -1715,6 +1787,9 @@ async function init() {
   } else if (ok) {
     updateRoutes();
   }
+  // Consentement rapports d'erreurs : en DERNIER, et seulement quand plus
+  // aucune modale n'est ouverte (askCrashConsentWhenFree patiente sinon).
+  askCrashConsentWhenFree();
 }
 
 init().catch((e) => {

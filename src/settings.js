@@ -290,6 +290,27 @@ function settingsModal() {
   const exportBtn = el('button', { text: 'Exporter la configuration', onclick: exportConfig });
   const importBtn = el('button', { text: 'Importer une configuration', onclick: () => importConfig(closeSettings) });
 
+  // ---- rapports d'erreurs (opt-in, crashs/erreurs uniquement) ----
+  const crashLbl = el('span', { class: 'hint', text: '' });
+  const refreshCrashLbl = () => {
+    crashLbl.textContent = s.crashReport === 'yes'
+      ? 'Activé — les rapports anonymisés sont envoyés en cas de plantage.'
+      : s.crashReport === 'no'
+        ? 'Désactivé — aucun rapport n\'est collecté ni envoyé.'
+        : 'Pas encore choisi — la demande apparaît à chaque lancement tant qu\'aucun choix n\'est fait.';
+  };
+  const setCrash = (v) => {
+    if (v === 'yes' || v === 'no') s.crashReport = v; else delete s.crashReport;
+    save();
+    // Le main purge la file locale immediatement si le choix n'est plus 'yes'.
+    try { window.sf.reportConsent(v === 'yes' ? 'yes' : v === 'no' ? 'no' : ''); } catch {}
+    refreshCrashLbl();
+  };
+  const crashYesBtn = el('button', { text: 'Accepter', title: 'Envoie des rapports de diagnostic anonymisés en cas de plantage.', onclick: () => { setCrash('yes'); toast('Rapports d\'erreurs activés.', 'info'); } });
+  const crashNoBtn = el('button', { class: 'ghost', text: 'Refuser', title: 'Aucun rapport collecté ni envoyé — la file locale est purgée.', onclick: () => { setCrash('no'); toast('Rapports d\'erreurs désactivés.', 'info'); } });
+  const crashLaterBtn = el('button', { class: 'ghost', text: 'Plus tard', title: 'Redemande le choix au prochain lancement.', onclick: () => setCrash('') });
+  refreshCrashLbl();
+
   const cableVerifyBtn = el('button', { class: 'ghost', text: 'Vérifier', onclick: async () => {
     cableVerifyBtn.disabled = true; cableVerifyBtn.textContent = 'Vérification…';
     try {
@@ -355,6 +376,10 @@ function settingsModal() {
       field('Raccourci global STOP', el('div', { class: 'row' }, stopBtn), stopHint),
       field('Sauvegarde', el('div', { class: 'row' }, exportBtn, importBtn),
         'La configuration contient les références aux fichiers, catégories, découpes, raccourcis et favoris — pas les fichiers audio eux-mêmes.'),
+      field('Rapports d\'erreurs', el('div', {},
+        el('div', { class: 'row' }, crashYesBtn, crashNoBtn, crashLaterBtn),
+        crashLbl),
+        'Envoie uniquement des diagnostics de plantage (version, OS, erreur, stack) à un serveur privé en HTTPS — jamais tes sons, chemins ni réglages (remplacés par des placeholders). Révocable à tout moment ; « Plus tard » redemande au prochain lancement.'),
     ]},
   ];
   const layout = el('div', { class: 'settings-layout' });
