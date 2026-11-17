@@ -94,7 +94,9 @@
 - [x] **Raccourcis clavier** : `Ctrl+1` (AZERTY) déclenche le son. **[U] 16/11** — bug layout corrigé (`e.code` au lieu de `e.key`) ; touche seule = refus voulu (global Windows exige modifieur/F).
 - [x] **Paramètres style Discord** : nav latérale + sections, icônes, lignes séparées. **[U] 16/11** « OK, comme Discord » + **[A]** CDP (5 sections, apply, orphelins).
 - [x] **Imports orphelins** : liste `imports/` non ajoutés → cocher → ajouter → jouables. **[U] 16/11** (4 fichiers trouvés et ajoutés).
-- [x] **Normalisation** : « Tester » + « Normaliser toute la bibliothèque » après refonte Paramètres. **[U] 16/11**.
+- [x] **Normalisation** : « Tester » + « Normaliser toute la bibliothèque » après refonte Paramètres. **[U] 16/11** + **[A] 17/11 runtime CDP** : `normalizeAll` sur 30 sons → 31 norms calculées (échantillon 2.5/1.38/0.89/0.45/2.12), aucune erreur.
+- [x] **Éditeur** : ouverture « Modifier le son » + onde chargée + fermeture Échap propre. **[A] 17/11 runtime CDP**.
+- [x] **Enregistreur** : modale s'ouvre (Enregistrer/Arrêter/Fermer/Ajouter), fermeture Échap sans prise → aucune ressource restante. **[A] 17/11 runtime CDP** (prisen réelle non testée — voir section C).
 - [x] Persistance des réglages après fermeture/réouverture. **[U] 16/11**.
 - [ ] **Traitement vocal** (voix seule) : « Normal »/« Fort » réduisent le bruit ; **« Max » (niveau 4, ajouté 16/11) non testé** — clavier encore audible en Fort, retest en attente.
 - [ ] Limite 45 s sur fichier long : lecture tronquée + toast — **reporté**.
