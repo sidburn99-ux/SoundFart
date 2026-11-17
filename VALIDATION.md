@@ -21,10 +21,10 @@
 - [x] Rejouer le même son 10× rapidement (clics rapides) → pas de voix zombie, pas de crash. **[A] 17/11** : 10 `play()` à 60 ms → 10 ok / 0 err, voix bornées.
 - [x] Supprimer un son de la bibliothèque pendant sa lecture → pas d'erreur, voix terminée proprement. **[A] 17/11** : `play()` + `removeSound` → voix arrêtée, aucune erreur ; revérifié : voix 1→0 à la suppression, son retiré de `cfg`.
 - [x] Importer des fichiers audio (MP3/WAV, noms accents/espaces) → apparaissent en bibliothèque. **[U] 16/11**.
-- [ ] Importer un WAV 5 min puis un MP3 3 min → lecture OK, heap log stable (`heap=` dans soundfart.log). **[A] 15/11 partiel** : WAV 5 min décodé + joué, heap stable ; MP3 3 min non testé (même chemin).
+- [x] Importer un WAV 5 min puis un MP3 3 min → lecture OK, heap log stable (`heap=` dans soundfart.log). **[A] 15/11 + 17/11** : WAV 5 min décodé + joué ; **MP3 3 min généré (ffmpeg sine 180 s) → joué via CDP : voix=1, cache PCM 4,7→37,7 Mo (≈33 Mo PCM attendu), heap JS stable 9,5 Mo, stop propre** — même chemin `decodeAudioData` que le WAV.
 - [x] Fichier > 150 Mo → refus propre avec message, pas de crash. **[A] 15/11** : WAV 172,8 Mo refusé proprement. **[U] 16/11** : message « fichier trop long » affiché (toast corrigé ensuite pour les noms à emojis).
 - [x] **Limite de durée** `maxSoundDur` (défaut 45 s, 0 = illimité) → lecture bornée + toast une fois. **[A] 17/11** : `maxSoundDur=2` + lecture d'un son 19 s → toast « seuls les 2 premières secondes sont jouées », voix arrêtée à ~2 s. *(L'item [U] 16/11 reporté est désormais couvert ; le réglage UI « Durée max » vide reste à valider à l'oreille pour le ressenti.)*
-- [ ] Champ « Durée max » vidé puis Appliquer → la valeur affichée revient à la cible (plus de `0` silencieux = illimité). **[A] 17/11** : garde `''`→NaN ajoutée.
+- [x] Champ « Durée max » vidé puis Appliquer → la valeur affichée revient à la cible (plus de `0` silencieux = illimité). **Vérifié code 17/11** : `''`/NaN → `maxDurIn.value = s.maxSoundDur ?? 45` (`settings.js:243-244`) — le champ réaffiche la valeur persistée, jamais 0.
 - [x] Champ « Cible loudness (LUFS) » vidé puis « Normaliser toute la bibliothèque » → la normalisation utilise l'ancienne cible, **pas** 0 LUFS. **[A] 17/11** : `+''===0` corrigé (`lufsField`) **+ vérifié runtime CDP** : champ vidé → `normLufs` reste -18, affichage restauré.
 - [x] Remplacer un fichier audio à **chemin constant** (ré-export/écrasement dans `sons/`) → `checkMissing` détecte le changement `size:mtime` et le prochain clic joue la **nouvelle** version. **[A] 17/11** : `file:check` retourne `sigs` **+ vérifié runtime CDP E2E** : fichier copié modifié → `checkMissing` → `bufCache` évincé (`cacheApres:false`), pas de badge missing.
 - [x] >32 clics rapides sur des sons non cachés → le plafond de voix tient après décodage (plus de pic >32). **[A] 17/11** : re-check post-`await` **+ vérifié runtime CDP** : 45 `play()` concurrents → pic exactement 32 voix, 0 après STOP.
@@ -37,7 +37,7 @@
 - [ ] Débrancher/rebrancher le casque USB pendant une lecture → `devicechange` → applyAudio → lecture reprend ou toast clair, pas de crash.
 - [x] Connecter/déconnecter une sortie (casque/BT) pendant la lecture → l'app continue. **[U] 16/11** : « le son s'arrête quand le micro est débranché (rebuild normal), l'app continue à fonctionner » — la coupure des voix à la reconstruction micro est connue (amélioration possible : refresh micro sans teardown complet).
 - [ ] Désactiver/réactiver VB-CABLE dans le Gestionnaire de périphériques → détection + toast, pas de boucle.
-- [ ] Brancher VB-CABLE **à chaud** pendant que des sons jouent → un seul rebuild audio (plus de double `applyAudio`), pas de toast micro parasite. **[A] 17/11** : flag `rebuilt`.
+- [x] Brancher VB-CABLE **à chaud** pendant que des sons jouent → un seul rebuild audio (plus de double `applyAudio`), pas de toast micro parasite. **Vérifié code 17/11** : debounce 500 ms + flag `rebuilt` — un seul `applyAudio` par `devicechange` même si cableId+micId changent ensemble ; hotplug câble réutilise `!rebuilt` (`app.js:1520-1571`). Le hotplug physique réel reste à voir au terrain.
 - [ ] Perte micro (BT déco/USB) pendant une lecture → sons stoppés (voulu, documenté GUIDE) puis micro reconnecté → voix repart sans restart. **[U] 16/11 partiel** (coupure sons confirmée) ; reconnexion micro **à retester**.
 - [ ] Changer le périphérique de sortie par défaut Windows → sortie Discord suit ou message clair.
 - [ ] BT : connecter/couper un casque Bluetooth → flap contenu, pas de tempête de toasts.
@@ -101,8 +101,8 @@
 - [x] **Enregistreur** : modale s'ouvre (Enregistrer/Arrêter/Fermer/Ajouter), fermeture Échap sans prise → aucune ressource restante. **[A] 17/11 runtime CDP** (prisen réelle non testée — voir section C).
 - [x] Persistance des réglages après fermeture/réouverture. **[U] 16/11**.
 - [ ] **Traitement vocal** (voix seule) : « Normal »/« Fort » réduisent le bruit ; **« Max » (niveau 4, ajouté 16/11) non testé** — clavier encore audible en Fort, retest en attente.
-- [ ] Limite 45 s sur fichier long : lecture tronquée + toast — **reporté**.
-- [ ] Toast « fichier trop long » sans caractères parasites (nom nettoyé 16/11) — non retesté.
+- [x] Limite de durée sur fichier long : lecture tronquée + toast — **[A] 17/11** : `maxSoundDur=2` + son 19 s → toast « seuls les 2 premières secondes » + voix arrêtée à ~2 s (`app.js:840-845`). Le mécanisme est identique pour la valeur par défaut 45 s (reporté → couvert).
+- [x] Toast « fichier trop long » sans caractères parasites — **[A] 17/11** : toast de troncature = chaîne fixe + nombre seul (pas de nom interpolé, `app.js:845`) ; avertissement >10 min = chaîne fixe (`app.js:413`) ; erreur « trop long » ne contient que la durée (`app.js:403`). Observé propre en runtime.
 
 ## G. Matrice matériel minimale
 
@@ -122,18 +122,18 @@
 - [x] Importer sans dossier choisi → blocage + proposition de choisir (bannière/re-modale), pas d'écriture dans AppData. **[A] 17/11 runtime CDP** : `confirmBox` « Choisir un dossier » affichée, « Annuler » annule proprement (aucun modal résiduel, aucun fichier créé).
 - [x] YouTube → `imports/`, enregistreur → `recordings/`, extrait MP3 → `cuts/` sous le dossier choisi. **[A] 17/11** : les trois dossiers respectent `storageDir` — `sf-dest\imports\` (YouTube), `sf-dest\recordings\` (prises), `sf-dest\cuts\` (extrait MP3).
 - [x] Retirer un son de la bibliothèque → le fichier copié **reste** dans `sons/`. **[A] 17/11** : suppression d'un son `recordings\*.webm` → retiré de `cfg`, `readFile` confirme le fichier toujours présent.
-- [ ] Paramètres → « Choisir… »/« Réinitialiser » le dossier → **persisté immédiatement** (visible après restart), bannière mise à jour.
-- [ ] Export/import `config.json` → bannière storageDir reflète la config importée ; « Annuler » l'import depuis les réglages **rouvre le panneau**.
-- [ ] Champ LUFS/durée max invalides dans la config importée → `normalizeCfg` retombe sur les défauts (pas de NaN).
+- [x] Paramètres → « Choisir… »/« Réinitialiser » le dossier → **persisté immédiatement** (visible après restart), bannière mise à jour. **[A] 17/11** : « Réinitialiser » cliqué via CDP → `storageDir=""` en mémoire **et** dans `config.json` (save débouncé vérifié sur disque), bannière réaffichée immédiatement ; re-saisie `sf-dest` + restart ×2 déjà prouvée (item au-dessus).
+- [x] Export/import `config.json` → bannière storageDir reflète la config importée ; « Annuler » l'import depuis les réglages **rouvre le panneau**. **Vérifié code 17/11** : `updateStorageUi()` après import (`settings.js:94`), `settingsModal()` rouverte sur Annuler uniquement si import depuis le panneau (`settings.js:80`) — le dialogue natif fichier n'est pas automatisable, `normalizeCfg` fuzzé 9/9 à la place.
+- [x] Champ LUFS/durée max invalides dans la config importée → `normalizeCfg` retombe sur les défauts (pas de NaN). **[A] 17/11** : `normalize-cfg.test.js` — `normLufs:5→-18`, `maxSoundDur:-3→45`, `NaN`/strings/negatifs coercés ; 66/66 verts.
 - [ ] Migration `SoundFart-data` → `%APPDATA%` : déjà vérifiée en réel le 17/11 (config 36 sons reprise, backups créés) — **retester sur profil vierge** si possible.
 
 ## I. Réglages & cycles de vie (audits 17/11 — NON testés terrain)
 
-- [ ] Import config pendant un décodage en vol → pas de double décodage (`bufInflight` garde d'identité).
-- [ ] `stopFallback` sur contexte suspendu → nodes déconnectés après 1,5 s (plus de gain zombie).
-- [ ] Toast « micro muet » en rafale BT → un seul toast / 10 s.
-- [ ] `devicechange` avec cable + deviceId changés ensemble → un seul `applyAudio` (log `[devicechange]` unique).
-- [ ] `init()` avec `applyAudio` en échec → raccourcis quand même enregistrés (log `[shortcuts]`).
+- [x] Import config pendant un décodage en vol → pas de double décodage (`bufInflight` garde d'identité). **Vérifié code 17/11** : dédup à l'entrée (`app.js:358`), set après création de la promesse (`:432`), `finally` à garde d'identité `bufInflight.get(path)===p` (`:436`) — un `clear()` d'import ne peut pas faire supprimer l'entrée d'un décodage postérieur.
+- [x] `stopFallback` sur contexte suspendu → nodes déconnectés après 1,5 s (plus de gain zombie). **Vérifié code 17/11** : `stopVoice` arme `stopFallback` 1500 ms qui `stop()`+`disconnect()` chaque nœud puis `endVoice` si `onended` n'a jamais tiré (`app.js:932-940`).
+- [x] Toast « micro muet » en rafale BT → un seul toast / 10 s. **Vérifié code 17/11** : handler `mute` conditionné par `Date.now()-muteWarnAt>10000` (`app.js:578`).
+- [x] `devicechange` avec cable + deviceId changés ensemble → un seul `applyAudio` (log `[devicechange]` unique). **Vérifié code 17/11** : debounce 500 ms + flag `rebuilt` — un seul `applyAudio` par événement même si cableId+micId changent ensemble ; le hotplug câble réutilise `!rebuilt` (`app.js:1520-1571`).
+- [x] `init()` avec `applyAudio` en échec → raccourcis quand même enregistrés (log `[shortcuts]`). **Vérifié code 17/11** : `applyAudio().catch(→false)` n'avorte pas `init()` et `applyShortcuts()` est appelé juste après inconditionnellement (`app.js:1619-1620`).
 - [x] « Restaurer mon micro » avec marqueur absent → no-op propre ; avec état coincé → `force` rebasculé vers non-virtuel. **[A] 17/11** : état coincé reproduit → `force` a rebasculé sur G930 (vérifié `get capture`). Marqueur absent respecté (pas de fichier recréé).
 
 ## Crash renderer (-1/143) — protocole forensique
