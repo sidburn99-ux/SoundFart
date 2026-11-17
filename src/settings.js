@@ -74,9 +74,10 @@ function importConfig(onDone) {
       const parsed = JSON.parse(await f.text());
       if (!parsed || !Array.isArray(parsed.sounds)) throw new Error('fichier invalide');
       // confirmBox DETUIT le panneau (slot modal unique) AVANT la reponse :
-      // sur « Annuler » on rouvre les reglages au lieu de laisser
-      // l'utilisateur sur l'ecran principal.
-      if (!(await confirmBox('Importer la configuration ?', 'La configuration actuelle (sons, catégories, réglages, raccourcis) sera remplacée. Les fichiers audio ne sont pas modifiés.', 'Importer'))) { settingsModal(); return; }
+      // sur « Annuler » on rouvre les reglages — mais SEULEMENT si
+      // l'import venait du panneau (onDone fourni) ; depuis le menu F11 il
+      // n'y avait pas de panneau a restaurer.
+      if (!(await confirmBox('Importer la configuration ?', 'La configuration actuelle (sons, catégories, réglages, raccourcis) sera remplacée. Les fichiers audio ne sont pas modifiés.', 'Importer'))) { if (onDone) settingsModal(); return; }
       // Pas de teardownAudio() direct ici : applyAudio() passe par
       // audioApplyChain et fait deja le teardown — un appel direct
       // pendant qu'un applyAudioInner est en vol pouvait etre suivi
