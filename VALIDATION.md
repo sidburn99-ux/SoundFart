@@ -39,7 +39,7 @@
 - [ ] Désactiver/réactiver VB-CABLE dans le Gestionnaire de périphériques → détection + toast, pas de boucle.
 - [x] Brancher VB-CABLE **à chaud** pendant que des sons jouent → un seul rebuild audio (plus de double `applyAudio`), pas de toast micro parasite. **Vérifié code 17/11** : debounce 500 ms + flag `rebuilt` — un seul `applyAudio` par `devicechange` même si cableId+micId changent ensemble ; hotplug câble réutilise `!rebuilt` (`app.js:1520-1571`). Le hotplug physique réel reste à voir au terrain.
 - [ ] Perte micro (BT déco/USB) pendant une lecture → sons stoppés (voulu, documenté GUIDE) puis micro reconnecté → voix repart sans restart. **[U] 16/11 partiel** (coupure sons confirmée) ; reconnexion micro **à retester**.
-- [ ] Changer le périphérique de sortie par défaut Windows → sortie Discord suit ou message clair.
+- [x] Changer le périphérique de sortie par défaut Windows → sortie Discord suit ou message clair. **[A] 17/11** : `AudioEndpoint set render` G930→Realtek pendant une lecture → **aucun `devicechange`** (Chromium ne signale que les devices ajoutés/retirés, pas les changements de rôle par défaut) → aucun rebuild, aucun crash, lecture terminée naturellement. Le routage suit les devices **configurés** (`cableId`/`monId`), pas le défaut Windows — la sortie Discord ne peut pas dériver du défaut OS. Restauration G930 vérifiée.
 - [ ] BT : connecter/couper un casque Bluetooth → flap contenu, pas de tempête de toasts.
 
 ## C. Enregistrement
@@ -79,7 +79,7 @@
 - [x] Sans timeline → audio complet + trim dans l'éditeur. **[A] 17/11 — parcours UI complet validé** : modale → URL → « Analyser » (titre + durée 0:19 réels) → « Télécharger l'extrait » → « Ajouter à la bibliothèque » → son « Me at the zoo » dans la bibliothèque (33 sons), fichier `sf-dest\imports\*.webm` 252 Ko décodé 19 s / peak 0,32. (L'API directe `yt:download`/full avait aussi été validée.)
 - [ ] Débrancher le réseau pendant le téléchargement → erreur propre, pas de `.part` géant.
 - [x] **Imports YouTube concurrents** : deux téléchargages lancés ensemble → `.part` uniques, pas de fichier mixte. **[A] 17/11** : single-flight `ytDownloadBusy` prouvé — 1er `yt:download` OK (`imports\sf-*.webm`), 2ᵉ rejeté proprement « Un import YouTube est déjà en cours ». La concurrence au niveau `.part` est de fait impossible via l'API.
-- [ ] **Modale YouTube/éditeur fermée pendant le download/export** → pas de modale résultat rouverte sans demande (toast à la place). **[A] 17/11** — **non reproduit**.
+- [x] **Modale YouTube/éditeur fermée pendant le download/export** → pas de modale résultat rouverte sans demande (toast à la place). **[A] 17/11** : modale YouTube fermée (« Fermer ») ~0,4 s après « Télécharger » → **webm 252 Ko bien arrivé dans `sf-dest\imports\`** (2 tentatives, 2 fichiers) et **aucune modale résultat rouverte** (`modal: none` après fin). Toast non capturé (expiré avant relevé) mais chemin `ytGone → toast` vérifié code (`youtube.js:198-203`).
 - [ ] `yt-dlp` auto-update (hash vérifié) → version bump réel loggé, pas de downgrade.
 
 ## F. Robustesse / résilience
