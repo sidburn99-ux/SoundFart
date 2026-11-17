@@ -46,13 +46,13 @@
 
 - [x] Micro seul → fichier non silencieux. **[U] 16/11** : sources micro/audio-PC validées à l'oreille.
 - [x] « Audio du PC » seul → musique système captée, non silencieuse (aussi à master 0 % — le master agit sur l'écoute, pas sur le flux capté). **[U] 16/11**.
-- [x] Câble seul → sons soundboard captés. **[A] 15/11** : RMS 0,0158 / peak 0,15.
+- [x] Câble seul → sons soundboard captés. **[A] 15/11** : RMS 0,0158 / peak 0,15 ; **revérifié [A] 17/11** : prise 7,4 s pendant lecture de 2 sons → webm décodé peak 0,151 / RMS 0,019, ajouté à la bibliothèque (32 sons).
 - [x] Micro + PC + câble simultanés → les 3 sources présentes. **[A] 15/11** : RMS 0,0216 / peak 0,26.
 - [x] **Jauge de niveau** visible et active pendant la prise. **[U] 16/11** (bug `startMeter`/`stopMeter` corrigé en route).
 - [x] **Écouter avant sauvegarde** : bouton « Écouter » dans le choix du dossier → joue la prise en mémoire sur l'écoute locale. **[U] 16/11**.
 - [ ] **Rogner avant sauvegarde** (champs Début/Fin → WAV 16 bits). **Implémenté 16/11 — non testé.**
 - [ ] `MediaRecorder.onerror` avec état `inactive` → la prise partielle est sauvegardée + UI nettoyée (plus d'« Enregistrement… » figé). **[A] 17/11** : `onstop` manuel — **non reproduit**.
-- [x] Arrêter → dossier → « Enregistrement terminé » → « Ajouter à la bibliothèque » → son jouable. **[U] 16/11** (flux validé ; **[A] 15/11** via `cdp-recflow.js`).
+- [x] Arrêter → dossier → « Enregistrement terminé » → « Ajouter à la bibliothèque » → son jouable. **[U] 16/11** (flux validé ; **[A] 15/11** via `cdp-recflow.js` ; **revérifié [A] 17/11** : sauvegarde `sf-dest\recordings\*.webm` + ajout réel, sons 31→32).
 - [x] Fermer la modale pendant l'enregistrement → arrêt propre, pas de fichier orphelin ajouté. **[U] 16/11** + **[A] 15/11** (`cdp-recclose.js`).
 - [ ] Débrancher le micro pendant l'enregistrement → arrêt propre + message, pas de fichier silencieux présenté comme réussi.
 - [ ] Arrêter/démarrer Windows Audio (`net stop audiosrv` admin) pendant « Audio du PC » → reconnexion AudioTap ou tapDead + message — pas de silence invisible.
@@ -119,7 +119,7 @@
 - [x] Glisser-déposer un MP3 → **copié** dans `<dossier>/sons/` (copie atomique), carte pointe sur la copie. **[A] 17/11 runtime CDP** : `addPaths` → fichier physique dans `sf-dest\sons\`, son ajouté (30→31).
 - [x] Réimporter le même fichier → réutilise la copie existante (nom+taille+échantillons), **pas de doublon** disque. **[A] 17/11 runtime CDP** : 2ᵉ import → 31 sons, 1 seul fichier dans `sons/`.
 - [x] Importer sans dossier choisi → blocage + proposition de choisir (bannière/re-modale), pas d'écriture dans AppData. **[A] 17/11 runtime CDP** : `confirmBox` « Choisir un dossier » affichée, « Annuler » annule proprement (aucun modal résiduel, aucun fichier créé).
-- [ ] YouTube → `imports/`, enregistreur → `recordings/`, extrait MP3 → `cuts/` sous le dossier choisi.
+- [x] Enregistreur → `recordings/` sous le dossier choisi. **[A] 17/11** : `storageDir=sf-dest` → fichier écrit dans `sf-dest\recordings\`. (YouTube → `imports/` et extrait MP3 → `cuts/` restent à valider dans le même geste.)
 - [ ] Retirer un son de la bibliothèque → le fichier copié **reste** dans `sons/`.
 - [ ] Paramètres → « Choisir… »/« Réinitialiser » le dossier → **persisté immédiatement** (visible après restart), bannière mise à jour.
 - [ ] Export/import `config.json` → bannière storageDir reflète la config importée ; « Annuler » l'import depuis les réglages **rouvre le panneau**.
