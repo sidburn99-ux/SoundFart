@@ -152,9 +152,16 @@ if (portableDataDir) {
       // PUIS la forme brute pour couvrir les deux ecritures possibles.
       const fromJ = portableDataDir.replace(/\\/g, '\\\\');
       const toJ = appData.replace(/\\/g, '\\\\');
+      // JSON peut contenir des chemins en '/' (valide, isUsablePath
+      // l'accepte) : sans cette forme, un config etranger/editable-main
+      // garderait des pointeurs vers l'ancien dossier portable.
+      const fromF = portableDataDir.replace(/\\/g, '/');
+      const toF = appData.replace(/\\/g, '/');
       const rewrite = (f) => {
         const t = fs.readFileSync(path.join(portableDataDir, f), 'utf-8');
-        fs.writeFileSync(path.join(appData, f), t.split(fromJ).join(toJ).split(portableDataDir).join(appData));
+        fs.writeFileSync(path.join(appData, f),
+          t.split(fromJ).join(toJ).split(portableDataDir).join(appData)
+           .split(fromF).join(toF));
       };
       for (const f of ['config.json', 'config.json.bak', 'audio-restore.json']) {
         try { if (fs.existsSync(path.join(portableDataDir, f))) rewrite(f); } catch {}
@@ -402,7 +409,9 @@ H('files:expand', async (_e, paths) => {
 });
 
 H('files:pick', async () => {
-  const r = await dialog.showOpenDialog(win, {
+  // win detruit entre le dispatch IPC et l'ouverture : showOpenDialog
+  // jetterait — undefined = dialogue sans parent, toujours fonctionnel.
+  const r = await dialog.showOpenDialog(win && !win.isDestroyed() ? win : undefined, {
     title: 'Ajouter des sons',
     properties: ['openFile', 'multiSelections'],
     filters: [{ name: 'Audio', extensions: AUDIO_EXT.map((e) => e.slice(1)) }],
@@ -411,7 +420,7 @@ H('files:pick', async () => {
 });
 
 H('files:pickDir', async () => {
-  const r = await dialog.showOpenDialog(win, {
+  const r = await dialog.showOpenDialog(win && !win.isDestroyed() ? win : undefined, {
     title: 'Choisir le dossier de stockage',
     properties: ['openDirectory', 'createDirectory'],
   });
@@ -422,6 +431,11 @@ H('files:pickDir', async () => {
 // (dossier choisi par l'utilisateur) — la bibliotheque devient autonome et ne
 // depend plus des emplacements d'origine. Dedoublonnage nom+taille+echantillons :
 // un fichier deja present est reutilise, jamais recopie. Copie .part+rename.
+// Sequence pour les .part de files:import : deux imports concurrents sur
+// des sources differentes mais le meme target calculeraient le meme
+// « target.part » -> copyFile entrelace = fichier mixte renomme en
+// silence. Nom unique par process+sequence (pattern writeRecording).
+let importPartSeq = 0;
 const sameFileQuick = async (a, b) => {
   // Compare taille implicite faite par l'appelant + 4 KiB en tete et en queue.
   const rd = async (p, off, len) => {
@@ -462,7 +476,7 @@ H('files:import', async (_e, paths, dir) => {
     }
     if (reused) { out.push({ path: reused, label: stem }); continue; }
     if (!target) { out.push({ path: src, label: '', error: 'nom introuvable' }); continue; }
-    const tmp = target + '.part';
+    const tmp = `${target}.${process.pid}.${importPartSeq++}.part`;
     try {
       await fs.promises.copyFile(src, tmp);
       const cst = await fs.promises.stat(tmp);
@@ -524,7 +538,9 @@ H('file:check', async (_e, paths) => {
       if (typeof p !== 'string') return false;
       try { await fs.promises.access(p); return true; } catch { return false; }
     }));
-    chunk.forEach((p, j) => { if (typeof p !== 'string' || !ok[j]) missing.push(p); });
+    // Les non-chaines sont normalisees en String : le retour doit etre un
+    // tableau de chaines (le renderer fait des tests d'appartenance).
+    chunk.forEach((p, j) => { if (typeof p !== 'string' || !ok[j]) missing.push(String(p)); });
   }
   return missing;
 });
@@ -577,7 +593,12 @@ H('rec:save', async (_e, opts) => {
   if (data == null) throw new Error('données audio manquantes');
   const rdir = path.join(storageRoot(dir), 'recordings');
   await fs.promises.mkdir(rdir, { recursive: true }); // async : UNC ne gele pas le main (SF-REL-0602)
-  const len = data instanceof ArrayBuffer ? data.byteLength : (data.byteLength != null ? data.byteLength : (data.length || 0));
+  // string : data.length = unites UTF-16, Buffer.from encode en UTF-8
+  // (jusqu'a ~3x pour le CJK) — un texte de ~200 M caracteres passait le
+  // cap 512 Mo puis allouait ~600 Mo. byteLength mesure le vrai cout.
+  const len = data instanceof ArrayBuffer ? data.byteLength
+    : (data.byteLength != null ? data.byteLength
+    : (typeof data === 'string' ? Buffer.byteLength(data, 'utf8') : (data.length || 0)));
   if (len > 512 * 1024 * 1024) throw new Error('enregistrement trop volumineux (> 512 Mo)');
   const buf = data instanceof ArrayBuffer ? Buffer.from(new Uint8Array(data)) : Buffer.from(data);
   // Nom+ecriture atomique delegues a lib/audio-utils.writeRecording —
@@ -1100,7 +1121,10 @@ let micWatchSuspended = false;
 let micSwitching = false; // autoSetup/restore en cours : le watchdog ne doit pas voir la transition comme un choix externe
 
 async function watchdogMic() {
-  if (watchdogBusy || micWatchSuspended || micSwitching) return;
+  // quitting : un tick dans la fenetre will-quit -> process.exit pouvait
+  // lancer ensureAudioTool (compile csc 60 s) et spawn des enfants APRES
+  // la boucle de kill du will-quit -> csc.exe/AudioEndpoint orphelins.
+  if (quitting || watchdogBusy || micWatchSuspended || micSwitching) return;
   watchdogBusy = true;
   try {
     if (!fs.existsSync(restoreFile()) || !fs.existsSync(configFile())) return;
