@@ -206,6 +206,68 @@ test('chemin frère partageant le préfixe : JAMAIS réécrit', () => {
   assert.ok(!out.includes(dst.replace(/\\/g, '\\\\') + '-old'), 'pas de appData-old fantôme');
 });
 
+test('collision a contenu DIFFERENT : les deux fichiers preserves, la config pointe vers la copie source renommee', () => {
+  const { src, dst } = tmpdirs();
+  // storageDir == SoundFart-data : sons/ est migre vers appData
+  fs.mkdirSync(path.join(src, 'sons'), { recursive: true });
+  fs.writeFileSync(path.join(src, 'sons', 'a.mp3'), 'CONTENU-SOURCE');
+  const soundPath = path.join(src, 'sons', 'a.mp3');
+  fs.writeFileSync(path.join(src, 'config.json'), JSON.stringify({
+    settings: { storageDir: src },
+    sounds: [{ name: 'A', path: soundPath }],
+  }));
+  // Destination : meme nom, contenu DIFFERENT (ex. reste d'une install precedemment)
+  fs.mkdirSync(path.join(dst, 'sons'), { recursive: true });
+  fs.writeFileSync(path.join(dst, 'sons', 'a.mp3'), 'CONTENU-DEST');
+  const r = runPortableMigration({ portableDataDir: src, appData: dst, log });
+  assert.equal(r.complete, true, 'la collision est resolue, pas bloquante');
+  // Les DEUX contenus sont preserves
+  assert.equal(fs.readFileSync(path.join(dst, 'sons', 'a.mp3'), 'utf8'), 'CONTENU-DEST',
+    'le fichier destination n est jamais ecrase');
+  const others = fs.readdirSync(path.join(dst, 'sons')).filter((f) => f !== 'a.mp3');
+  assert.equal(others.length, 1, 'exactement un fichier renomme');
+  assert.equal(fs.readFileSync(path.join(dst, 'sons', others[0]), 'utf8'), 'CONTENU-SOURCE',
+    'le contenu source est preserve sous un nom unique');
+  assert.ok(others[0].startsWith('a.portable'), 'nommage .portable');
+  // LA verification demandee : la config reference le BON fichier
+  const cfgOut = JSON.parse(fs.readFileSync(path.join(dst, 'config.json'), 'utf8'));
+  assert.equal(cfgOut.sounds[0].path, path.join(dst, 'sons', others[0]),
+    'la bibliotheque pointe vers le contenu source, pas vers le doublon different');
+  assert.notEqual(cfgOut.sounds[0].path, path.join(dst, 'sons', 'a.mp3'));
+});
+
+test('collision a contenu IDENTIQUE : destination conservee, pas de renommage, config stable', () => {
+  const { src, dst } = tmpdirs();
+  fs.mkdirSync(path.join(src, 'sons'), { recursive: true });
+  fs.mkdirSync(path.join(dst, 'sons'), { recursive: true });
+  fs.writeFileSync(path.join(src, 'sons', 'b.mp3'), 'MEME-CONTENU');
+  fs.writeFileSync(path.join(dst, 'sons', 'b.mp3'), 'MEME-CONTENU');
+  fs.writeFileSync(path.join(src, 'config.json'), JSON.stringify({
+    settings: { storageDir: src },
+    sounds: [{ name: 'B', path: path.join(src, 'sons', 'b.mp3') }],
+  }));
+  const r = runPortableMigration({ portableDataDir: src, appData: dst, log });
+  assert.equal(r.complete, true);
+  assert.equal(fs.readdirSync(path.join(dst, 'sons')).length, 1, 'aucun doublon cree');
+  const cfgOut = JSON.parse(fs.readFileSync(path.join(dst, 'config.json'), 'utf8'));
+  assert.equal(cfgOut.sounds[0].path, path.join(dst, 'sons', 'b.mp3'),
+    'contenu identique : le nom d origine reste valide');
+});
+
+test('renommage .portable deja pris : suffixe -2 jusqu a trouver un nom libre', () => {
+  const { src, dst } = tmpdirs();
+  fs.mkdirSync(path.join(src, 'sons'), { recursive: true });
+  fs.mkdirSync(path.join(dst, 'sons'), { recursive: true });
+  fs.writeFileSync(path.join(src, 'sons', 'c.mp3'), 'SRC');
+  fs.writeFileSync(path.join(dst, 'sons', 'c.mp3'), 'DEST');
+  fs.writeFileSync(path.join(dst, 'sons', 'c.portable.mp3'), 'AUTRE'); // nom deja pris
+  fs.writeFileSync(path.join(src, 'config.json'), JSON.stringify({ settings: { storageDir: src }, sounds: [] }));
+  const r = runPortableMigration({ portableDataDir: src, appData: dst, log });
+  assert.equal(r.complete, true);
+  assert.ok(fs.existsSync(path.join(dst, 'sons', 'c.portable-2.mp3')), 'suffixe -2 utilise');
+  assert.equal(fs.readFileSync(path.join(dst, 'sons', 'c.portable.mp3'), 'utf8'), 'AUTRE', 'jamais ecrase');
+});
+
 test('sources absentes : ignorées sans erreur', () => {
   const { src, dst } = tmpdirs();
   fs.writeFileSync(path.join(src, 'config.json'), cfg(src));
