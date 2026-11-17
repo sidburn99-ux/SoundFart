@@ -2,7 +2,11 @@
 // import YouTube
 // Extrait de app.js — depend des globals du script principal (chargé en dernier).
 // ================================================================ import YouTube
-const YT_RE = /^(https?:\/\/)?(www\.|m\.)?(youtube\.com|youtu\.be|music\.youtube\.com)\//;
+// flag i : hote/scheme sont insensibles a la casse en pratique (HTTPS://,
+// WWW.YOUTUBE.COM colles ainsi sont rejetes a tort) — et le validateur
+// main (YT_HOST_RE, /i) les accepterait : le renderer etait plus strict
+// que le contrat IPC. youtube-nocookie aligne sur le main.
+const YT_RE = /^(https?:\/\/)?(www\.|m\.)?(youtube\.com|youtu\.be|music\.youtube\.com|youtube-nocookie\.com)\//i;
 
 // yt-dlp/ffmpeg ecrivent leurs erreurs en anglais sur stderr — on traduit
 // les cas courants pour l'utilisateur, le detail technique reste en log.
@@ -28,8 +32,11 @@ async function orphanImportsModal() {
   for (const d of dirs) {
     try {
       for (const f of await window.sf.listImports(d)) {
-        if (seen.has(f.path) || cfg.sounds.some((s) => s.path === f.path)) continue;
-        seen.add(f.path); files.push(f);
+        // Comparaison insensible a la casse (normalization de normalizeCfg
+        // deduplique en toLowerCase — Windows) + categorie courante comme
+        // addPaths, au lieu de toujours « sans categorie ».
+        if (seen.has(f.path.toLowerCase()) || cfg.sounds.some((s) => s.path.toLowerCase() === f.path.toLowerCase())) continue;
+        seen.add(f.path.toLowerCase()); files.push(f);
       }
     } catch (e) { logErr('listImports', e); }
   }
@@ -52,7 +59,7 @@ async function orphanImportsModal() {
         if (!cb.checked) continue;
         const s = {
           id: uid(), name: f.name.replace(/^sf-[a-z0-9]+-?/i, '').replace(/\.[^.]+$/, '').slice(0, 80) || 'Import',
-          path: f.path, categoryId: null, volume: 100, addedAt: Date.now(), plays: 0,
+          path: f.path, categoryId: catById(cfg.ui.cat) ? cfg.ui.cat : null, volume: 100, addedAt: Date.now(), plays: 0,
           favorite: false, norm: 1, shortcut: null, trimStart: 0, trimEnd: null, fadeIn: 0, fadeOut: 0,
         };
         if (pushSound(s)) n++;
@@ -93,9 +100,15 @@ function youtubeModal() {
   } });
 
   let info = null, dl = null, offProg = null, busy = false, analyzeBusy = false, analyzedUrl = null;
-  const setProg = (p) => {
-    if (p === -1 || p == null) { prog.textContent = 'Téléchargement…'; barFill.style.width = '100%'; barFill.style.opacity = '.4'; }
-    else { prog.textContent = 'Téléchargement… ' + p + ' %'; barFill.style.opacity = '1'; barFill.style.width = p + '%'; }
+  // ytGone : la modale YouTube a ete fermee par l'utilisateur PENDANT le
+  // download — a la fin, la modale de resultat ne doit PAS se reouvrir
+  // sans demande (volerait le focus des minutes plus tard). Toast a la
+  // place ; le fichier reste recuperable via imports/ (orphelins).
+  let ytGone = false;
+  const setProg = (p, label) => {
+    const what = label || 'Téléchargement…';
+    if (p === -1 || p == null) { prog.textContent = what; barFill.style.width = '100%'; barFill.style.opacity = '.4'; }
+    else { prog.textContent = what + ' ' + p + ' %'; barFill.style.opacity = '1'; barFill.style.width = p + '%'; }
   };
 
   const analyzeBtn = el('button', { text: 'Analyser', onclick: async () => {
@@ -109,7 +122,9 @@ function youtubeModal() {
     infoBox.textContent = 'Vérification de l\'outil de téléchargement…';
     try {
       if (offProg) offProg(); // un seul ecouteur ytprogress a la fois
-      offProg = window.sf.onYtProgress(setProg);
+      // « Préparation… » pendant ensure/info : ytProgress(-1) y est emis
+      // aussi — « Téléchargement… » induirait en erreur pendant l'analyse.
+      offProg = window.sf.onYtProgress((p) => setProg(p, 'Préparation…'));
       await window.sf.ytEnsure();
       infoBox.textContent = 'Lecture des infos de la vidéo…';
       info = await window.sf.ytInfo(url);
@@ -145,7 +160,9 @@ function youtubeModal() {
     if (endIn.value.trim() !== '' && startIn.value.trim() === '') {
       prog.textContent = 'Fin sans début : renseigne aussi le début, ou vide les deux pour le fichier complet.'; return;
     }
-    if (!hasTimeline && startIn.value.trim() !== '0' && startIn.value.trim() !== '') {
+    // « 00 »/« 0:00 » = debut nul (parseTs -> 0), pas une timeline
+    // incomplete — comparaison sur la valeur parsee, pas la saisie brute.
+    if (!hasTimeline && startIn.value.trim() !== '' && start !== 0) {
       prog.textContent = 'Timeline incomplète : définis le début ET la fin, ou laisse les deux vides pour le fichier complet.'; return;
     }
     if (hasTimeline && (isNaN(start) || isNaN(end) || !(end > start))) {
@@ -174,12 +191,11 @@ function youtubeModal() {
       // Contrat IPC : un path non-string creerait un son invalide silencieusement.
       if (!r || typeof r.path !== 'string' || !r.path) throw new Error('réponse yt:download invalide');
       dl = { path: r.path, sectioned: !!r.sectioned, start: hasTimeline ? start : 0, end: hasTimeline ? end : null };
-      // Une AUTRE modale est ouverte (pas la notre ni un residu askDestDir
-      // deja ferme -> modalClose null) : ne pas la detruire. Le fichier est
-      // dans imports/ — on donne le chemin.
-      if (modalClose && modalClose !== ytModalClose) { toast('Téléchargement terminé : ' + r.path, 'info'); return; }
-      // askDestDir a detruit la modale YouTube : sans modale de resultat, le
-      // fichier reste orphelin dans imports/ et « Ajouter » est inaccessible.
+      // Une AUTRE modale est ouverte (pas la notre) OU l'utilisateur a
+      // ferme la modale YouTube pendant le download (ytGone via onClose,
+      // modalClose redevenu null) : ne pas la detruire ni la rouvrir.
+      // Le fichier est dans imports/ — toast avec le chemin.
+      if (ytGone || (modalClose && modalClose !== ytModalClose)) { toast('Téléchargement terminé : ' + r.path, 'info'); return; }
       modal('Téléchargement terminé', [
         el('div', { class: 'hint', text: (r.sectioned ? 'Extrait MP3' : 'Audio complet') + ' — ' + r.path }),
         field('Nom', nameIn),
@@ -270,5 +286,5 @@ const previewSound = () => {
       save(); renderAll(); c();
       toast('Son YouTube ajouté : ' + dl.path);
     } },
-  ], { onClose: () => { if (offProg) { offProg(); offProg = null; } } });
+  ], { onClose: () => { ytGone = true; if (offProg) { offProg(); offProg = null; } } });
 }

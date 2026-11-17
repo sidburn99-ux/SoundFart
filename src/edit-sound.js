@@ -65,7 +65,10 @@ function editSound(s) {
   const foIn = el('input', { type: 'number', min: 0, max: 5000, step: 50, value: s.fadeOut || 0 });
   const info = el('div', { class: 'hint', text: "Chargement de l'onde…" });
   const outStart = () => (ts > 0.005 ? ts : 0);
-  const outEnd = () => (dur ? (te < dur - 0.005 ? te : null) : (s.trimEnd ?? null));
+  // pendingReset : « Tout réinitialiser » pendant « Chargement de l'onde… »
+  // puis « Enregistrer » avant la fin du decode -> outEnd() rendait
+  // l'ANCIEN s.trimEnd (demi-reset persiste). null = reset effectif.
+  const outEnd = () => (pendingReset ? null : (dur ? (te < dur - 0.005 ? te : null) : (s.trimEnd ?? null)));
 
   function sync() {
     startIn.value = ts.toFixed(2);
@@ -197,9 +200,13 @@ function editSound(s) {
   // « Tout » = tous les parametres AUDIO : volume, normalisation, decoupe,
   // fondus. Nom/categorie/favori/raccourci gardes (identite du son, pas un
   // traitement) — sinon un clic imprudent effacait le raccourci configure.
+  // pendingReset n'a de sens que tant que l'onde n'est pas chargee :
+  // apres loadWave, reset() agit directement (te=dur) et pendingReset
+  // resterait colle a true — outEnd() renverrait null a jamais et
+  // l'utilisateur ne pourrait plus definir de trimEnd.
   let pendingReset = false;
   const reset = () => {
-    pendingReset = true;
+    pendingReset = !dur;
     ts = 0; te = dur; fiIn.value = 0; foIn.value = 0;
     vol.value = 100; volLbl.textContent = '100%';
     norm = 1; normVal.textContent = '×1';
@@ -222,8 +229,12 @@ function editSound(s) {
     s.fadeOut = Math.min(5000, Math.max(0, +foIn.value || 0));
   };
   let exportBusy = false; // anti double-clic : N mediaCut concurrents + N confirmBox
+  // closed : la modale a ete fermee (Annuler/Echap/autre modale) pendant
+  // les awaits de l'export MP3 — sans ca la suite persistait des edits
+  // annules puis rouvrait confirmBox + editeur sur une modale morte.
+  let closed = false;
 
-  const scClear = el('button', { class: 'ghost', text: 'Effacer', onclick: () => { sc = ''; scBtn.textContent = 'Aucun — cliquer pour définir'; scHint.textContent = ''; } });
+  const scClear = el('button', { class: 'ghost', text: 'Effacer', onclick: () => { scCleanup(); sc = ''; scBtn.textContent = 'Aucun — cliquer pour définir'; scHint.textContent = ''; } });
   const times = el('div', { class: 'times' },
     el('label', { text: 'Début (s)', title: 'Le son ne jouera qu\'à partir de cet instant. Le fichier d\'origine n\'est jamais modifié.' }), startIn,
     el('label', { text: 'Fin (s)', title: 'Le son s\'arrêtera à cet instant. Vide = jusqu\'à la fin du fichier.' }), endIn,
@@ -256,19 +267,25 @@ function editSound(s) {
             if (!d) { toast('Export annulé : aucun dossier choisi.', 'warn'); return; }
             cfg.settings.storageDir = d; updateStorageUi(); save();
           }
+          if (closed) return; // modale fermee pendant le pickDir
           const out = await window.sf.mediaCut({ input: s.path, start: outStart(), end: outEnd() ?? dur, dir: cfg.settings.storageDir || '' });
           if (typeof out !== 'string' || !out) throw new Error('réponse media:cut invalide');
+          if (closed) { toast('Extrait MP3 créé : ' + out, 'info'); return; } // MP3 fait, modale morte : pas de collectEdits ni de confirmBox
           // confirmBox DETRUIT cette modale (slot unique) : on persiste les
           // edits courants d'abord (collectEdits : les champs saisis, pas
           // seulement trim/fades), puis on rouvre l'editeur apres la decision
           // — sinon les modifications non enregistrees etaient perdues sans
           // avertissement et le code continuait sur des elements detaches.
           collectEdits(); save();
-          if (await confirmBox('Extrait MP3 créé', 'Fichier : ' + out + '\n\nL\'utiliser à la place du fichier actuel ? La découpe et les fondus seront réinitialisés (le MP3 contient déjà l\'extrait).', 'Utiliser')) {
+          // Les fondus RESTENT : le MP3 ne contient que l'extrait, pas les
+          // fades — les effacer detruisait un reglage que le fichier
+          // resultant peut encore appliquer (play() re-echelonne si
+          // fi+fo > duree). Seule la decoupe est rembobinee.
+          if (await confirmBox('Extrait MP3 créé', 'Fichier : ' + out + '\n\nL\'utiliser à la place du fichier actuel ? La découpe sera réinitialisée (le MP3 contient déjà l\'extrait) ; les fondus sont conservés.', 'Utiliser')) {
             const oldPath = s.path;
             s.path = out;
             cacheDelete(oldPath);
-            s.trimStart = 0; s.trimEnd = null; s.fadeIn = 0; s.fadeOut = 0;
+            s.trimStart = 0; s.trimEnd = null;
             save(); renderAll();
             toast('Fichier remplacé par l\'extrait MP3.');
           } else {
@@ -288,6 +305,6 @@ function editSound(s) {
       save(); renderAll(); c();
       applyShortcuts();
     } },
-  ], { wide: true, onClose: () => { pvToken++; stopPreview(); scCleanup(); } });
+  ], { wide: true, onClose: () => { closed = true; pvToken++; stopPreview(); scCleanup(); } });
   requestAnimationFrame(() => { canvas.width = canvas.clientWidth || 600; draw(); });
 }
