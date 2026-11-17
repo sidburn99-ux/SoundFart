@@ -471,16 +471,24 @@ const ytCancelledErr = () => { const e = new Error('yt-dlp annulé par l\'utilis
 const ytThrowIfCancelled = () => { if (ytCancelReq) throw ytCancelledErr(); };
 
 // Annulation utilisateur : tue l'arbre yt-dlp (+ ffmpeg petit-enfant)
-// et arme le jeton pour les phases hors runYt.
-// Le close handler rejette avec une erreur « annulé » distincte.
+// et arme le jeton pour les phases hors runYt. Couvre aussi yt:info
+// (activeInfo.p) — un dump-single-json long n'est plus incancellable.
+let activeInfo = null;
 H('yt:cancel', () => {
   ytCancelReq = true;
   const rec = activeYt;
-  if (!rec) return ytDownloadBusy; // annulation en phase ensure/update : le jeton suffit
-  rec.cancelled = true;
-  try { killTree(rec.p.pid); } catch {}
-  try { rec.p.kill(); } catch {}
-  return true;
+  if (rec) {
+    rec.cancelled = true;
+    try { killTree(rec.p.pid); } catch {}
+    try { rec.p.kill(); } catch {}
+    return true;
+  }
+  if (activeInfo && activeInfo.p) {
+    try { killTree(activeInfo.p.pid); } catch {}
+    try { activeInfo.p.kill(); } catch {}
+    return true;
+  }
+  return ytDownloadBusy; // annulation en phase ensure/update : le jeton suffit
 });
 
 // f vaut -1 (reset) ou un pourcentage 0-100 deja pret (yt-dlp, downloadVerified).
@@ -503,11 +511,21 @@ const isYoutubeUrl = (url) => {
 
 H('yt:info', async (_e, url) => {
   if (!validHttpUrl(url) || !isYoutubeUrl(url)) throw new Error('URL YouTube invalide');
+  if (ytCancelReq) throw ytCancelledErr();
   await ensureYtDlp();
+  ytThrowIfCancelled();
   ytProgress(-1);
   // execFileTracked (et non execFileP) : le process est suivi dans
   // childProcs et tue au will-quit — un yt:info en vol ne survit pas.
-  const { stdout } = await execFileTracked(ytdlpPath(), ['--ignore-config', '--dump-single-json', '--no-playlist', '--no-warnings', url], { timeout: 120000, windowsHide: true }); // stdout plafonne a 4 Mo par execFileTracked (maxBuffer n'existe pas sur spawn)
+  // opts.rec expose le ChildProcess : yt:cancel peut l'interrompre.
+  activeInfo = {};
+  let stdout;
+  try {
+    ({ stdout } = await execFileTracked(ytdlpPath(), ['--ignore-config', '--dump-single-json', '--no-playlist', '--no-warnings', url], { timeout: 120000, windowsHide: true, rec: activeInfo }));
+  } catch (e) {
+    if (ytCancelReq) throw ytCancelledErr();
+    throw e;
+  } finally { activeInfo = null; }
   let j;
   try { j = JSON.parse(stdout); }
   catch (e) { throw new Error('yt-dlp a renvoyé des métadonnées illisibles : ' + e.message); }

@@ -431,7 +431,17 @@ async function recorderModal() {
               el('span', { class: 'hint', text: 'Fin' }), trimEndIn),
               'Laisse tel quel pour tout garder. Si tu rognes, le fichier est enregistré en WAV (plus lourd mais sans perte).'),
           ];
-          const destDir = await askDestDir([{ label: 'Écouter', onclick: () => previewRec() }], trimNodes);
+          let destDir = await askDestDir([{ label: 'Écouter', onclick: () => previewRec() }], trimNodes);
+          if (destDir === null && cfg.settings.storageDir) {
+            // « Annuler » tuait la prise en silence (des centaines de Mo
+            // perdus apres un arret volontaire). Si un dossier de sons
+            // principal existe, on propose d'y enregistrer plutot que de
+            // jeter — un second « Annuler » confirme la perte.
+            if (await confirmBox('Enregistrement non sauvegardé',
+                'Veux-tu quand même l\'enregistrer dans ton dossier de sons ?', 'Enregistrer')) {
+              destDir = cfg.settings.storageDir;
+            }
+          }
           if (destDir === null) {
             // La modale a ete detruite par askDestDir : status est detache,
             // seul un toast reste visible — l'utilisateur doit etre informe.

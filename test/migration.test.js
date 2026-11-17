@@ -214,3 +214,36 @@ test('sources absentes : ignorées sans erreur', () => {
   assert.equal(r.complete, true);
   assert.ok(fs.existsSync(path.join(dst, MIGRATION_MARKER)));
 });
+
+test('sweepMigtmp : supprime les .migtmp orphelins >1h a tout niveau, garde les recents', () => {
+  const { dst } = tmpdirs();
+  const { sweepMigtmp } = require('../lib/migration');
+  // Orphelin ancien imbrique + recent + non-migtmp
+  const deep = path.join(dst, 'tools', 'ffmpeg', 'bin');
+  fs.mkdirSync(deep, { recursive: true });
+  const old = path.join(deep, 'x.exe.migtmp-123');
+  const fresh = path.join(dst, 'config.json.migtmp-123');
+  const keep = path.join(dst, 'normal.txt');
+  fs.writeFileSync(old, 'vieux'); fs.writeFileSync(fresh, 'frais'); fs.writeFileSync(keep, 'garde');
+  const past = new Date(Date.now() - 2 * 3600e3);
+  fs.utimesSync(old, past, past);
+  const n = sweepMigtmp(dst, log);
+  assert.equal(n, 1);
+  assert.ok(!fs.existsSync(old), 'ancien .migtmp supprime');
+  assert.ok(fs.existsSync(fresh), 'recent conserve');
+  assert.ok(fs.existsSync(keep), 'fichier normal conserve');
+});
+
+test('runPortableMigration nettoie les .migtmp laisses par une tentative avortée', () => {
+  const { src, dst } = tmpdirs();
+  fs.writeFileSync(path.join(src, 'config.json'), cfg(src));
+  // Orphelin d'un run precedent, anterieur a la relance
+  const orphan = path.join(dst, 'imports', 'old.migtmp-999');
+  fs.mkdirSync(path.dirname(orphan), { recursive: true });
+  fs.writeFileSync(orphan, 'reste');
+  const past = new Date(Date.now() - 2 * 3600e3);
+  fs.utimesSync(orphan, past, past);
+  const r = runPortableMigration({ portableDataDir: src, appData: dst, log });
+  assert.equal(r.complete, true);
+  assert.ok(!fs.existsSync(orphan), 'orphelin de migration nettoye a la relance');
+});

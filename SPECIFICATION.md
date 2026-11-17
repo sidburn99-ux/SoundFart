@@ -95,7 +95,7 @@ Sécurité : CSP stricte (`default-src 'self'`), `contextIsolation`, `sandbox`, 
 ### 7. Import YouTube
 - Coller un lien → `yt-dlp` (téléchargé auto) analyse titre/durée.
 - **Timeline vide** (début+fin) → **audio complet** du média ; timeline renseignée → extraction de l'extrait. Règles : « fin sans début » et « début non nul sans fin » refusées avec message explicite ; « début=0 sans fin » = audio complet.
-- **Si ffmpeg présent** : vrai MP3 de l'extrait (`--download-sections`) ; sinon — ou si la coupe sectionnée échoue — repli audio complet + trim non destructif. Bouton **Annuler** (`yt:cancel`) tue yt-dlp/ffmpeg et ferme la modale ; l'annulation n'est jamais relancée par le repli.
+- **Si ffmpeg présent** : vrai MP3 de l'extrait (`--download-sections`) ; sinon — ou si la coupe sectionnée échoue — repli audio complet + trim non destructif. Bouton **Annuler** (`yt:cancel`) tue yt-dlp/ffmpeg et ferme la modale ; l'annulation n'est jamais relancée par le repli. `yt:cancel` couvre aussi `yt:info` (dump JSON long) et les phases ensure/update hors `yt:download`.
 - Préécoute, nom + catégorie, ajout direct. Barre de progression.
 - Conforme : yt-dlp standard, pas de contournement de DRM (responsabilité utilisateur).
 

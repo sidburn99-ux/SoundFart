@@ -26,6 +26,9 @@ const killTree = (pid) => { try { execFile('taskkill', ['/pid', String(pid), '/T
 function execFileTracked(file, args, opts = {}) {
   return new Promise((resolve, reject) => {
     const p = trackChild(spawn(file, args, { ...opts, windowsHide: true }));
+    // opts.rec : objet externe recevant le ChildProcess des le spawn —
+    // permet a yt:cancel de tuer un yt:info en vol comme un runYt.
+    if (opts.rec) opts.rec.p = p;
     let out = '', err = '', done = false;
     const timer = opts.timeout ? setTimeout(() => { if (!done) { done = true; try { killTree(p.pid); } catch {} try { p.kill(); } catch {} reject(new Error('délai dépassé')); } }, opts.timeout) : null;
     if (p.stdout) p.stdout.on('data', (d) => { if (out.length < 4 * 1024 * 1024) out += d; });
@@ -1284,8 +1287,15 @@ app.on('will-quit', () => {
   // execFileSync borne (2 s/PID) : killTree async n'aurait pas le temps de
   // finir avant la mort du process — ffmpeg restait orphelin et continuait
   // d'ecrire un MP3 partiel apres la fermeture.
+  // Budget global 6 s : N enfants x 2 s de taskkill pouvaient geler la
+  // fermeture plusieurs dizaines de secondes. Au-dela on se contente de
+  // p.kill() (non bloquant) — un orphelin court est prefere a un gel.
+  const killDeadline = Date.now() + 6000;
   for (const p of [...childProcs]) {
-    try { execFileSync('taskkill', ['/pid', String(p.pid), '/T', '/F'], { timeout: 2000, windowsHide: true }); } catch {}
+    if (p.exitCode !== null) continue; // deja sorti : taskkill frapperait un PID reutilise
+    const left = killDeadline - Date.now();
+    if (left <= 0) { try { p.kill(); } catch {} break; }
+    try { execFileSync('taskkill', ['/pid', String(p.pid), '/T', '/F'], { timeout: Math.min(2000, left), windowsHide: true }); } catch {}
     try { p.kill(); } catch {}
   }
   childProcs.clear();
