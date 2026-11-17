@@ -50,7 +50,7 @@
 - [x] Micro + PC + câble simultanés → les 3 sources présentes. **[A] 15/11** : RMS 0,0216 / peak 0,26.
 - [x] **Jauge de niveau** visible et active pendant la prise. **[U] 16/11** (bug `startMeter`/`stopMeter` corrigé en route).
 - [x] **Écouter avant sauvegarde** : bouton « Écouter » dans le choix du dossier → joue la prise en mémoire sur l'écoute locale. **[U] 16/11**.
-- [ ] **Rogner avant sauvegarde** (champs Début/Fin → WAV 16 bits). **Implémenté 16/11 — non testé.**
+- [x] **Rogner avant sauvegarde** (champs Début/Fin → WAV 16 bits). **[A] 17/11** : prise câble rogée Début=1/Fin=4 → `*.wav` RIFF stéréo 16 bits 48 kHz, durée **exactement 3,0 s**, taille cohérente (576 044 o). Pic 0 sur l'extrait = segment pré-lecture silencieux (les sons jouaient après 5 s) — cohérent, pas un défaut.
 - [ ] `MediaRecorder.onerror` avec état `inactive` → la prise partielle est sauvegardée + UI nettoyée (plus d'« Enregistrement… » figé). **[A] 17/11** : `onstop` manuel — **non reproduit**.
 - [x] Arrêter → dossier → « Enregistrement terminé » → « Ajouter à la bibliothèque » → son jouable. **[U] 16/11** (flux validé ; **[A] 15/11** via `cdp-recflow.js` ; **revérifié [A] 17/11** : sauvegarde `sf-dest\recordings\*.webm` + ajout réel, sons 31→32).
 - [x] Fermer la modale pendant l'enregistrement → arrêt propre, pas de fichier orphelin ajouté. **[U] 16/11** + **[A] 15/11** (`cdp-recclose.js`).
