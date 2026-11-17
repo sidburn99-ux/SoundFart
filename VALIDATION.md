@@ -61,7 +61,7 @@
 
 - [x] `autoSwitchMic` ON → entrée Windows bascule sur CABLE Output au lancement. **[U] 16/11**.
 - [x] Quitter proprement → micro restauré sur l'ancien périphérique. **[U] 16/11** : « revenu sur mon micro » ; logs `[mic] will-quit … restauration micro OK`.
-- [ ] Tuer SoundFart (Gestionnaire des tâches) pendant la bascule → guard restaure le micro en < ~2 s.
+- [x] Tuer SoundFart (Gestionnaire des tâches) pendant la bascule → guard restaure le micro en < ~2 s. **[A→U] 17/11 — prouvé au niveau OS** : `Stop-Process -Force` sur le PID principal → `AudioEndpoint get capture` bascule de CABLE Output à **G930** en **< 2 s**, `audio-restore.json` consommé (supprimé), guard one-shot terminé sans résidu.
 - [ ] Relancer SoundFart < 500 ms après le kill → pas de micro coincé sur CABLE (test TOCTOU).
 - [ ] Changer l'entrée micro manuellement pendant la bascule → watchdog suspend la surveillance (log « surveillance suspendue »), pas de re-bascule forcée.
 - [x] **Voix indépendante du master soundboard** : micro → limiteur direct, master 0 % + parole = voix OK sur Discord. **[U] 16/11** (décision produit explicite).
