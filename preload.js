@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld('sf', {
   pickFiles: () => ipcRenderer.invoke('files:pick'),
   pickDir: () => ipcRenderer.invoke('files:pickDir'),
   expandPaths: (paths) => ipcRenderer.invoke('files:expand', paths),
+  importFiles: (paths, dir) => ipcRenderer.invoke('files:import', paths, dir),
   readFile: (p) => ipcRenderer.invoke('file:read', p),
   checkFiles: (paths) => ipcRenderer.invoke('file:check', paths),
   listImports: (dir) => ipcRenderer.invoke('imports:list', dir),

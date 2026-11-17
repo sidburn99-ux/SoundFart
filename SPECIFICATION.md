@@ -11,9 +11,9 @@
 **SoundFart** est une soundboard Windows pour Discord, développée en **Electron 45** (JavaScript vanilla, zéro framework, zéro dépendance runtime). Objectif : jouer des sons dans un salon vocal Discord via un câble virtuel audio (VB-CABLE), pendant qu'on joue, avec une interface sombre et compacte.
 
 - **Livrable** : `dist\SoundFart.exe` portable (~375 Mo, compression `store`). Aucun prérequis pour l'utilisateur final **hors** : VB-CABLE (installé manuellement, requis pour la diffusion Discord) ; `csc.exe` du .NET Framework 4.x (généralement présent sur Windows 10/11 ; son absence est gérée proprement — bascule micro et AudioTap indisponibles, le reste fonctionne) pour compiler les outils audio au premier usage.
-- **Config** : `SoundFart-data\config.json` à côté de l'exe (repli `%APPDATA%\SoundFart\`) — les sons sont des **références** à des fichiers existants, jamais copiés ni modifiés.
-- **Journal** : `SoundFart-data\soundfart.log`.
-- **Outils téléchargés au premier usage** dans `SoundFart-data\tools\` : `yt-dlp.exe` (~15 Mo, import YouTube — version de repli épinglée + SHA-256, **auto-mise à jour** ~hebdo vérifiée par hash), `ffmpeg.exe` (~100 Mo, coupes MP3), `AudioEndpoint-<hash>.exe` + `AudioTap-<hash>.exe` (compilés localement depuis les `.cs` via le `csc.exe` de .NET Framework — bascule micro et capture loopback).
+- **Config** : `%APPDATA%\SoundFart\config.json` (userData Electron) — les sons sont des **références** à des fichiers existants, jamais modifiés ; les sons **ajoutés** sont copiés dans `<dossier de sons>/sons/` (choisi par l'utilisateur, obligatoire).
+- **Journal** : `%APPDATA%\SoundFart\soundfart.log`.
+- **Outils téléchargés au premier usage** dans `%APPDATA%\SoundFart\tools\` : `yt-dlp.exe` (~15 Mo, import YouTube — version de repli épinglée + SHA-256, **auto-mise à jour** ~hebdo vérifiée par hash), `ffmpeg.exe` (~100 Mo, coupes MP3), `AudioEndpoint-<hash>.exe` + `AudioTap-<hash>.exe` (compilés localement depuis les `.cs` via le `csc.exe` de .NET Framework — bascule micro et capture loopback).
 
 ## Architecture
 
@@ -123,11 +123,13 @@ Sécurité : CSP stricte (`default-src 'self'`), `contextIsolation`, `sandbox`, 
 - Discord doit utiliser « Défaut » comme entrée pour suivre la bascule (documenté).
 
 ### 11. Stockage configurable
-- Réglage « Dossier de stockage » : les fichiers **créés** par l'app (imports YouTube, enregistrements, extraits MP3) vont dans `<dossier>/imports|recordings|cuts/`. YouTube propose le dernier dossier utilisé avant téléchargement ; l'enregistreur demande le dossier après l'arrêt, avant sauvegarde (`lastDestDir` mémorisé).
-- **5 sons par défaut** copiés dans `<stockage>/default-sounds/` à la première installation ; **re-seed** automatique si la bibliothèque redevient vide ou si des fichiers par défaut manquent/sont tronqués.
+- **Deux dossiers distincts** : les **réglages/outils/logs** vivent dans `%APPDATA%\SoundFart` (userData Electron standard — migration unique depuis l'ancien `SoundFart-data` portable, chemins de config réécrits, backups `.pre-migration-*`, marqueur `.migrated-from-portable`) ; les **fichiers créés par l'app** vivent dans le **dossier de sons choisi** (`settings.storageDir`).
+- **Dossier de sons obligatoire** : bandeau de choix au premier lancement (skippable) + `ensureStorageDir()` bloquant à la première action créatrice de fichier (import, YouTube, enregistrement, extrait MP3). Sous-dossiers : `sons/` (sons ajoutés **copiés** via `files:import`, dédoublonnage nom+taille+échantillons), `imports/` (YouTube), `recordings/` (micro), `cuts/` (extraits MP3).
+- YouTube propose le dossier de sons par défaut (modifiable par téléchargement) ; l'enregistreur demande le dossier après l'arrêt (premier choix = deviant `storageDir`).
+- **5 sons par défaut** copiés dans `<userData>/default-sounds/` ; **re-seed** automatique si la bibliothèque redevient vide ou si des fichiers par défaut manquent/sont tronqués.
 - **Migration** : les chemins de l'ancienne app Python `DiscordSoundboard` sont migrés automatiquement au premier lancement (`config.json` → `.bak` conservé).
 - **Imports orphelins** : les fichiers présents dans `imports/` sans entrée en bibliothèque sont listés via `imports:list` — Paramètres → Bibliothèque → « fichiers non ajoutés » permet de les ajouter (nom, taille, date) sans toucher aux fichiers.
-- **Mode portable complet** : dans l'exe portable, `userData` = `SoundFart-data/` à côté de l'exe (config, outils compilés, logs, caches Electron) via `PORTABLE_EXECUTABLE_DIR` ; repli `%APPDATA%\SoundFart` si non accessible. `--test-profile` isole dans `%TEMP%\SoundFart-test`.
+- **Mode** : exe portable unique, mais les **données sont standard Windows** — réglages/outils/logs dans `%APPDATA%\SoundFart`, sons créés dans le dossier choisi par l'utilisateur. `--test-profile` isole dans `%TEMP%\SoundFart-test`.
 - **VB-CABLE** : jamais embarqué ni installé (licence VB-Audio). L'utilisateur l'installe depuis https://vb-audio.com/Cable/ ; sans câble, écran d'accueil « VB-CABLE requis » + bandeau permanent, flux câble et bascule micro auto désactivés — un autre périphérique de sortie virtuelle (ex. Voicemeeter) reste sélectionnable manuellement ; détection à chaud par `devicechange`.
 
 ### 12. Sauvegarde / export-import

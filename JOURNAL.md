@@ -17,6 +17,32 @@
 - **Migration config v1→v2** : les anciens `s.norm` (basés pic) sont invalidés à ×1 ; volumes manuels, découpes, favoris, catégories, raccourcis préservés.
 - Correctifs : cible de normalisation persistée dès la saisie, progression de normalisation en ligne dans le panneau (qui reste ouvert), scan de pic exhaustif, **crash fatal corrigé dans `downloadFile`** (`res()` appelait la réponse HTTP au lieu de `resolve` — touchait tous les téléchargements d'outils).
 
+## Feature dossier de sons + audits autonomes (17/11/2026, branche `feat/dossier-sons-first-run`)
+
+Stockage migré vers `%APPDATA%\SoundFart` (réglages/outils/logs) + dossier de sons choisi par l'utilisateur (fichiers créés : `sons/`, `imports/`, `recordings/`, `cuts/`). PR #7 ouverte, **non mergée** — validation terrain en attente (section H de `VALIDATION.md`).
+
+### Fonctionnalités
+
+- **Migration unique** `SoundFart-data` → AppData : config reprise (chemins JSON réécrits, échappés + bruts + `/`), tools/imports/recordings/cuts/default-sounds copiés, backups `.pre-migration-*`, marqueur `.migrated-from-portable`. Vérifiée en réel sur le profil utilisateur (36 sons, réglages conservés).
+- **Bannière « dossier de sons »** : skippable, obligatoire dès qu'une action crée un fichier (`ensureStorageDir`).
+- **`files:import`** : copie atomique (`.part` unique pid+seq) dans `<dossier>/sons/`, dédoublonnage nom+taille+échantillons tête/queue 4 Kio — réimport = réutilisation, jamais de doublon. Retrait d'un son conserve le fichier.
+- YouTube/éditeur/enregistreur routés vers le dossier choisi ; `storageDir`/`lastDestDir` prioritaires.
+
+### Audits (boucle continue, ~40 commits — détail dans `suivi.tsv`)
+
+Tous les modules couverts : `main.js`, `media-tools.js`, `app.js` (intégral), `settings.js`, `recorder.js`, `youtube.js`, `edit-sound.js`, `normalize.js`, worklets `voice-gate.js`/`tap-processor.js`, `AudioEndpoint.cs`/`AudioTap.cs`, preload/IPC (parité vérifiée), drivers CDP, scripts build.
+
+- **Réglages** : champ LUFS vide → `normLufs=0` (normalisation à fond — P2), `maxDurIn` vide → illimité silencieux, `storageDir` non persisté, `voiceLvl` sans effet, import config (bannière, annulation, catches).
+- **Moteur `[AUDIO]`** : plafond 32 voix revérifié post-décode, timeout `decodeAudioData` 30 s (sémaphore fuyable → lectures muettes), `stopFallback` déconnectait pas les nodes, `bufInflight` garde d'identité, cache aperçus, voice-gate gain stéréo synchronisé + hygiène NaN/denormal.
+- **Cycle de vie** : `file:check` → `{missing, sigs size:mtime}` (fichier réécrit à chemin constant = cache invalidé), devicechange un seul rebuild, catches `init`/`importConfig`/`openSettings`, reload renderer fenêtré 5 min, watchdog `quitting`, dialogs sur fenêtre détruite, `rec:save` byteLength UTF-8.
+- **Tests** : `test/normalize-cfg.test.js` — fuzz adversarial de `normalizeCfg` (9 tests, npm test 57→66).
+
+### Reste ouvert
+
+- **SF-REL-0611** (crash renderer `-1/143`) : non reproduit en conditions contrôlées ; instrumentation en place, protocole forensique dans `VALIDATION.md`.
+- Validations matérielles : ~25 cases dans `VALIDATION.md` (sections H/I prioritaires : feature dossiers, voix stéréo `[AUDIO]`).
+- Micro perdu → rebuild complet stoppe les sons en cours (voulu, documenté GUIDE).
+
 ## Campagne audit auto (16/11/2026, branche `audit/auto-improve`)
 
 Boucle audit → correction → vérification, ~13 commits unitaires. Baseline : `npm test` 54/54, `node --check` OK sur 20 fichiers JS.

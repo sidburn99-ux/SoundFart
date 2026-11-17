@@ -45,7 +45,7 @@ suivi.tsv/html   # journal de suivi (régénérer le html après tsv)
 
 Contraintes à ne pas casser :
 
-- Chemins : `SoundFart-data\` à côté de l'exe (config, `tools\`, `soundfart.log`), repli `%APPDATA%\SoundFart\`, `--test-profile` → `%TEMP%\SoundFart-test`. Jamais de `%APPDATA%` codé en dur : `app.getPath('userData')` / `storageRoot()`.
+- Chemins : réglages/outils/logs dans `%APPDATA%\SoundFart` (userData Electron) ; les fichiers créés par l'app (sons copiés `sons/`, `imports/`, `recordings/`, `cuts/`) dans le **dossier de sons choisi** (`settings.storageDir`, obligatoire dès le 1er ajout — plus de défaut implicite). `--test-profile` → `%TEMP%\SoundFart-test`. Migration unique `SoundFart-data` → AppData au 1er lancement (marqueur `.migrated-from-portable`). Jamais de `%APPDATA%` codé en dur : `app.getPath('userData')` / `storageRoot()`.
 - PCM AudioTap : float32 **stéréo** 48 kHz = **8 octets/frame** — tout découpage aligné (`main.js` tapPcmRem) ; worklet : `outputChannelCount:[2]`, `numberOfInputs:0`, `'flush'` avant `rec.start`.
 - Restauration micro : uniquement si `audio-restore.json` existe — jamais forcer un virtuel→non-virtuel sans lui, jamais écraser un choix manuel.
 - Crash renderer `AudioContext` (exitCode -1/143) : bug connu non résolu — le signaler s'il réapparaît, ne pas le masquer.
@@ -74,6 +74,7 @@ node --check <f>  # syntaxe JS
 
 - `C:\Program Files\Git\cmd\git.exe`. Remote : `git@github.com:sidburn99-ux/SoundFart.git` — **SSH uniquement** (`~/.ssh/id_ed25519`).
 - Commits locaux sur la branche de travail, `git push` après chaque commit — jamais de push direct sur `main` sans autorisation (PR via `gh pr create` pour docs et changements multi-fichiers).
+- **Toujours une branche** (`feat/…`, `fix/…`, `docs/…`) même pour un petit fix — jamais de commit direct sur `main` ; le merge n'intervient que sur ordre explicite de l'utilisateur.
 - Un commit par changement cohérent, message en français axé « pourquoi » + trailer Devin. Vérifier le diff avant ; jamais de secrets, temporaires ou changements étrangers.
 
 ## Travail

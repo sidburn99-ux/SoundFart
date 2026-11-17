@@ -8,14 +8,14 @@ SoundFart est une soundboard pour Discord : elle joue tes sons dans un **micro v
 
 ### Version .exe (recommandé)
 1. Télécharge `SoundFart.exe` et lance-le (fichier portable, **aucun install**, aucune désinstallation).
-2. **Important** : toutes les données (config, sons importés, enregistrements, outils, logs) sont rangées dans le dossier **`SoundFart-data` à côté de l'exe** — si tu déplaces l'exe, déplace aussi ce dossier pour garder ta bibliothèque.
+2. **Dossier de sons** : au premier lancement, SoundFart te propose de choisir un dossier (bandeau en haut) — c'est là qu'il rangera tout ce que tu ajoutes : sons **copiés** dans `sons/`, imports YouTube dans `imports/`, enregistrements dans `recordings/`, extraits MP3 dans `cuts/`. Le choix est **obligatoire** dès le premier ajout. Les **réglages** sont dans `%APPDATA%\SoundFart` (comme les autres applis Windows).
 3. Au premier lancement sans VB-CABLE, un écran « VB-CABLE requis » s'affiche (voir section 2).
 
 ### Depuis les sources
 1. Installe **Node.js** (version LTS) : https://nodejs.org
 2. Double-clique sur `run-dev.bat` pour tester, ou `build.bat` pour reconstruire `dist\SoundFart.exe`.
 
-Ta configuration est sauvegardée dans `SoundFart-data\config.json` (à côté de l'exe ; `%APPDATA%\SoundFart\` en repli). Les fichiers audio ne sont **jamais copiés ni modifiés** : SoundFart ne garde que leurs chemins d'accès.
+Ta configuration est sauvegardée dans `%APPDATA%\SoundFart\config.json`. Les sons que tu ajoutes sont **copiés** dans ton dossier de sons (`sons/`) ; les autres fichiers audio ne sont jamais modifiés : SoundFart ne garde que leurs chemins d'accès.
 
 ## 2. Installer le câble virtuel (VB-CABLE)
 
@@ -80,7 +80,8 @@ Clique **Appliquer**. Le bandeau en bas de fenêtre affiche les routes actives (
 | « Fichier introuvable » sur une carte | Le fichier a été déplacé/supprimé | Clique le badge ou clic droit → « Retrouver le fichier… » |
 | Fenêtre noire au démarrage | Fichiers `src/` manquants à côté de `main.js` | Vérifie que tous les `.js` de `src/` (`app.js`, `normalize.js`, `edit-sound.js`, `settings.js`, `recorder.js`, `youtube.js`, `tap-processor.js`, `voice-gate.js`) sont présents |
 | « Micro inaccessible » | Permission Windows refusée | Paramètres Windows → Confidentialité → Micro |
-| Erreurs techniques | — | `SoundFart-data\soundfart.log` (`%APPDATA%\SoundFart\soundfart.log` en repli) + F12 pour la console |
+| Un son en cours s'est arrêté quand le micro a décroché | Comportement voulu : la perte du micro déclenche une reconstruction complète du graphe audio, qui stoppe aussi les sons | Relance le son ; si le micro revient, tout repart normalement |
+| Erreurs techniques | — | `%APPDATA%\SoundFart\soundfart.log` + F12 pour la console |
 
 ## 7. Note légale YouTube
 

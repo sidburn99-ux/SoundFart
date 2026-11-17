@@ -69,8 +69,10 @@ async function check(name, fn) {
   await check('etat AudioContext sorties', () => evaluate(
     '({cable:audio.cable?audio.cable.ctx.state:null, mon:audio.mon?audio.mon.ctx.state:null, cableDev:(audio.cable&&audio.cable.deviceId||"").slice(0,12), monDev:(audio.mon&&audio.mon.deviceId||"").slice(0,12)})'));
 
+  // file:check retourne {missing, sigs} depuis l'ajout des signatures
+  // size:mtime (invalidations de cache) — on deballe .missing.
   await check('file:check fichier absent', () => evaluate(
-    'window.sf.checkFiles(["Z:\\\\definitely-not-here-12345.mp3"])'));
+    'window.sf.checkFiles(["Z:\\\\definitely-not-here-12345.mp3"]).then(r=>r.missing)'));
 
   await check('rec:save runtime (writeRecording via IPC)', async () => {
     const p = await evaluate(
@@ -103,7 +105,7 @@ async function check(name, fn) {
   });
 
   await check('file:check sons reels (5 premiers)', () => evaluate(
-    'window.sf.checkFiles((cfg.sounds||[]).slice(0,5).map(s=>s.path))'));
+    'window.sf.checkFiles((cfg.sounds||[]).slice(0,5).map(s=>s.path)).then(r=>({missing:r.missing,sigs:Object.keys(r.sigs||{}).length}))'));
 
   await check('teardownAudio + applyAudio (cycle complet)', async () => {
     const r = await evaluate('(async()=>{try{await teardownAudio();const torn={cable:audio.cable,mon:audio.mon,mic:!!audio.micStream};await applyAudio();return{torn:{cableNull:torn.cable===null,monNull:torn.mon===null,micNull:!torn.mic},cable:audio.cable?audio.cable.ctx.state:null,mon:audio.mon?audio.mon.ctx.state:null};}catch(e){return{err:String(e&&e.message||e).slice(0,150)};}})()');

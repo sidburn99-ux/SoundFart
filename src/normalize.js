@@ -86,7 +86,10 @@ async function testNormLufs(targetLufs) {
   try {
     const ctx = out.ctx;
     if (ctx.state !== 'running') ctx.resume().catch((e) => logErr('testNormLufs resume', e));
-    const target = Number.isFinite(+targetLufs) ? Math.min(0, Math.max(-40, +targetLufs)) : normLufsTarget();
+    // '' = NaN : +'' valait 0 -> test a 0 LUFS (bourrin) au lieu de la
+    // cible configuree — meme piege que les champs settings.
+    const rawT = String(targetLufs ?? '').trim();
+    const target = rawT !== '' && Number.isFinite(+rawT) ? Math.min(0, Math.max(-40, +rawT)) : normLufsTarget();
     const dur = 1.2, n = Math.floor(dur * ctx.sampleRate);
     const buf = ctx.createBuffer(1, n, ctx.sampleRate);
     const d = buf.getChannelData(0);

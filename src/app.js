@@ -51,6 +51,7 @@ function el(tag, props = {}, ...kids) {
 // ================================================================ etat
 let cfg;
 let missing = new Set();
+let fileSigs = null; // path -> 'size:mtimeMs' de la derniere verification (checkMissing)
 const cardEls = new Map();
 const playingCount = new Map();
 const playingNames = new Map(); // id -> nom : couvre les aperçus (sons éphémères absents de cfg.sounds)
@@ -67,10 +68,12 @@ const defaults = () => ({
 let saveErrNotified = false;
 function save() {
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => window.sf.saveConfig(cfg).catch((e) => {
+  saveTimer = setTimeout(() => window.sf.saveConfig(cfg).then(() => { saveErrNotified = false; }).catch((e) => {
     logErr('saveConfig', e);
     // Config jamais persistee en silence (ex. >5 Mo) : un toast une fois
     // suffit — l'utilisateur doit savoir que ses reglages sont perdus.
+    // saveErrNotified est reset au prochain succes : sans ca, UN echec
+    // transitoire rendait tous les echecs suivants silencieux.
     if (!saveErrNotified) { saveErrNotified = true; toast('Sauvegarde impossible : ' + (e && e.message || e), 'warn'); }
   }), 250);
 }
@@ -317,6 +320,7 @@ const truncWarned = new Set(); // chemin -> deja prevu : un toast par fichier
 const voices = new Set();
 let playGen = 0; // generation audio : stopAll/teardownAudio l'incrementent pour avorter les play() en vol
 let deadRetries = 0; // retry borne sur 'interrupted'/'closed' (reset sur 'running')
+let muteWarnAt = 0; // throttle toast « micro muet » : un BT peut couper/remettre le mute en rafale
 let bufCacheBytes = 0;
 
 const bufInflight = new Map(); // path -> Promise<buf> : evite le double decodage concurrent
@@ -344,7 +348,7 @@ function releaseDecode() {
   if (next) { decodeQueuedBytes -= next.bytes; next.res(); } // slot transfere au waiter
   else decodeActive--;
 }
-async function getBuffer(path) {
+async function getBuffer(path, allowCache) {
   if (bufCache.has(path)) {
     const e = bufCache.get(path);
     bufCache.delete(path);
@@ -373,7 +377,18 @@ async function getBuffer(path) {
       : new Uint8Array(data).buffer; // robustness : ArrayBuffer pur ou Uint8Array
   await acquireDecode(data.byteLength);
   let buf;
-  try { buf = await decoder.decodeAudioData(ab); }
+  try {
+    // decodeAudioData peut pendre indefiniment sur un fichier pathologique
+    // : sans timeout les 2 slots du semaphore n'etaient jamais relaches et
+    // TOUTES les lectures suivantes restaient muettes (promesse pendante,
+    // aucun toast). Le decode continue en arriere-plan, resultat ignore.
+    buf = await Promise.race([
+      decoder.decodeAudioData(ab),
+      new Promise((_, rej) => setTimeout(() => {
+        const e = new Error('Décodage trop long — fichier peut-être corrompu.'); e.noFileErr = true; rej(e);
+      }, 30000)),
+    ]);
+  }
   catch (de) { de.noFileErr = true; throw de; } // codec/format : fichier present mais indecodable
   finally { releaseDecode(); }
   const bytes = bufBytes(buf);
@@ -400,7 +415,10 @@ async function getBuffer(path) {
   // Orphelin de cache : si le son a ete retire/relocalise pendant le
   // decodeAudioData, ne pas mettre en cache un buffer pour un path qui
   // n'est plus reference (jusqu'a 256 Mo de residue).
-  if (cfg.sounds.some((x) => x.path === path)) {
+  // allowCache : les apercus (preview YouTube, editeur) pointent des
+  // fichiers hors cfg.sounds — sans ca chaque « Ecouter » relisait et
+  // redecodait jusqu'a 150 Mo. Le cache LRU reste borne (256 Mo).
+  if (allowCache || cfg.sounds.some((x) => x.path === path)) {
     bufCache.set(path, { buf, bytes });
     bufCacheBytes += bytes;
     while (bufCacheBytes > BUF_CACHE_MAX && bufCache.size > 1) {
@@ -412,7 +430,10 @@ async function getBuffer(path) {
     return buf;
   })();
   bufInflight.set(path, p);
-  try { return await p; } finally { bufInflight.delete(path); }
+  // Garde d'identite : importConfig fait bufInflight.clear() pendant qu'un
+  // decode est en vol — le finally d'AVANT ne doit pas supprimer l'entree
+  // d'un decode POSTERIEUR enregistre apres le clear (double decodage).
+  try { return await p; } finally { if (bufInflight.get(path) === p) bufInflight.delete(path); }
 }
 
 // Supprime une entree du cache EN coherance avec le compteur d'octets :
@@ -554,7 +575,7 @@ async function applyAudioInner() {
         // track meurt -> Discord n'entend plus la voix, sans aucun signal.
         stream.getTracks().forEach((t) => {
           t.addEventListener('ended', () => { if (audio.micStream === stream) { toast('Micro perdu — voix coupée sur le câble.', 'warn'); audio.micStream = null; applyAudio().catch((e) => logErr('applyAudio', e)); } });
-          t.addEventListener('mute', () => { if (audio.micStream === stream) toast('Micro muet par le système — voix coupée.', 'warn'); });
+          t.addEventListener('mute', () => { if (audio.micStream === stream && Date.now() - muteWarnAt > 10000) { muteWarnAt = Date.now(); toast('Micro muet par le système — voix coupée.', 'warn'); } });
         });
         const src = audio.cable.ctx.createMediaStreamSource(stream);
         // Voice gate DSP (highpass ~80 Hz + noise gate) sur la voix
@@ -713,7 +734,8 @@ function cableScreen() {
     try {
       await refreshDevices(false); resolveDevices(); updateCableUi();
       await applyAudio().catch((e2) => logErr('applyAudio', e2));
-    } finally {
+    } catch (e2) { logErr('cableScreen verify', e2); }
+    finally {
       e.target.disabled = false;
     }
     if (cablePresent()) {
@@ -753,6 +775,14 @@ function showCableScreen() {
   updateCableUi();
 }
 
+// Bandeau « dossier de sons » : visible tant que storageDir n'est pas choisi
+// (propose, jamais bloquant — devient obligatoire via ensureStorageDir des
+// qu'une action cree un fichier).
+function updateStorageUi() {
+  const b = $('#storage-banner');
+  if (b) b.hidden = !!cfg.settings.storageDir;
+}
+
 function setPlaying(id, delta) {
   const n = (playingCount.get(id) || 0) + delta;
   if (n <= 0) { playingCount.delete(id); playingNames.delete(id); } else playingCount.set(id, n);
@@ -785,14 +815,22 @@ function play(sound, opts = {}) {
   // jouer deux fois sur le meme device = +6 dB et echos possibles.
   const seenDev = new Set();
   const uniq = active.filter((o) => !seenDev.has(o.deviceId || o.ctx.destination) && seenDev.add(o.deviceId || o.ctx.destination));
-  return getBuffer(sound.path)
+  return getBuffer(sound.path, opts.preview === true)
     .catch((e) => { fileErr = !(e && e.noFileErr); throw e; })
     .then((buf) => {
     if (gen !== playGen) return null; // lecture percutee par un stop : ne pas demarrer la voix
     // Supprime/relocalise pendant le decode async : ne pas jouer un fantome
     // (ancien fichier) ni un son qui n'existe plus.
     if (!opts.preview && !cfg.sounds.some((x) => x.id === sound.id && x.path === sound.path)) return null;
-    const vol = ((opts.volume ?? sound.volume) / 100) * (sound.norm ?? 1);
+    // Le plafond de 32 voix est revérifié ICI : des clics pendant le
+    // decodeAudioData passaient tous le check synchrone de l'entree —
+    // le pic de nodes n'etait alors borne que par le nombre de clics.
+    if (voices.size >= 32) { toast('Trop de lectures simultanées.', 'warn'); return null; }
+    // opts.norm : l'editeur passe la normalisation EN COURS non enregistree
+    // pour que l'apercu corresponde a ce que « Enregistrer » stockera —
+    // sans lui, play() lisait s.norm (ancienne valeur sauvee) et
+    // l'apercu ne collait pas au toast « Volume normalise : xN ».
+    const vol = ((opts.volume ?? sound.volume) / 100) * (opts.norm ?? sound.norm ?? 1);
     const offset = Math.min(Math.max(0, opts.trimStart ?? sound.trimStart ?? 0), Math.max(0, buf.duration - 0.05));
     const endRaw = opts.trimEnd !== undefined ? opts.trimEnd : sound.trimEnd;
     let endEff = endRaw ?? buf.duration;
@@ -892,7 +930,14 @@ function stopVoice(v, instant) {
   // Repli : si onended ne se declenche jamais (contexte suspendu, noeud
   // fige), la voix resterait zombie jusqu'au killTimer (duree+15 s).
   if (v.stopFallback) clearTimeout(v.stopFallback);
-  v.stopFallback = setTimeout(() => { v.stopFallback = null; if (voices.has(v)) endVoice(v); }, 1500);
+  v.stopFallback = setTimeout(() => {
+    v.stopFallback = null;
+    if (!voices.has(v)) return;
+    // onended n'a jamais tire (ctx suspendu) : sans ca le gain restait
+    // connecte au bus et plus AUCUN watchdog ne surveillait la voix.
+    for (const n of v.nodes) { try { n.src.stop(); } catch {} try { n.g.disconnect(); } catch {} }
+    endVoice(v);
+  }, 1500);
 }
 
 function stopAll(instant) {
@@ -1004,9 +1049,36 @@ function pushSound(s) {
   cfg.sounds.push(s); return true;
 }
 
+// Le dossier de sons est obligatoire des qu'une action cree un fichier
+// (import, YouTube, enregistrement, extrait MP3) : propose une fois le choix
+// (pickDir natif), puis le memorise dans settings.storageDir. Annuler =
+// annuler l'action, jamais de dossier implicite.
+async function ensureStorageDir() {
+  if (cfg.settings.storageDir) return true;
+  if (!(await confirmBox('Choisis ton dossier de sons',
+    'SoundFart y range les fichiers qu\'il crée : sons ajoutés (copiés), imports YouTube, enregistrements et extraits MP3.\n\nExemples : Documents\\SoundFart, E:\\Soundfart, une partition dédiée.',
+    'Choisir un dossier'))) {
+    toast('Action annulée : aucun dossier de sons choisi.', 'warn'); return false;
+  }
+  try {
+    const d = await window.sf.pickDir();
+    if (!d) { toast('Action annulée : aucun dossier choisi.', 'warn'); return false; }
+    cfg.settings.storageDir = d; save(); updateStorageUi();
+    toast('Dossier de sons : ' + d);
+    return true;
+  } catch (e) { logErr('pickDir', e); return false; }
+}
+
 async function addPaths(rawPaths) {
   const paths = await window.sf.expandPaths(rawPaths);
   if (!paths.length) { toast('Aucun fichier audio reconnu (mp3, wav, ogg, flac, m4a, aac, opus).', 'warn'); return; }
+  if (!(await ensureStorageDir())) return;
+  let imported;
+  try { imported = await window.sf.importFiles(paths, cfg.settings.storageDir); }
+  catch (e) { logErr('importFiles', e); toast('Import impossible : ' + (e && e.message || e), 'warn'); return; }
+  const ok = imported.filter((r) => r.path && !r.error);
+  const failed = imported.length - ok.length;
+  if (!ok.length) { toast(failed ? 'Copie des sons impossible — voir le journal.' : 'Aucun fichier audio reconnu.', 'warn'); return; }
   const known = new Set(cfg.sounds.map((s) => s.path.toLowerCase()));
   const catId = catById(cfg.ui.cat) ? cfg.ui.cat : null;
   const now = Date.now();
@@ -1015,19 +1087,20 @@ async function addPaths(rawPaths) {
   // batch et config:save depasse 5 Mo -> sauvegardes silencieusement KO.
   const room = Math.max(0, 5000 - cfg.sounds.length);
   let truncated = false;
-  for (const p of paths) {
+  for (const r of ok) {
     if (n >= room) { truncated = true; break; }
-    if (known.has(p.toLowerCase())) continue;
-    known.add(p.toLowerCase());
-    const base = p.split(/[\\/]/).pop().replace(/\.[^.]+$/, '');
+    if (known.has(r.path.toLowerCase())) continue;
+    known.add(r.path.toLowerCase());
+    const base = (r.label || r.path.split(/[\\/]/).pop()).replace(/\.[^.]+$/, '');
     cfg.sounds.push({
-      id: uid(), name: base, path: p, categoryId: catId, volume: 100, addedAt: now + n, plays: 0,
+      id: uid(), name: base, path: r.path, categoryId: catId, volume: 100, addedAt: now + n, plays: 0,
       favorite: false, norm: 1, shortcut: null, trimStart: 0, trimEnd: null, fadeIn: 0, fadeOut: 0,
     });
     n++;
   }
   if (n) { save(); renderAll(); }
-  toast(n ? `${n} son(s) ajouté(s).${truncated ? ' (limite de 5000 sons atteinte)' : ''}` : (truncated ? 'Limite de 5000 sons atteinte — retirez des sons pour en ajouter.' : 'Ces sons sont déjà dans la liste.'));
+  const extra = [truncated ? ' (limite de 5000 sons atteinte)' : '', failed ? ` ${failed} fichier(s) non copié(s).` : ''].join('');
+  toast(n ? `${n} son(s) ajouté(s).${extra}` : (known.size ? 'Ces sons sont déjà dans la liste.' : 'Aucun son ajouté.') + extra);
 }
 
 async function removeSound(s) {
@@ -1315,6 +1388,9 @@ async function relocateSound(s) {
   for (const v of [...voices]) if (v.soundId === s.id) stopVoice(v, true);
   s.path = p;
   cacheDelete(oldPath); // l'ancien buffer devient orphelin sinon
+  // Les warnings one-shot sont indexes par path : garder l'ancien laisserait
+  // un autre son sur ce path sans ses toasts « fichier long »/« tronque ».
+  longWarned.delete(oldPath); truncWarned.delete(oldPath);
   missing.delete(s.id);
   save(); renderAll();
   toast('Fichier retrouvé : ' + p);
@@ -1324,10 +1400,22 @@ let checkSeq = 0; // jeton de generation : des scans concurrents (focus,
 // import, ajout) ne doivent pas ecrire un 'missing' perime dans le desordre.
 async function checkMissing() {
   const seq = ++checkSeq;
-  let miss;
-  try { miss = new Set(await window.sf.checkFiles(cfg.sounds.map((s) => s.path))); }
+  let r;
+  try { r = await window.sf.checkFiles(cfg.sounds.map((s) => s.path)); }
   catch (e) { logErr('checkMissing', e); return; } // erreur remontee, badges inchanges
   if (seq !== checkSeq) return; // un scan plus recent a ete lance entre-temps
+  // Fichier reecrit a chemin constant (re-export, remplacement manuel) :
+  // la signature a change -> le buffer decode en cache est perime,
+  // sinon on jouerait silencieusement l'ancienne version du fichier.
+  const sigs = (r && r.sigs) || {};
+  if (fileSigs) for (const p of Object.keys(sigs)) {
+    if (fileSigs.get(p) !== sigs[p] && bufCache.has(p)) {
+      cacheDelete(p);
+      uiLog('cache audio invalide (fichier modifie) : ' + p);
+    }
+  }
+  fileSigs = new Map(Object.entries(sigs));
+  const miss = new Set((r && r.missing) || []);
   const next = new Set(cfg.sounds.filter((s) => miss.has(s.path)).map((s) => s.id));
   const changed = next.size !== missing.size || [...next].some((i) => !missing.has(i));
   missing = next;
@@ -1367,7 +1455,8 @@ async function init() {
   $('#ytBtn').addEventListener('click', youtubeModal);
   $('#recBtn').addEventListener('click', () => recorderModal().catch((e) => toast('Enregistreur : ' + e.message, 'warn')));
   $('#addCat').addEventListener('click', newCategory);
-  $('#openSettings').addEventListener('click', async () => { await refreshDevices(false); settingsModal(); });
+  // refreshDevices en echec ne doit pas empecher l'ouverture du panneau.
+  $('#openSettings').addEventListener('click', async () => { try { await refreshDevices(false); } catch (e) { logErr('refreshDevices', e); } settingsModal(); });
   $('#stopBtn').addEventListener('click', () => stopAll(false));
 
   // menu application (F11)
@@ -1422,6 +1511,12 @@ async function init() {
     checkTimer = setTimeout(() => checkMissing().catch((e) => logErr('checkMissing', e)), 400);
   });
   $('#cableBannerBtn').addEventListener('click', () => showCableScreen());
+  $('#storageBannerBtn').addEventListener('click', async () => {
+    try {
+      const d = await window.sf.pickDir();
+      if (d) { cfg.settings.storageDir = d; save(); updateStorageUi(); toast('Dossier de sons : ' + d); }
+    } catch (e) { logErr('pickDir', e); }
+  });
   // devicechange peut spammer (casque, bluetooth...) : debounce puis re-resolution des peripheriques
   let devTimer = null;
   navigator.mediaDevices.addEventListener('devicechange', () => {
@@ -1458,10 +1553,18 @@ async function init() {
       const micCandidate = (s.micId && s.micId !== 'default') ||
         inpNow.some((d) => d.deviceId !== 'default' && !VIRTUAL_RE.test(d.label || ''));
       const needMic = (s.micMix || s.autoSwitchMic) && !audio.micStream && inpChanged && micCandidate;
-      if (s.cableId !== prev.cable || s.monId !== prev.mon || s.micId !== prev.mic || needMic) await applyAudio().catch((e) => logErr('applyAudio', e));
+      // Un seul rebuild par evenement : le cable qui apparait change souvent
+      // cableId/micId dans le MEME devicechange — deux applyAudio()
+      // serialises coupaient l'audio deux fois et pouvaient faire echouer
+      // un second getUserMedia transitoire (toast micro parasite).
+      let rebuilt = false;
+      if (s.cableId !== prev.cable || s.monId !== prev.mon || s.micId !== prev.mic || needMic) {
+        await applyAudio().catch((e) => logErr('applyAudio', e));
+        rebuilt = true;
+      }
       // Cable branche/installé a chaud : diffusion + bascule micro sans relancer l'app
       if (!hadCable && cablePresent()) {
-        await applyAudio().catch((e) => logErr('applyAudio', e));
+        if (!rebuilt) await applyAudio().catch((e) => logErr('applyAudio', e));
         runAutoSetup();
       }
       } catch (e) { logErr('devicechange', e); }
@@ -1510,10 +1613,14 @@ async function init() {
   resolveDevices();
   save();
   checkMissing().catch((e) => logErr('checkMissing', e));
-  const ok = await applyAudio();
+  // Sans catch : une rejection ici avortait init() et laissait les
+  // raccourcis globaux (STOP + touches) jamais enregistres — panne
+  // silencieuse jusqu'au redemarrage.
+  const ok = await applyAudio().catch((e) => { logErr('applyAudio init', e); return false; });
   applyShortcuts().catch((e) => logErr('applyShortcuts', e));
   updateCableUi();
   showCableScreen();
+  updateStorageUi();
   if (cablePresent()) runAutoSetup();
   window.sf.onMicWatchOff && window.sf.onMicWatchOff(() => {
     toast('Entrée micro modifiée pendant la session — surveillance auto suspendue (réglages → surveillance micro).', 'warn');

@@ -38,7 +38,7 @@ function execFileTracked(file, args, opts = {}) {
     });
   });
 }
-const { AUDIO_EXT, VIRTUAL_RE: VIRTUAL_RE_MAIN, parseEndpoints, parseGet, findCableCapture, chooseRestoreIds, expandPathsAsync, writeRecording } = require('./lib/audio-utils');
+const { AUDIO_EXT, VIRTUAL_RE: VIRTUAL_RE_MAIN, parseEndpoints, parseGet, findCableCapture, chooseRestoreIds, expandPathsAsync, writeRecording, isUsablePath } = require('./lib/audio-utils');
 let win = null;
 
 // ---------- journal d'erreurs : SoundFart-data\soundfart.log ----------
@@ -120,16 +120,65 @@ if (!isPrimary) {
   });
 }
 
-// Mode portable complet : dans l'exe portable, config/outils/logs vivent dans
-// « SoundFart-data » a cote de l'exe (PORTABLE_EXECUTABLE_DIR est pose par
-// electron-builder). Repli silencieux sur %APPDATA% si non accessible.
-if (process.env.PORTABLE_EXECUTABLE_DIR && !process.argv.includes('--test-profile')) {
-  const dataDir = path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'SoundFart-data');
+// Donnees utilisateur : %APPDATA%\SoundFart (defaut Electron) — reglages et
+// outils standard Windows, plus lies au dossier de l'exe portable.
+// Migration unique depuis l'ancien SoundFart-data : config, marqueur micro,
+// outils et fichiers crees sont copies une fois, les chemins de la config
+// reecrits vers le nouveau dossier. SoundFart-data devient obsolete.
+const portableDataDir = process.env.PORTABLE_EXECUTABLE_DIR && !process.argv.includes('--test-profile')
+  ? path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'SoundFart-data') : null;
+if (portableDataDir) {
+  const appData = app.getPath('userData');
   try {
-    fs.mkdirSync(dataDir, { recursive: true });
-    fs.accessSync(dataDir, fs.constants.W_OK);
-    app.setPath('userData', dataDir);
-  } catch {}
+    const oldCfg = path.join(portableDataDir, 'config.json');
+    // Marqueur de migration : SoundFart-data est la source de verite UNE
+    // fois — les configs %APPDATA% anterieures ne sont que des restes de
+    // sessions dev (npm start). Sans marqueur, une config AppData existante
+    // (meme perimee) bloquait la migration et l'app tournait sur un profil
+    // etrangere. Le marqueur empeche toute re-migration ulterieure.
+    const migrated = path.join(appData, '.migrated-from-portable');
+    if (portableDataDir !== appData && fs.existsSync(oldCfg) && !fs.existsSync(migrated)) {
+      fs.mkdirSync(appData, { recursive: true });
+      const ts = new Date().toISOString().replace(/[:.]/g, '-');
+      // Backup des eventuelles configs AppData precedentes (restes dev) :
+      // jamais d'ecrasement silencieux de donnees utilisateur.
+      for (const f of ['config.json', 'config.json.bak']) {
+        try {
+          const p = path.join(appData, f);
+          if (fs.existsSync(p)) fs.renameSync(p, p + '.pre-migration-' + ts);
+        } catch {}
+      }
+      // JSON echappe les backslashes (\\) : on remplace la forme echappee
+      // PUIS la forme brute pour couvrir les deux ecritures possibles.
+      const fromJ = portableDataDir.replace(/\\/g, '\\\\');
+      const toJ = appData.replace(/\\/g, '\\\\');
+      // JSON peut contenir des chemins en '/' (valide, isUsablePath
+      // l'accepte) : sans cette forme, un config etranger/editable-main
+      // garderait des pointeurs vers l'ancien dossier portable.
+      const fromF = portableDataDir.replace(/\\/g, '/');
+      const toF = appData.replace(/\\/g, '/');
+      const rewrite = (f) => {
+        const t = fs.readFileSync(path.join(portableDataDir, f), 'utf-8');
+        fs.writeFileSync(path.join(appData, f),
+          t.split(fromJ).join(toJ).split(portableDataDir).join(appData)
+           .split(fromF).join(toF));
+      };
+      for (const f of ['config.json', 'config.json.bak', 'audio-restore.json']) {
+        try { if (fs.existsSync(path.join(portableDataDir, f))) rewrite(f); } catch {}
+      }
+      // Fichiers crees par l'app (sons recopies, imports, enregistrements,
+      // extraits, outils, seeds) : copies pour ne casser aucune reference
+      // de la config migree. Une copie locale, une seule fois.
+      for (const d of ['tools', 'imports', 'recordings', 'cuts', 'default-sounds']) {
+        try {
+          const src = path.join(portableDataDir, d);
+          if (fs.existsSync(src)) fs.cpSync(src, path.join(appData, d), { recursive: true, force: true });
+        } catch (e) { log('[migration] copie ' + d + ' : ' + e.message, 'warn'); }
+      }
+      try { fs.writeFileSync(migrated, new Date().toISOString()); } catch {}
+      log('[migration] donnees reprises de SoundFart-data vers ' + appData);
+    }
+  } catch (e) { log('[migration] ' + e.message, 'warn'); }
 }
 
 // Mode test : --test-profile isole config/outils/logs dans %TEMP%\SoundFart-test (config reelle intacte)
@@ -360,7 +409,9 @@ H('files:expand', async (_e, paths) => {
 });
 
 H('files:pick', async () => {
-  const r = await dialog.showOpenDialog(win, {
+  // win detruit entre le dispatch IPC et l'ouverture : showOpenDialog
+  // jetterait — undefined = dialogue sans parent, toujours fonctionnel.
+  const r = await dialog.showOpenDialog(win && !win.isDestroyed() ? win : undefined, {
     title: 'Ajouter des sons',
     properties: ['openFile', 'multiSelections'],
     filters: [{ name: 'Audio', extensions: AUDIO_EXT.map((e) => e.slice(1)) }],
@@ -369,11 +420,76 @@ H('files:pick', async () => {
 });
 
 H('files:pickDir', async () => {
-  const r = await dialog.showOpenDialog(win, {
+  const r = await dialog.showOpenDialog(win && !win.isDestroyed() ? win : undefined, {
     title: 'Choisir le dossier de stockage',
     properties: ['openDirectory', 'createDirectory'],
   });
   return r.canceled ? null : r.filePaths[0];
+});
+
+// Import avec copie : les sons ajoutes sont COPIES dans <storageRoot>/sons/
+// (dossier choisi par l'utilisateur) — la bibliotheque devient autonome et ne
+// depend plus des emplacements d'origine. Dedoublonnage nom+taille+echantillons :
+// un fichier deja present est reutilise, jamais recopie. Copie .part+rename.
+// Sequence pour les .part de files:import : deux imports concurrents sur
+// des sources differentes mais le meme target calculeraient le meme
+// « target.part » -> copyFile entrelace = fichier mixte renomme en
+// silence. Nom unique par process+sequence (pattern writeRecording).
+let importPartSeq = 0;
+const sameFileQuick = async (a, b) => {
+  // Compare taille implicite faite par l'appelant + 4 KiB en tete et en queue.
+  const rd = async (p, off, len) => {
+    const fd = await fs.promises.open(p, 'r');
+    try {
+      const buf = Buffer.alloc(len);
+      const { bytesRead } = await fd.read(buf, 0, len, off);
+      return buf.subarray(0, bytesRead);
+    } finally { await fd.close(); }
+  };
+  const sa = await fs.promises.stat(a), sb = await fs.promises.stat(b);
+  if (sa.size !== sb.size) return false;
+  const n = Math.min(4096, sa.size);
+  const [ha, hb, ta, tb] = await Promise.all([rd(a, 0, n), rd(b, 0, n), rd(a, Math.max(0, sa.size - n), n), rd(b, Math.max(0, sb.size - n), n)]);
+  return ha.equals(hb) && ta.equals(tb);
+};
+
+H('files:import', async (_e, paths, dir) => {
+  if (!Array.isArray(paths) || !paths.length || paths.length > 2000 || paths.some((p) => typeof p !== 'string')) throw new Error('chemins invalides');
+  const root = storageRoot(dir);
+  if (!isUsablePath(root)) throw new Error('dossier de stockage invalide');
+  const dest = path.join(root, 'sons');
+  await fs.promises.mkdir(dest, { recursive: true });
+  const out = [];
+  for (const src of paths) {
+    const ext = path.extname(src).toLowerCase();
+    if (!AUDIO_EXT.includes(ext)) continue;
+    const st = await fs.promises.stat(src).catch(() => null);
+    if (!st || !st.isFile()) { out.push({ path: src, label: '', error: 'illisible' }); continue; }
+    const base = path.basename(src);
+    const stem = base.slice(0, base.length - ext.length) || base;
+    let reused = null, target = null;
+    for (let i = 0; i < 1000 && !target && !reused; i++) {
+      const cand = path.join(dest, i === 0 ? base : `${stem} (${i})${ext}`);
+      const cst = await fs.promises.stat(cand).catch(() => null);
+      if (!cst) target = cand;
+      else if (cst.size === st.size && await sameFileQuick(src, cand).catch(() => false)) reused = cand;
+    }
+    if (reused) { out.push({ path: reused, label: stem }); continue; }
+    if (!target) { out.push({ path: src, label: '', error: 'nom introuvable' }); continue; }
+    const tmp = `${target}.${process.pid}.${importPartSeq++}.part`;
+    try {
+      await fs.promises.copyFile(src, tmp);
+      const cst = await fs.promises.stat(tmp);
+      if (cst.size !== st.size) throw new Error('copie incomplète');
+      await fs.promises.rename(tmp, target);
+    } catch (e2) {
+      try { await fs.promises.unlink(tmp); } catch {}
+      out.push({ path: src, label: '', error: e2.message });
+      continue;
+    }
+    out.push({ path: target, label: stem });
+  }
+  return out;
 });
 
 H('file:read', async (_e, p) => {
@@ -415,16 +531,23 @@ H('file:check', async (_e, paths) => {
   // Async + par lots : jusqu'a 5000 existsSync synchrones sur le thread main
   // pouvaient geler l'app plusieurs secondes sur un volume reseau.
   const missing = [];
+  // sigs : 'size:mtimeMs' par chemin present — le renderer en deduit les
+  // fichiers REECRITS a chemin constant (re-export, remplacement manuel)
+  // pour invalider le buffer decode en cache (sinon vieille version jouee
+  // silencieusement jusqu'a eviction LRU).
+  const sigs = {};
   const BATCH = 200;
   for (let i = 0; i < paths.length; i += BATCH) {
     const chunk = paths.slice(i, i + BATCH);
     const ok = await Promise.all(chunk.map(async (p) => {
-      if (typeof p !== 'string') return false;
-      try { await fs.promises.access(p); return true; } catch { return false; }
+      if (typeof p !== 'string') return null;
+      try { const st = await fs.promises.stat(p); return st.size + ':' + st.mtimeMs; } catch { return null; }
     }));
-    chunk.forEach((p, j) => { if (typeof p !== 'string' || !ok[j]) missing.push(p); });
+    // Les non-chaines sont normalisees en String : le retour doit etre un
+    // tableau de chaines (le renderer fait des tests d'appartenance).
+    chunk.forEach((p, j) => { if (typeof p !== 'string' || !ok[j]) missing.push(String(p)); else sigs[String(p)] = ok[j]; });
   }
-  return missing;
+  return { missing, sigs };
 });
 H('file:reveal', async (_e, p) => {
   if (typeof p !== 'string' || !path.isAbsolute(p)) throw new Error('chemin invalide');
@@ -475,7 +598,12 @@ H('rec:save', async (_e, opts) => {
   if (data == null) throw new Error('données audio manquantes');
   const rdir = path.join(storageRoot(dir), 'recordings');
   await fs.promises.mkdir(rdir, { recursive: true }); // async : UNC ne gele pas le main (SF-REL-0602)
-  const len = data instanceof ArrayBuffer ? data.byteLength : (data.byteLength != null ? data.byteLength : (data.length || 0));
+  // string : data.length = unites UTF-16, Buffer.from encode en UTF-8
+  // (jusqu'a ~3x pour le CJK) — un texte de ~200 M caracteres passait le
+  // cap 512 Mo puis allouait ~600 Mo. byteLength mesure le vrai cout.
+  const len = data instanceof ArrayBuffer ? data.byteLength
+    : (data.byteLength != null ? data.byteLength
+    : (typeof data === 'string' ? Buffer.byteLength(data, 'utf8') : (data.length || 0)));
   if (len > 512 * 1024 * 1024) throw new Error('enregistrement trop volumineux (> 512 Mo)');
   const buf = data instanceof ArrayBuffer ? Buffer.from(new Uint8Array(data)) : Buffer.from(data);
   // Nom+ecriture atomique delegues a lib/audio-utils.writeRecording —
@@ -998,7 +1126,10 @@ let micWatchSuspended = false;
 let micSwitching = false; // autoSetup/restore en cours : le watchdog ne doit pas voir la transition comme un choix externe
 
 async function watchdogMic() {
-  if (watchdogBusy || micWatchSuspended || micSwitching) return;
+  // quitting : un tick dans la fenetre will-quit -> process.exit pouvait
+  // lancer ensureAudioTool (compile csc 60 s) et spawn des enfants APRES
+  // la boucle de kill du will-quit -> csc.exe/AudioEndpoint orphelins.
+  if (quitting || watchdogBusy || micWatchSuspended || micSwitching) return;
   watchdogBusy = true;
   try {
     if (!fs.existsSync(restoreFile()) || !fs.existsSync(configFile())) return;
@@ -1076,13 +1207,17 @@ function createWindow() {
     // forger des lignes de log au format timestamp/niveau.
     if ((d.level === 3 || d.level === 'error') && uiLogAllowed('page')) log(`[page] ${String(d.message).replace(/[\r\n\x00-\x1f]/g, ' ').slice(0, 800)} (${d.sourceId}:${d.line})`, 'error');
   });
-  let rendererReloads = 0; // anti-boucle : 1 reload max par session apres crash renderer
+  // Anti-boucle : 1 reload par fenetre de 5 min (avant : 1 reload par
+  // SESSION — un crash des mois apres le premier declenchait app.quit()
+  // au lieu d'un simple reload). Second crash dans la fenetre = zombie.
+  let lastRendererReload = 0;
+  const RELOAD_WINDOW_MS = 5 * 60 * 1000;
   win.webContents.on('render-process-gone', (_e, details) => {
     log('[crash] ' + JSON.stringify(details), 'error');
     // Un renderer mort = fenetre morte : on tente UNE recharge (config/audio
     // repartent proprement) plutot que de laisser une app inutilisable.
-    if (rendererReloads === 0 && win && !win.isDestroyed()) {
-      rendererReloads++;
+    if (Date.now() - lastRendererReload > RELOAD_WINDOW_MS && win && !win.isDestroyed()) {
+      lastRendererReload = Date.now();
       setTimeout(() => { if (win && !win.isDestroyed()) win.webContents.reload(); }, 500);
     } else if (win && !win.isDestroyed()) {
       // Second crash : la fenetre est morte sans diagnostic — on le dit
@@ -1092,6 +1227,11 @@ function createWindow() {
       app.quit();
     }
   });
+  // Renderer gele (boucle infinie JS, decodeAudioData lourd, WASM…) : sans
+  // ce handler l'app reste figee sans aucun diagnostic. Log seul — pas de
+  // kill automatique (un reload sur un simple long calcul serait pire).
+  win.webContents.on('unresponsive', () => log('[renderer] unresponsive (interface gelee)', 'warn'));
+  win.webContents.on('responsive', () => log('[renderer] responsive a nouveau', 'info'));
   win.webContents.on('did-fail-load', (_e, code, desc, url) => {
     log(`[load] ${code} ${desc} ${url}`, 'error');
     dialog.showErrorBox('SoundFart', `Impossible de charger l'interface (${desc}).\n\nVerifie que le dossier « src » (index.html, style.css, app.js) est bien a cote de main.js.`);
