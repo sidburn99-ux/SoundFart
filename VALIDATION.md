@@ -16,10 +16,10 @@
 ## A. Lecture et moteur audio
 
 - [x] Jouer plusieurs sons + bouger le master → volume suit, master 0 % = silence total. **[U] 16/11** : master 50/100 %, master 0 silence, pas de distorsion à 100 %.
-- [ ] Jouer 5 sons en superposition → pas de clic, pas de coupure, volume cohérent.
-- [ ] STOP global (raccourci) pendant 3 lectures → silence immédiat, cartes « playing » retirées.
-- [ ] Rejouer le même son 10× rapidement (clics rapides) → pas de voix zombie, pas de crash.
-- [ ] Supprimer un son de la bibliothèque pendant sa lecture → pas d'erreur, voix terminée proprement. **[A] 15/11** : `play()` + `removeSound` → voix arrêtée, aucune erreur.
+- [x] Jouer 5 sons en superposition → pas de clic, pas de coupure, volume cohérent. **[A] 17/11** : 5 `play()` → 5 voix actives, `stopAll` propre.
+- [x] STOP global (raccourci) pendant 3 lectures → silence immédiat, cartes « playing » retirées. **[A] 17/11** : 3 voix → `stopAll(true)` → 0 voix.
+- [x] Rejouer le même son 10× rapidement (clics rapides) → pas de voix zombie, pas de crash. **[A] 17/11** : 10 `play()` à 60 ms → 10 ok / 0 err, voix bornées.
+- [x] Supprimer un son de la bibliothèque pendant sa lecture → pas d'erreur, voix terminée proprement. **[A] 17/11** : `play()` + `removeSound` → voix arrêtée, aucune erreur ; revérifié : voix 1→0 à la suppression, son retiré de `cfg`.
 - [x] Importer des fichiers audio (MP3/WAV, noms accents/espaces) → apparaissent en bibliothèque. **[U] 16/11**.
 - [ ] Importer un WAV 5 min puis un MP3 3 min → lecture OK, heap log stable (`heap=` dans soundfart.log). **[A] 15/11 partiel** : WAV 5 min décodé + joué, heap stable ; MP3 3 min non testé (même chemin).
 - [x] Fichier > 150 Mo → refus propre avec message, pas de crash. **[A] 15/11** : WAV 172,8 Mo refusé proprement. **[U] 16/11** : message « fichier trop long » affiché (toast corrigé ensuite pour les noms à emojis).
@@ -120,7 +120,7 @@
 - [x] Réimporter le même fichier → réutilise la copie existante (nom+taille+échantillons), **pas de doublon** disque. **[A] 17/11 runtime CDP** : 2ᵉ import → 31 sons, 1 seul fichier dans `sons/`.
 - [x] Importer sans dossier choisi → blocage + proposition de choisir (bannière/re-modale), pas d'écriture dans AppData. **[A] 17/11 runtime CDP** : `confirmBox` « Choisir un dossier » affichée, « Annuler » annule proprement (aucun modal résiduel, aucun fichier créé).
 - [x] YouTube → `imports/`, enregistreur → `recordings/`, extrait MP3 → `cuts/` sous le dossier choisi. **[A] 17/11** : les trois dossiers respectent `storageDir` — `sf-dest\imports\` (YouTube), `sf-dest\recordings\` (prises), `sf-dest\cuts\` (extrait MP3).
-- [ ] Retirer un son de la bibliothèque → le fichier copié **reste** dans `sons/`.
+- [x] Retirer un son de la bibliothèque → le fichier copié **reste** dans `sons/`. **[A] 17/11** : suppression d'un son `recordings\*.webm` → retiré de `cfg`, `readFile` confirme le fichier toujours présent.
 - [ ] Paramètres → « Choisir… »/« Réinitialiser » le dossier → **persisté immédiatement** (visible après restart), bannière mise à jour.
 - [ ] Export/import `config.json` → bannière storageDir reflète la config importée ; « Annuler » l'import depuis les réglages **rouvre le panneau**.
 - [ ] Champ LUFS/durée max invalides dans la config importée → `normalizeCfg` retombe sur les défauts (pas de NaN).
