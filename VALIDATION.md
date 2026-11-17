@@ -65,7 +65,7 @@
 - [ ] Relancer SoundFart < 500 ms après le kill → pas de micro coincé sur CABLE (test TOCTOU).
 - [ ] Changer l'entrée micro manuellement pendant la bascule → watchdog suspend la surveillance (log « surveillance suspendue »), pas de re-bascule forcée.
 - [x] **Voix indépendante du master soundboard** : micro → limiteur direct, master 0 % + parole = voix OK sur Discord. **[U] 16/11** (décision produit explicite).
-- [ ] **Micro coincé sur CABLE Output sans marqueur** (état historique 16/11 soir) → modale « Réparer » au lancement + bouton « Restaurer mon micro » fonctionnel (`force`). **[A] 17/11** : code en place — **reproduire l'état réel non fait**.
+- [x] **Micro coincé sur CABLE Output sans marqueur** (état historique 16/11 soir) → modale « Réparer » au lancement + bouton « Restaurer mon micro » fonctionnel (`force`). **[A→U] 17/11 — reproduit et réparé** : `AudioEndpoint set capture` forcé sur CABLE + marqueur absent → au lancement logs `[mic] entrees deja sur le cable… sans marqueur — proposition de reparation` + modale « Entrée micro coincée » → clic « Réparer » → `[mic-restore] force` → `get capture` = **G930** (console+multi), marqueur absent. Toute la boucle est prouvée.
 - [ ] **Qualité voix stéréo** : `voice-gate` gain synchronisé sur les 2 canaux (commit `[AUDIO] 28232d3`) → pas de décalage/click aux transitions du gate, voix toujours centrée. **À valider à l'oreille — non testé.**
 - [x] Le micro physique arrive bien à Discord. **[U] 16/11** (validé en appel réel).
 
@@ -133,7 +133,7 @@
 - [ ] Toast « micro muet » en rafale BT → un seul toast / 10 s.
 - [ ] `devicechange` avec cable + deviceId changés ensemble → un seul `applyAudio` (log `[devicechange]` unique).
 - [ ] `init()` avec `applyAudio` en échec → raccourcis quand même enregistrés (log `[shortcuts]`).
-- [ ] « Restaurer mon micro » avec marqueur absent → no-op propre ; avec état coincé → `force` rebasculé vers non-virtuel.
+- [x] « Restaurer mon micro » avec marqueur absent → no-op propre ; avec état coincé → `force` rebasculé vers non-virtuel. **[A] 17/11** : état coincé reproduit → `force` a rebasculé sur G930 (vérifié `get capture`). Marqueur absent respecté (pas de fichier recréé).
 
 ## Crash renderer (-1/143) — protocole forensique
 
