@@ -47,7 +47,20 @@ function execFileTracked(file, args, opts = {}) {
 const { AUDIO_EXT, VIRTUAL_RE: VIRTUAL_RE_MAIN, parseEndpoints, parseGet, findCableCapture, chooseRestoreIds, expandPathsAsync, writeRecording, isUsablePath } = require('./lib/audio-utils');
 // i18n partage main/renderer : cles = texte FR source, fallback francais.
 const SFI18n = require('./lib/i18n');
+// Collecte opt-in des rapports d'erreurs (erreurs/crashs uniquement,
+// jamais de telemetrie comportementale). Voir lib/crash-report.js.
+const { createCrashReporter } = require('./lib/crash-report');
+// Endpoint du service de collecte (worker Cloudflare, voir service/).
+// A RENSEIGNER au deploiement : chaine vide = les rapports restent dans
+// la file locale userData/reports/, aucun envoi, aucune erreur.
+// Surcharge possible en dev : SOUNDFART_REPORT_URL=https://... electron .
+const REPORT_ENDPOINT = process.env.SOUNDFART_REPORT_URL || '';
 let win = null;
+// Declare tot : l'instance est creee juste apres le setPath('userData')
+// du mode test, avant les handlers IPC (bloc « rapports d'erreurs » plus bas).
+let errReporter = null;
+let consentOverride; // 'yes' | 'no' | undefined (undefined = relire config.json)
+const consentCache = { mtimeMs: -1, value: undefined, storageDir: '' };
 
 // Langue de l'UI cote main (menus natifs, boites de dialogue) : la config
 // vit dans le renderer — settings.lang est relu depuis config.json ici,
@@ -164,6 +177,26 @@ if (portableDataDir) {
 if (process.argv.includes('--test-profile')) {
   app.setPath('userData', path.join(os.tmpdir(), 'SoundFart-test'));
 }
+
+// Collecteur de rapports d'erreurs : instancie APRES le setPath userData
+// ci-dessus pour que la file parte dans le bon profil. getConsent relit
+// config.json (cache mtime) a chaque evenement — un changement de choix
+// est effectif sans redemarrage.
+errReporter = createCrashReporter({
+  dir: path.join(app.getPath('userData'), 'reports'),
+  endpoint: REPORT_ENDPOINT,
+  getConsent: crashConsent,
+  getMeta: () => {
+    try {
+      return {
+        version: app.getVersion(),
+        os: { platform: os.platform(), release: os.release(), version: os.version() },
+      };
+    } catch { return { version: '?', os: {} }; }
+  },
+  getSanitizeCtx: crashSanitizeCtx,
+  log: (m, lvl) => log(m, lvl || 'warn'),
+});
 
 // Forensique crash renderer (-1/143, bug connu non resolu) : les minidumps
 // Crashpad dans userData/Crashpad permettent une analyse post-mortem.
@@ -318,6 +351,79 @@ H('desktop:source', async () => {
 H('app:version', () => app.getVersion());
 H('app:dataDir', () => app.getPath('userData'));
 
+// ---------- rapports d'erreurs opt-in (crashs/erreurs uniquement) ----------
+// Consentement : settings.crashReport dans config.json ('yes'/'no'/absent).
+// Le choix peut etre change a chaud par le renderer (report:consent) —
+// l'override prime sur le fichier le temps que config:save rattrape.
+// Regle d'or : consentement != 'yes' => AUCUN envoi, file purgee.
+// (errReporter / consentOverride / consentCache declares pres de win.)
+
+function crashConsent() {
+  if (consentOverride) return consentOverride;
+  try {
+    const f = configFile();
+    const st = fs.statSync(f);
+    if (st.mtimeMs !== consentCache.mtimeMs) {
+      // Borne comme config:load : un fichier geant ne doit pas geler un
+      // uncaughtException en pleine collecte.
+      if (st.size > 16 * 1024 * 1024) return consentCache.value === undefined ? null : consentCache.value;
+      const cfg = JSON.parse(fs.readFileSync(f, 'utf-8'));
+      const v = cfg && cfg.settings && cfg.settings.crashReport;
+      const sd = cfg && cfg.settings && cfg.settings.storageDir;
+      consentCache.mtimeMs = st.mtimeMs;
+      consentCache.value = (v === 'yes' || v === 'no') ? v : null;
+      consentCache.storageDir = (typeof sd === 'string' && sd) ? sd : '';
+    }
+    return consentCache.value === undefined ? null : consentCache.value;
+  } catch {
+    return consentCache.value === undefined ? null : consentCache.value;
+  }
+}
+
+function crashSanitizeCtx() {
+  const paths = [
+    { path: app.getPath('userData'), placeholder: '<userData>' },
+    { path: os.homedir(), placeholder: '<home>' },
+    { path: __dirname, placeholder: '<app>' },
+  ];
+  if (consentCache.storageDir) paths.push({ path: consentCache.storageDir, placeholder: '<storageDir>' });
+  let userName = '';
+  try { userName = os.userInfo().username || ''; } catch {}
+  return { paths, userName };
+}
+
+function crashReport(evt) {
+  try { if (errReporter) errReporter.report(evt); } catch {}
+}
+
+// createCrashReporter est instancie juste apres le setPath('userData') du
+// mode test (bloc --test-profile) pour couvrir aussi les crashs precoces.
+// Ici on ne fait que declarer les handlers IPC.
+ipcMain.on('report:error', (e, r) => {
+  if (!fromApp(e) || !errReporter || !r || typeof r !== 'object' || Array.isArray(r)) return;
+  // Debit : un renderer en boucle d'erreurs ne doit pas noyer la file.
+  const now = Date.now();
+  if (now - rendererErrWindow > 60000) { rendererErrWindow = now; rendererErrCount = 0; }
+  if (++rendererErrCount > 30) return;
+  errReporter.report({
+    module: 'renderer',
+    type: typeof r.type === 'string' ? r.type.slice(0, 60) : 'error',
+    message: typeof r.message === 'string' ? r.message.slice(0, 2000) : String(r.message == null ? '' : r.message).slice(0, 2000),
+    stack: typeof r.stack === 'string' ? r.stack.slice(0, 8000) : '',
+  });
+});
+let rendererErrWindow = 0, rendererErrCount = 0;
+
+ipcMain.on('report:consent', (e, v) => {
+  if (!fromApp(e)) return;
+  // 'yes' -> collecte active immediatement ; TOUTE autre valeur (no, '' =
+  // « plus tard ») bloque la collecte pour la session et purge la file —
+  // la config sauvegarde par le renderer tranchera au prochain demarrage.
+  consentOverride = (v === 'yes') ? 'yes' : 'no';
+  if (consentOverride !== 'yes') { if (errReporter) errReporter.purge(); }
+  else if (errReporter) errReporter.flush().catch(() => {});
+});
+
 // Lit config.json.bak avec la meme borne que config.json — utilise aux
 // deux endroits de repli (config absente et config corrompue).
 function readBakConfig(f) {
@@ -381,6 +487,15 @@ H('config:save', (_e, cfg) => {
   // du prochain rendu (qui de toute facon arrive juste apres).
   refreshUiLang();
   try { Menu.setApplicationMenu(buildMenu()); } catch {}
+  // Consentement rapports d'erreurs : la config vient d'etre persistee,
+  // elle fait foi — on leve l'override IPC et on purge la file locale si
+  // le choix n'est plus 'yes' (revocation = aucun envoi possible).
+  try {
+    consentOverride = undefined;
+    consentCache.mtimeMs = -1; // force la relecture du fichier
+    const v = cfg.settings && cfg.settings.crashReport;
+    if (errReporter && v !== 'yes') errReporter.purge();
+  } catch {}
   return true;
 });
 
@@ -1185,6 +1300,12 @@ function createWindow() {
   const RELOAD_WINDOW_MS = 5 * 60 * 1000;
   win.webContents.on('render-process-gone', (_e, details) => {
     log('[crash] ' + JSON.stringify(details), 'error');
+    crashReport({
+      module: 'renderer', type: 'render-process-gone',
+      message: 'reason=' + (details && details.reason),
+      exitCode: details && Number.isFinite(details.exitCode) ? details.exitCode : null,
+      extra: { reason: details && details.reason },
+    });
     // Un renderer mort = fenetre morte : on tente UNE recharge (config/audio
     // repartent proprement) plutot que de laisser une app inutilisable.
     if (Date.now() - lastRendererReload > RELOAD_WINDOW_MS && win && !win.isDestroyed()) {
@@ -1201,10 +1322,14 @@ function createWindow() {
   // Renderer gele (boucle infinie JS, decodeAudioData lourd, WASM…) : sans
   // ce handler l'app reste figee sans aucun diagnostic. Log seul — pas de
   // kill automatique (un reload sur un simple long calcul serait pire).
-  win.webContents.on('unresponsive', () => log('[renderer] unresponsive (interface gelee)', 'warn'));
+  win.webContents.on('unresponsive', () => {
+    log('[renderer] unresponsive (interface gelee)', 'warn');
+    crashReport({ module: 'renderer', type: 'unresponsive', message: 'interface gelee' });
+  });
   win.webContents.on('responsive', () => log('[renderer] responsive a nouveau', 'info'));
   win.webContents.on('did-fail-load', (_e, code, desc, url) => {
     log(`[load] ${code} ${desc} ${url}`, 'error');
+    crashReport({ module: 'renderer', type: 'did-fail-load', message: code + ' ' + desc, extra: { url } });
     dialog.showErrorBox('SoundFart', mt('Impossible de charger l\'interface ({desc}).\n\nVerifie que le dossier « src » (index.html, style.css, app.js) est bien a cote de main.js.', { desc }));
   });
 
@@ -1279,6 +1404,11 @@ app.whenReady().then(() => {
     }).catch((e) => { log('[displaymedia] getSources: ' + e.message, 'warn'); callback({}); });
   });
   createWindow();
+  // Rapports d'erreurs : envoi differe des rapports en attente (file
+  // userData/reports/) + balayage periodique. Jamais bloquant, jamais
+  // sans consentement 'yes' (le collecteur purge sinon).
+  try { errReporter && errReporter.flush(); } catch {}
+  setInterval(() => { try { errReporter && errReporter.flush(); } catch {} }, 15 * 60 * 1000).unref();
   // Sleep/wake : les peripheriques audio peuvent etre re-enumeres
   // differemment au reveil sans devicechange fiable ; on journalise et on
   // demande au renderer de re-resoudre ses peripheriques. Limite connue :
@@ -1309,6 +1439,14 @@ app.on('child-process-gone', (_e, details) => {
       type: d.type, name: d.name, reason: d.reason, exitCode: d.exitCode,
       serviceName: d.serviceName, serviceFilePath: d.serviceFilePath,
     }), 'warn');
+    // serviceFilePath exclu : chemin local d'un binaire systeme, sans
+    // valeur de diagnostic et potentiellement identifiant.
+    crashReport({
+      module: 'child', type: 'child-process-gone',
+      message: 'type=' + d.type + ' name=' + d.name + ' reason=' + d.reason,
+      exitCode: Number.isFinite(d.exitCode) ? d.exitCode : null,
+      extra: { type: d.type, name: d.name, reason: d.reason, serviceName: d.serviceName },
+    });
   } catch {}
 });
 
@@ -1316,6 +1454,7 @@ app.on('window-all-closed', () => app.quit());
 // Filet de securite : une exception fatale ne doit pas laisser le micro coince sur le cable.
 process.on('uncaughtException', (e) => {
   log('[fatal] uncaughtException: ' + (e && e.stack || e), 'error');
+  crashReport({ module: 'main', type: 'uncaughtException', message: e && e.message, stack: e && e.stack });
   try {
     const t = audioToolPath();
     if (fs.existsSync(t) && fs.existsSync(restoreFile())) restoreMicNow(t);
@@ -1325,10 +1464,16 @@ process.on('uncaughtException', (e) => {
   // quitte proprement au lieu de laisser tourner un main blesse.
   setTimeout(() => { try { app.quit(); } catch {} }, 500);
 });
-process.on('unhandledRejection', (e) => log('[fatal] unhandledRejection: ' + (e && e.stack || e), 'error'));
+process.on('unhandledRejection', (e) => {
+  log('[fatal] unhandledRejection: ' + (e && e.stack || e), 'error');
+  crashReport({ module: 'main', type: 'unhandledRejection', message: e && e.message, stack: e && e.stack });
+});
 app.on('will-quit', () => {
   quitting = true; // barriere : ni autoSetup ni audio:restore ne doivent plus toucher aux peripheriques
   if (!isPrimary) return; // ne jamais restaurer le micro depuis une 2e instance
+  // Derniere chance d'envoyer les rapports en attente — fire-and-forget :
+  // le process peut mourir avant la reponse, la file reste de toute facon.
+  try { errReporter && errReporter.flush(); } catch {}
   globalShortcut.unregisterAll();
   // Tue les enfants encore vivants (yt-dlp/ffmpeg) : taskkill /T emporte
   // l'arbre entier — p.kill() seul laisserait le ffmpeg petit-enfant tourner.

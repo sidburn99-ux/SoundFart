@@ -34,6 +34,11 @@ contextBridge.exposeInMainWorld('sf', {
   onMenuAction: on('sf:menu'),
   menuState: (s) => ipcRenderer.send('menu:state', s),
   uiLog: (m) => ipcRenderer.send('ui:log', m),
+  // Rapports d'erreurs opt-in : le renderer ne fait que relayer des
+  // evenements d'erreur JS ; le main decide seul si quelque chose est
+  // collecte/envoye (consentement settings.crashReport).
+  reportError: (r) => ipcRenderer.send('report:error', r),
+  reportConsent: (v) => ipcRenderer.send('report:consent', v),
   desktopSource: () => ipcRenderer.invoke('desktop:source'),
   audioTapStart: () => ipcRenderer.invoke('audio:tapStart'),
   audioTapStop: () => ipcRenderer.invoke('audio:tapStop'),
