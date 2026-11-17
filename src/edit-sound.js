@@ -44,12 +44,16 @@ function editSound(s) {
 
   // ---- normalisation
   let norm = s.norm ?? 1;
-  const normVal = el('span', { class: 'vol-val', text: '×' + norm });
+  const normVal = el('span', { class: 'vol-val', text: '×' + (Math.round((s.norm ?? 1) * 100) / 100) });
   const normBtn = el('button', { text: 'Normaliser ce son', onclick: async () => {
     try {
-      norm = await computeNorm(s.path);
-      normVal.textContent = '×' + norm;
-      toast(`Volume normalisé : ×${norm}.`);
+      const n = await computeNorm(s.path);
+      // null = silence/mesure impossible : ne rien appliquer ni afficher
+      // un « x1 » mensonger (computeNorm renvoie desormais null, pas 1).
+      if (n == null) { toast('Fichier silencieux ou mesure impossible — normalisation ignorée.', 'warn'); return; }
+      norm = n;
+      normVal.textContent = '×' + (+norm).toFixed(2);
+      toast(`Volume normalisé : ×${(+norm).toFixed(2)}.`);
     } catch (e) { logErr('computeNorm', e); toast('Impossible d\'analyser ce fichier.', 'warn'); }
   } });
 

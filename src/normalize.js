@@ -36,11 +36,12 @@ function normLufsTarget() {
 // Gain = ecart de loudness, plafonne par le True Peak (normGain, lib) :
 // un son dense ne doit jamais etre amplifie au point de depasser le
 // plafond en pic interpolate — le limiteur aval n'est pas une protection
-// True Peak. null -> 1 (silence ou mesure impossible : on ne touche pas).
+// True Peak. null -> mesure impossible (silence numerique) : les
+// appelants ne doivent PAS ecrire 1, ce qui ecraserait un norm manuel.
 async function computeNorm(path) {
   const m = await measureForNorm(path);
   const g = window.SFUtils.normGain({ lufs: m.lufs, truePeakDb: m.truePeakDb, targetLufs: normLufsTarget() });
-  return g == null ? 1 : g;
+  return g == null ? null : g;
 }
 
 // host fourni (panneau reglages) : la progression s'affiche EN LIGNE et le
@@ -65,7 +66,14 @@ async function normalizeAll(host) {
     // computeNorm sur toute la bibliotheque, save() et renderAll().
     if (cancelled || (host && !host.isConnected)) break;
     prog.textContent = `${done + 1} / ${targets.length} — ${s.name || 'son'}`;
-    try { s.norm = await computeNorm(s.path); } catch (e) { failed++; logErr('computeNorm', e); /* garder s.norm : un echec ne doit pas effacer un reglage perso */ }
+    try {
+      const n = await computeNorm(s.path);
+      // null = silence/mesure impossible : ne pas ecrire 1 — ca
+      // ecraserait un reglage norm pose a la main (comportement annonce
+      // par le catch : « garder s.norm »).
+      if (n == null) failed++;
+      else s.norm = n;
+    } catch (e) { failed++; logErr('computeNorm', e); /* garder s.norm : un echec ne doit pas effacer un reglage perso */ }
     prog.textContent = `${++done} / ${targets.length}`;
     await new Promise((r) => setTimeout(r, 0));
   }
@@ -87,6 +95,10 @@ async function normalizeAll(host) {
 async function testNormLufs(targetLufs) {
   const out = audio.mon;
   if (!out) { toast('Choisis d\'abord une « écoute locale » dans les réglages.', 'warn'); return; }
+  // monId === cableId : l'ecoute locale ET Discord partagent la meme
+  // sortie — le test de loudness serait audible par les potes sur le
+  // cable, contrairement au contrat « jamais sur le cable Discord ».
+  if (audio.cable && out.ctx === audio.cable.ctx) { toast('« Écoute locale » et « Discord » pointent la même sortie — le test serait audible sur le câble. Change l\'écoute locale dans les réglages.', 'warn'); return; }
   try {
     const ctx = out.ctx;
     if (ctx.state !== 'running') ctx.resume().catch((e) => logErr('testNormLufs resume', e));
