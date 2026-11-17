@@ -73,7 +73,10 @@ function importConfig(onDone) {
       if (f.size > 8 * 1024 * 1024) throw new Error('fichier trop volumineux (> 8 Mo)');
       const parsed = JSON.parse(await f.text());
       if (!parsed || !Array.isArray(parsed.sounds)) throw new Error('fichier invalide');
-      if (!(await confirmBox('Importer la configuration ?', 'La configuration actuelle (sons, catégories, réglages, raccourcis) sera remplacée. Les fichiers audio ne sont pas modifiés.', 'Importer'))) return;
+      // confirmBox DETUIT le panneau (slot modal unique) AVANT la reponse :
+      // sur « Annuler » on rouvre les reglages au lieu de laisser
+      // l'utilisateur sur l'ecran principal.
+      if (!(await confirmBox('Importer la configuration ?', 'La configuration actuelle (sons, catégories, réglages, raccourcis) sera remplacée. Les fichiers audio ne sont pas modifiés.', 'Importer'))) { settingsModal(); return; }
       // Pas de teardownAudio() direct ici : applyAudio() passe par
       // audioApplyChain et fait deja le teardown — un appel direct
       // pendant qu'un applyAudioInner est en vol pouvait etre suivi
@@ -87,6 +90,7 @@ function importConfig(onDone) {
       // servent plus (jusqu'a 256 Mo d'orphelins sinon).
       bufCache.clear(); bufCacheBytes = 0; longWarned.clear(); bufInflight.clear();
       save();
+      updateStorageUi(); // la banniere dossier de sons depend de storageDir importe
       await refreshDevices(false);
       resolveDevices();
       await applyAudio();
@@ -181,20 +185,25 @@ function settingsModal() {
   // dossier de stockage des fichiers crees par l'app (sons copies, imports
   // YouTube, enregistrements, extraits) — obligatoire des la 1re creation.
   // userData = %APPDATA%\SoundFart (reglages/outils), independent du dossier sons.
+  // resetStorageDir unique : le handler dans getDataDir().then ecrasait
+  // l'onclick initial avec une version sans save() — deux handlers
+  // divergents selon que getDataDir resout ou non.
+  const resetStorageDir = () => { s.storageDir = ''; dirLbl.textContent = 'Non choisi — sera demandé à la prochaine création de fichier'; updateStorageUi(); save(); };
   window.sf.getDataDir().then((d) => {
     const lbl = 'Réglages et outils : ' + d;
     if (!s.storageDir) dirLbl.textContent = 'Non choisi — sera demandé à la prochaine création de fichier';
-    resetDirBtn.onclick = () => { s.storageDir = ''; dirLbl.textContent = 'Non choisi — sera demandé à la prochaine création de fichier'; updateStorageUi(); };
   }).catch((e) => logErr('getDataDir', e));
   const dirLbl = el('div', { class: 'hint path', text: (s.storageDir || 'Non choisi — sera demandé à la prochaine création de fichier') + ' — sons ajoutés dans sons/, YouTube dans imports/, micro dans recordings/, extraits dans cuts/' });
-  const openDirBtn = el('button', { class: 'ghost', text: 'Ouvrir', title: 'Ouvre le dossier de stockage dans l\'Explorateur', onclick: () => window.sf.openDir(s.storageDir || '') });
+  const openDirBtn = el('button', { class: 'ghost', text: 'Ouvrir', title: 'Ouvre le dossier de stockage dans l\'Explorateur', onclick: () => window.sf.openDir(s.storageDir || '').catch((e) => logErr('openDir', e)) });
   const pickDirBtn = el('button', { text: 'Choisir…', title: 'Choisit le dossier racine où SoundFart range ses fichiers (imports/, recordings/, cuts/).', onclick: async () => {
     try {
       const d = await window.sf.pickDir();
-      if (d) { s.storageDir = d; dirLbl.textContent = d; updateStorageUi(); }
+      // save() des maintenant : sans lui, un crash avant le prochain
+      // save() perdaient le choix (seul beforeunload couvrait).
+      if (d) { s.storageDir = d; dirLbl.textContent = d; updateStorageUi(); save(); }
     } catch (e) { logErr('pickDir', e); }
   } });
-  const resetDirBtn = el('button', { class: 'ghost', text: 'Réinitialiser', title: 'Oublie le dossier choisi : il sera redemandé à la prochaine création de fichier.', onclick: () => { s.storageDir = ''; dirLbl.textContent = 'Non choisi — sera demandé à la prochaine création de fichier'; } });
+  const resetDirBtn = el('button', { class: 'ghost', text: 'Réinitialiser', title: 'Oublie le dossier choisi : il sera redemandé à la prochaine création de fichier.', onclick: resetStorageDir });
   const orphanBtn2 = el('button', { text: 'Parcourir les fichiers non ajoutés…', onclick: () => orphanImportsModal().catch((e) => logErr('orphanImports', e)) });
   const voiceDsp = el('input', { type: 'checkbox', checked: s.voiceDsp !== false, title: 'Applique aux sons de la VOIX uniquement (jamais aux sons de la soundboard) : annulation d\'écho, suppression de bruit et filtre de souffle. Décoche si ta voix sonne étouffée ou si tu utilises déjà un filtre Discord/Teams.' });
   const voiceLvl = el('select', {},
@@ -204,21 +213,30 @@ function settingsModal() {
     el('option', { value: '4', text: 'Max' }));
   voiceLvl.value = String(s.voiceDspLvl ?? 2);
   voiceLvl.title = 'Intensité du traitement vocal : Léger = peu de coupe, Normal = équilibré, Fort = clavier/fond atténué, Max = bande passante très resserrée (la voix peut paraître plus étouffée/filtrée).';
-  voiceLvl.addEventListener('change', () => { s.voiceDspLvl = Math.min(4, Math.max(1, +voiceLvl.value || 2)); save(); });
+  // Pas de listener 'change' -> save() : le worklet n'est reconstruit que
+  // par « Appliquer » (applyAudio). Persister ici enregistrait une valeur
+  // SANS effet jusqu'au prochain apply — no-op silencieux. Appliquer
+  // relit voiceLvl.value (ligne ~380).
   const autoMic = el('input', { type: 'checkbox', checked: !!s.autoSwitchMic, title: 'Au lancement, l\'entrée micro Windows bascule sur « CABLE Output » (pour que Discord capte ta voix via le câble), puis revient à ton vrai micro à la fermeture ou en cas de crash.' });
   const watchMic = el('input', { type: 'checkbox', checked: s.watchdogMic !== false, title: 'Revérifie périodiquement que l\'entrée micro est toujours sur le câble. Se met en pause pour la session si tu changes le micro toi-même (Discord inclus).' });
 
   const normLufsIn = el('input', { type: 'number', min: -40, max: 0, step: 1, value: normLufsTarget(), title: 'Loudness cible en LUFS (volume perçu, pas le pic). -18 LUFS par défaut. Plus haut (proche de 0) = plus fort, plus bas = plus doux. Le limiteur en aval absorbe les dépassements.' });
   // Persiste la valeur des que le champ est valide — sinon « Normaliser
   // ce son » (editeur) ou un « Fermer » utilisaient l'ancienne cible.
+  // Champ vide : +'' === 0 -> persistait normLufs = 0 (normalisation a
+  // fond de TOUTE la bibliotheque au prochain « Normaliser »). '' = NaN
+  // = invalide -> la valeur affichee revient a la cible reelle.
+  const lufsField = () => { const r = normLufsIn.value.trim(); return r === '' ? NaN : +r; };
   normLufsIn.addEventListener('change', () => {
-    const nl = +normLufsIn.value;
+    const nl = lufsField();
     if (Number.isFinite(nl) && nl <= 0) { s.normLufs = Math.max(-40, nl); save(); }
     else normLufsIn.value = normLufsTarget(); // valeur refusee : re-affiche la cible reelle
   });
   const maxDurIn = el('input', { type: 'number', min: 0, max: 86400, step: 5, value: s.maxSoundDur ?? 45, title: 'Durée max jouée d\'un son en secondes (0 = illimité). Le fichier n\'est jamais coupé — seules les N premières secondes sont jouées. Une notification prévient la première fois qu\'un son est tronqué.' });
   maxDurIn.addEventListener('change', () => {
-    const v = +maxDurIn.value;
+    // '' = NaN : +'' valait 0 = illimite, persiste silencieusement.
+    const raw = maxDurIn.value.trim();
+    const v = raw === '' ? NaN : +raw;
     if (Number.isFinite(v) && v >= 0) { s.maxSoundDur = Math.min(86400, v); save(); }
     else maxDurIn.value = s.maxSoundDur ?? 45;
   });
@@ -228,7 +246,7 @@ function settingsModal() {
     // La valeur tapee est appliquee d'abord (le panneau ne se ferme plus) ;
     // la progression s'affiche en ligne dans normProg, « Appliquer » reste
     // utilisable pendant la normalisation.
-    const nl = +normLufsIn.value;
+    const nl = lufsField(); // '' = NaN : jamais 0 LUFS par coercion
     if (Number.isFinite(nl) && nl <= 0) { s.normLufs = Math.max(-40, nl); save(); }
     normAllBtn.disabled = true;
     try { await normalizeAll(normProg); }

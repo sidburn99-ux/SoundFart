@@ -67,10 +67,12 @@ const defaults = () => ({
 let saveErrNotified = false;
 function save() {
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => window.sf.saveConfig(cfg).catch((e) => {
+  saveTimer = setTimeout(() => window.sf.saveConfig(cfg).then(() => { saveErrNotified = false; }).catch((e) => {
     logErr('saveConfig', e);
     // Config jamais persistee en silence (ex. >5 Mo) : un toast une fois
     // suffit — l'utilisateur doit savoir que ses reglages sont perdus.
+    // saveErrNotified est reset au prochain succes : sans ca, UN echec
+    // transitoire rendait tous les echecs suivants silencieux.
     if (!saveErrNotified) { saveErrNotified = true; toast('Sauvegarde impossible : ' + (e && e.message || e), 'warn'); }
   }), 250);
 }
