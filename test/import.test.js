@@ -111,6 +111,33 @@ test('aucun .part résiduel après import', async () => {
   assert.equal(fs.readdirSync(sons(root)).filter((f) => f.endsWith('.part')).length, 0);
 });
 
+test('clés de file normalisées : même dossier, casse/slash différents -> sérialisé', async () => {
+  const { root } = dirs();
+  const events = [];
+  const slow = () => new Promise((r) => setTimeout(r, 60)).then(() => events.push('slow-fin'));
+  const fast = () => Promise.resolve().then(() => events.push('fast-fin'));
+  // 'E:\\A' vs 'e:\\a\\' = même dossier Windows -> même file
+  const rootAlt = root.replace(/\\/g, '/').toUpperCase();
+  await Promise.all([
+    enqueueImport(root, slow),
+    enqueueImport(rootAlt, fast),
+  ]);
+  assert.deepEqual(events, ['slow-fin', 'fast-fin'], 'le second import attend le premier');
+});
+
+test('fichier >512 Mo : refusé à l’import (file:read ne pourrait jamais le lire)', async () => {
+  const { root, src } = dirs();
+  const big = path.join(src, 'gros.mp3');
+  fs.mkdirSync(src, { recursive: true });
+  // Sparse file : annonce 513 Mo sans allouer 513 Mo sur disque.
+  const fd = fs.openSync(big, 'w');
+  fs.ftruncateSync(fd, 513 * 1024 * 1024);
+  fs.closeSync(fd);
+  const out = await importAudioFiles([big], root);
+  assert.equal(out[0].error, 'trop volumineux (> 512 Mo)');
+  assert.ok(!fs.existsSync(path.join(root, 'sons', 'gros.mp3')), 'rien copié');
+});
+
 test('extensions non audio ignorées silencieusement', async () => {
   const { root, src } = dirs();
   const txt = mkSrc(src, 'note.txt', 'hello');

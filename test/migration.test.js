@@ -165,6 +165,34 @@ test('storageDir HORS SoundFart-data : non copié, chemin inchangé', () => {
   assert.ok(!fs.existsSync(path.join(dst, 'ailleurs')), 'rien copié pour un dossier externe');
 });
 
+test('collision fichier->dossier : erreur déclarée, PAS de marqueur, aucune perte', () => {
+  const { src, dst } = tmpdirs();
+  fs.writeFileSync(path.join(src, 'config.json'), cfg(src));
+  fs.mkdirSync(path.join(src, 'imports'), { recursive: true });
+  fs.writeFileSync(path.join(src, 'imports', 'blocage.mp3'), 'source');
+  // destination : un DOSSIER occupe le nom du fichier source
+  fs.mkdirSync(path.join(dst, 'imports', 'blocage.mp3'), { recursive: true });
+  const r = runPortableMigration({ portableDataDir: src, appData: dst, log });
+  assert.equal(r.complete, false, 'collision = migration incomplète');
+  assert.ok(!fs.existsSync(path.join(dst, MIGRATION_MARKER)));
+  assert.ok(fs.existsSync(path.join(src, 'imports', 'blocage.mp3')), 'source intacte');
+  assert.ok(fs.statSync(path.join(dst, 'imports', 'blocage.mp3')).isDirectory(), 'dossier dest conservé');
+});
+
+test('storageDir == SoundFart-data : tous les sous-dossiers racine copiés', () => {
+  const { src, dst } = tmpdirs();
+  fs.mkdirSync(path.join(src, 'sons'), { recursive: true });
+  fs.writeFileSync(path.join(src, 'sons', 'custom.mp3'), 'son-custom');
+  fs.mkdirSync(path.join(src, 'divers'), { recursive: true });
+  fs.writeFileSync(path.join(src, 'divers', 'x.bin'), 'data');
+  fs.writeFileSync(path.join(src, 'config.json'),
+    JSON.stringify({ settings: { storageDir: src }, sounds: [] }));
+  const r = runPortableMigration({ portableDataDir: src, appData: dst, log });
+  assert.equal(r.complete, true);
+  assert.equal(fs.readFileSync(path.join(dst, 'sons', 'custom.mp3'), 'utf8'), 'son-custom');
+  assert.equal(fs.readFileSync(path.join(dst, 'divers', 'x.bin'), 'utf8'), 'data');
+});
+
 test('sources absentes : ignorées sans erreur', () => {
   const { src, dst } = tmpdirs();
   fs.writeFileSync(path.join(src, 'config.json'), cfg(src));
