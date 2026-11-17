@@ -531,18 +531,23 @@ H('file:check', async (_e, paths) => {
   // Async + par lots : jusqu'a 5000 existsSync synchrones sur le thread main
   // pouvaient geler l'app plusieurs secondes sur un volume reseau.
   const missing = [];
+  // sigs : 'size:mtimeMs' par chemin present — le renderer en deduit les
+  // fichiers REECRITS a chemin constant (re-export, remplacement manuel)
+  // pour invalider le buffer decode en cache (sinon vieille version jouee
+  // silencieusement jusqu'a eviction LRU).
+  const sigs = {};
   const BATCH = 200;
   for (let i = 0; i < paths.length; i += BATCH) {
     const chunk = paths.slice(i, i + BATCH);
     const ok = await Promise.all(chunk.map(async (p) => {
-      if (typeof p !== 'string') return false;
-      try { await fs.promises.access(p); return true; } catch { return false; }
+      if (typeof p !== 'string') return null;
+      try { const st = await fs.promises.stat(p); return st.size + ':' + st.mtimeMs; } catch { return null; }
     }));
     // Les non-chaines sont normalisees en String : le retour doit etre un
     // tableau de chaines (le renderer fait des tests d'appartenance).
-    chunk.forEach((p, j) => { if (typeof p !== 'string' || !ok[j]) missing.push(String(p)); });
+    chunk.forEach((p, j) => { if (typeof p !== 'string' || !ok[j]) missing.push(String(p)); else sigs[String(p)] = ok[j]; });
   }
-  return missing;
+  return { missing, sigs };
 });
 H('file:reveal', async (_e, p) => {
   if (typeof p !== 'string' || !path.isAbsolute(p)) throw new Error('chemin invalide');

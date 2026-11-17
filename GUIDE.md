@@ -80,6 +80,7 @@ Clique **Appliquer**. Le bandeau en bas de fenêtre affiche les routes actives (
 | « Fichier introuvable » sur une carte | Le fichier a été déplacé/supprimé | Clique le badge ou clic droit → « Retrouver le fichier… » |
 | Fenêtre noire au démarrage | Fichiers `src/` manquants à côté de `main.js` | Vérifie que tous les `.js` de `src/` (`app.js`, `normalize.js`, `edit-sound.js`, `settings.js`, `recorder.js`, `youtube.js`, `tap-processor.js`, `voice-gate.js`) sont présents |
 | « Micro inaccessible » | Permission Windows refusée | Paramètres Windows → Confidentialité → Micro |
+| Un son en cours s'est arrêté quand le micro a décroché | Comportement voulu : la perte du micro déclenche une reconstruction complète du graphe audio, qui stoppe aussi les sons | Relance le son ; si le micro revient, tout repart normalement |
 | Erreurs techniques | — | `%APPDATA%\SoundFart\soundfart.log` + F12 pour la console |
 
 ## 7. Note légale YouTube

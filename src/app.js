@@ -51,6 +51,7 @@ function el(tag, props = {}, ...kids) {
 // ================================================================ etat
 let cfg;
 let missing = new Set();
+let fileSigs = null; // path -> 'size:mtimeMs' de la derniere verification (checkMissing)
 const cardEls = new Map();
 const playingCount = new Map();
 const playingNames = new Map(); // id -> nom : couvre les aperçus (sons éphémères absents de cfg.sounds)
@@ -733,7 +734,8 @@ function cableScreen() {
     try {
       await refreshDevices(false); resolveDevices(); updateCableUi();
       await applyAudio().catch((e2) => logErr('applyAudio', e2));
-    } finally {
+    } catch (e2) { logErr('cableScreen verify', e2); }
+    finally {
       e.target.disabled = false;
     }
     if (cablePresent()) {
@@ -1386,6 +1388,9 @@ async function relocateSound(s) {
   for (const v of [...voices]) if (v.soundId === s.id) stopVoice(v, true);
   s.path = p;
   cacheDelete(oldPath); // l'ancien buffer devient orphelin sinon
+  // Les warnings one-shot sont indexes par path : garder l'ancien laisserait
+  // un autre son sur ce path sans ses toasts « fichier long »/« tronque ».
+  longWarned.delete(oldPath); truncWarned.delete(oldPath);
   missing.delete(s.id);
   save(); renderAll();
   toast('Fichier retrouvé : ' + p);
@@ -1395,10 +1400,22 @@ let checkSeq = 0; // jeton de generation : des scans concurrents (focus,
 // import, ajout) ne doivent pas ecrire un 'missing' perime dans le desordre.
 async function checkMissing() {
   const seq = ++checkSeq;
-  let miss;
-  try { miss = new Set(await window.sf.checkFiles(cfg.sounds.map((s) => s.path))); }
+  let r;
+  try { r = await window.sf.checkFiles(cfg.sounds.map((s) => s.path)); }
   catch (e) { logErr('checkMissing', e); return; } // erreur remontee, badges inchanges
   if (seq !== checkSeq) return; // un scan plus recent a ete lance entre-temps
+  // Fichier reecrit a chemin constant (re-export, remplacement manuel) :
+  // la signature a change -> le buffer decode en cache est perime,
+  // sinon on jouerait silencieusement l'ancienne version du fichier.
+  const sigs = (r && r.sigs) || {};
+  if (fileSigs) for (const p of Object.keys(sigs)) {
+    if (fileSigs.get(p) !== sigs[p] && bufCache.has(p)) {
+      cacheDelete(p);
+      uiLog('cache audio invalide (fichier modifie) : ' + p);
+    }
+  }
+  fileSigs = new Map(Object.entries(sigs));
+  const miss = new Set((r && r.missing) || []);
   const next = new Set(cfg.sounds.filter((s) => miss.has(s.path)).map((s) => s.id));
   const changed = next.size !== missing.size || [...next].some((i) => !missing.has(i));
   missing = next;
@@ -1438,7 +1455,8 @@ async function init() {
   $('#ytBtn').addEventListener('click', youtubeModal);
   $('#recBtn').addEventListener('click', () => recorderModal().catch((e) => toast('Enregistreur : ' + e.message, 'warn')));
   $('#addCat').addEventListener('click', newCategory);
-  $('#openSettings').addEventListener('click', async () => { await refreshDevices(false); settingsModal(); });
+  // refreshDevices en echec ne doit pas empecher l'ouverture du panneau.
+  $('#openSettings').addEventListener('click', async () => { try { await refreshDevices(false); } catch (e) { logErr('refreshDevices', e); } settingsModal(); });
   $('#stopBtn').addEventListener('click', () => stopAll(false));
 
   // menu application (F11)
@@ -1535,10 +1553,18 @@ async function init() {
       const micCandidate = (s.micId && s.micId !== 'default') ||
         inpNow.some((d) => d.deviceId !== 'default' && !VIRTUAL_RE.test(d.label || ''));
       const needMic = (s.micMix || s.autoSwitchMic) && !audio.micStream && inpChanged && micCandidate;
-      if (s.cableId !== prev.cable || s.monId !== prev.mon || s.micId !== prev.mic || needMic) await applyAudio().catch((e) => logErr('applyAudio', e));
+      // Un seul rebuild par evenement : le cable qui apparait change souvent
+      // cableId/micId dans le MEME devicechange — deux applyAudio()
+      // serialises coupaient l'audio deux fois et pouvaient faire echouer
+      // un second getUserMedia transitoire (toast micro parasite).
+      let rebuilt = false;
+      if (s.cableId !== prev.cable || s.monId !== prev.mon || s.micId !== prev.mic || needMic) {
+        await applyAudio().catch((e) => logErr('applyAudio', e));
+        rebuilt = true;
+      }
       // Cable branche/installé a chaud : diffusion + bascule micro sans relancer l'app
       if (!hadCable && cablePresent()) {
-        await applyAudio().catch((e) => logErr('applyAudio', e));
+        if (!rebuilt) await applyAudio().catch((e) => logErr('applyAudio', e));
         runAutoSetup();
       }
       } catch (e) { logErr('devicechange', e); }
@@ -1587,7 +1613,10 @@ async function init() {
   resolveDevices();
   save();
   checkMissing().catch((e) => logErr('checkMissing', e));
-  const ok = await applyAudio();
+  // Sans catch : une rejection ici avortait init() et laissait les
+  // raccourcis globaux (STOP + touches) jamais enregistres — panne
+  // silencieuse jusqu'au redemarrage.
+  const ok = await applyAudio().catch((e) => { logErr('applyAudio init', e); return false; });
   applyShortcuts().catch((e) => logErr('applyShortcuts', e));
   updateCableUi();
   showCableScreen();

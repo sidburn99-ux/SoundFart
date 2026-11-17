@@ -93,7 +93,9 @@ function importConfig(onDone) {
       updateStorageUi(); // la banniere dossier de sons depend de storageDir importe
       await refreshDevices(false);
       resolveDevices();
-      await applyAudio();
+      // catch isole : une rejection sauterait renderAll/syncTopbarControls/
+      // onDone et laisserait l'UI sur l'ancienne config alors que cfg est deja remplace.
+      await applyAudio().catch((e) => logErr('applyAudio import', e));
       applyShortcuts();
       renderAll();
       syncTopbarControls();
