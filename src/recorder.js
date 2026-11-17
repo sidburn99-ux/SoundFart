@@ -7,10 +7,8 @@
 // recente. Chaque audioTapStart reussi prend un jeton ; on n'arrete que
 // si le notre est toujours le dernier delivre.
 let tapGenCounter = 0, lastTapGen = 0;
-// Plateforme (preload) : « Audio du PC » passe par AudioTap (loopback
-// WASAPI, Windows-only) — sous Linux la source est desactivee proprement
-// (le repli getDisplayMedia/loopback n'existe pas non plus sous Linux).
-const IS_LINUX = !!(window.sf && window.sf.platform === 'linux');
+// IS_LINUX : declare dans app.js (charge en dernier) — scope global
+// partage ; « Audio du PC » = AudioTap WASAPI, desactive sous Linux.
 
 async function recorderModal() {
   let streams = [], actx = null, rec = null, chunks = [];

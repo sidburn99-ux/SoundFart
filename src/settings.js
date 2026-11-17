@@ -3,9 +3,8 @@
 // Extrait de app.js — depend des globals du script principal (chargé en dernier).
 // ================================================================ reglages audio
 // ================================================================ sauvegarde (export/import)
-// Plateforme (preload) : les reglages audio specifiques Windows
-// (cable VB-CABLE, bascule micro, AudioTap) sont masques sous Linux.
-const IS_LINUX = !!(window.sf && window.sf.platform === 'linux');
+// IS_LINUX : declare dans app.js (charge en dernier) — un seul const
+// global, les scripts partagent le meme scope lexical.
 function exportConfig() {
   const blob = new Blob([JSON.stringify(cfg, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
