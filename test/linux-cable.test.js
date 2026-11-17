@@ -119,7 +119,7 @@ test('linux : ensure() crée le null-sink quand absent', async () => {
   const exec = makeExec({
     'info': { stdout: 'ok', stderr: '' },
     'list short sinks': { stdout: '0\talsa_output.analog\ttalsa\t\n', stderr: '' },
-    'load-module module-null-sink sink_name=soundfart_cable sink_properties=device.description=SoundFart Cable':
+    'load-module module-null-sink sink_name=soundfart_cable sink_properties=device.description=\'SoundFart Cable\'':
       { stdout: '123\n', stderr: '' },
   });
   const { cable, logs } = makeCable(exec, 'linux');
@@ -127,7 +127,7 @@ test('linux : ensure() crée le null-sink quand absent', async () => {
   assert.deepEqual(r, { ok: true, created: true });
   const load = exec.calls.find((c) => c.args[0] === 'load-module');
   assert.ok(load, 'load-module attendu');
-  assert.deepEqual(load.args.slice(1), ['module-null-sink', 'sink_name=soundfart_cable', 'sink_properties=device.description=SoundFart Cable']);
+  assert.deepEqual(load.args.slice(1), ['module-null-sink', 'sink_name=soundfart_cable', "sink_properties=device.description='SoundFart Cable'"]);
   assert.equal(load.opts.timeout, 20000);
   assert.ok(logs.some((m) => m.includes('null-sink créé')));
 });

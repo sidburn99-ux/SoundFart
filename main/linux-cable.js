@@ -71,7 +71,7 @@ function createLinuxCable(deps) {
       await pactl([
         'load-module', 'module-null-sink',
         'sink_name=' + SINK_NAME,
-        'sink_properties=device.description=' + SINK_DESC,
+        "sink_properties=device.description='" + SINK_DESC + "'",
       ], 20000);
       log('[linux-cable] null-sink créé : ' + SINK_NAME);
       return { ok: true, created: true };
