@@ -68,7 +68,10 @@ async function recorderModal() {
   let devs;
   try {
     devs = (await navigator.mediaDevices.enumerateDevices())
-      .filter((d) => d.kind === 'audioinput' && d.deviceId !== 'communications' && d.deviceId !== 'default');
+      // deviceId '' = placeholder sans permission : le garder donnerait une
+      // option vide et un getUserMedia sans contrainte (peripherique par
+      // defaut Windows, potentiellement CABLE Output = la soundboard).
+      .filter((d) => d.kind === 'audioinput' && d.deviceId && d.deviceId !== 'communications' && d.deviceId !== 'default');
   } catch (e) {
     if (offTapDead) offTapDead();
     if (offTapPcm) offTapPcm();
@@ -233,8 +236,13 @@ async function recorderModal() {
         if (dead) { deadCleanup(); return; }
       }
       const want = [];
-      if (micOn.checked) want.push(['micro', () => navigator.mediaDevices.getUserMedia({
-        audio: { deviceId: micSel.value ? { exact: micSel.value } : undefined, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      // Sans deviceId exploitable, getUserMedia partirait sans contrainte
+      // sur le peripherique par defaut Windows — qui peut etre CABLE Output
+      // (la soundboard elle-meme) : on refuse la source micro plutot que
+      // d'enregistrer autre chose que la voix.
+      if (micOn.checked && !micSel.value) status.textContent = 'Aucun micro détecté — source micro ignorée.';
+      if (micOn.checked && micSel.value) want.push(['micro', () => navigator.mediaDevices.getUserMedia({
+        audio: { deviceId: { exact: micSel.value }, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       })]);
       if (pcOn.checked && !tapOn) want.push(['audio du PC', systemStream]);
       if (cableOn.checked) want.push(['câble SoundFart', cableStream]);

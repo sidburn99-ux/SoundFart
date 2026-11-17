@@ -244,14 +244,18 @@ function httpsGetText(url, depth = 0, deadline = 0) {
     // chaque saut recreait 60 s -> ~5 min au lieu de 1 et ytdlpPromise
     // (donc tous les yt:*) restait bloque pendant ce temps.
     if (!deadline) deadline = Date.now() + 60000;
-    const killer = setTimeout(() => { try { req.destroy(); } catch {} rej(new Error('délai total dépassé (60 s)')); }, Math.max(1, deadline - Date.now()));
+    // req en let (pas const) : si https.get jette de facon synchrone, le
+    // timer resterait arme et evaluerait req.destroy() en TDZ ->
+    // ReferenceError dans un timer = uncaughtException -> app.quit().
+    let req = null;
+    const killer = setTimeout(() => { try { if (req) req.destroy(); } catch {} rej(new Error('délai total dépassé (60 s)')); }, Math.max(1, deadline - Date.now()));
     const done = (fn, v) => { clearTimeout(killer); fn(v); };
     const rej = (e) => done(reject, e), res = (v) => done(resolve, v);
     // Bornes : HTTPS only a chaque saut (anti-downgrade) et max 5
     // redirections — sinon une redirection circulaire bouclerait a vie.
     if (!/^https:\/\//i.test(url)) return rej(new Error('URL non-HTTPS refusée'));
     if (depth > 5) return rej(new Error('trop de redirections'));
-    const req = https.get(url, { headers: { 'User-Agent': 'SoundFart' } }, (r) => {
+    req = https.get(url, { headers: { 'User-Agent': 'SoundFart' } }, (r) => {
       if (r.statusCode >= 300 && r.statusCode < 400 && r.headers.location) {
         r.resume();
         let loc;
@@ -540,13 +544,18 @@ H('yt:download', async (_e, o) => {
     // ffmpeg n'est requis que pour l'extrait sectionne (-x + download-sections) ;
     // un import « audio complet » ne doit PAS declencher le telechargement
     // d'~80 Mo d'ffmpeg inutilement.
+    // Coercition numerique comme media:cut : '0x10' passerait Number.isFinite
+    // puis serait interpole brut dans --download-sections (section invalide
+    // cote yt-dlp -> repli audio complet silencieux). Non fini -> repli
+    // audio complet comme avant (pas de section 0-...).
     const wantSection = !full && Number.isFinite(+start) && Number.isFinite(+end) && +end > +start;
+    const secStart = Math.max(0, +start || 0), secEnd = Math.max(0, +end || 0);
     let ffDir = null;
     if (wantSection) { try { ffDir = await ensureFfmpeg(); } catch (e) { log('[yt] ffmpeg indisponible pour la coupe, repli audio complet : ' + (e && e.message), 'warn'); } }
     ytThrowIfCancelled(); // annulation pendant le telechargement ffmpeg (~80 Mo)
     if (wantSection && ffDir) {
       try {
-        await runYt([...baseArgs, '--ffmpeg-location', ffDir, '-f', 'bestaudio', '-x', '--audio-format', 'mp3', '--download-sections', `*${start}-${end}`, url], ytProgress);
+        await runYt([...baseArgs, '--ffmpeg-location', ffDir, '-f', 'bestaudio', '-x', '--audio-format', 'mp3', '--download-sections', `*${secStart}-${secEnd}`, url], ytProgress);
         sectioned = true;
       } catch (e) {
         // Annulation = intention utilisateur : JAMAIS de repli sur

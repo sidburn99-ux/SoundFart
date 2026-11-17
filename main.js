@@ -353,7 +353,12 @@ const toolsDir = () => path.join(app.getPath('userData'), 'tools');
 // Un dir relatif ou non-chainable est ignore (protection contre une config importee malveillante).
 function storageRoot(dir) {
   const d = dir && String(dir).trim();
-  return d && path.isAbsolute(d) ? d : app.getPath('userData');
+  if (!d || !path.isAbsolute(d)) return app.getPath('userData');
+  // Durcissement commun a tous les handlers (imports, rec:save, imports:list,
+  // media:cut, yt:download) : un dir absolu avec caracteres de controle
+  // etait accepte tel quel — isUsablePath rejette comme files:import.
+  if (!isUsablePath(d)) throw new Error('dossier de stockage invalide');
+  return d;
 }
 // expandPaths/expandPathsAsync viennent de lib/audio-utils.js — testables via node:test.
 
@@ -394,7 +399,7 @@ H('files:import', (_e, paths, dir) => {
   if (!Array.isArray(paths) || !paths.length || paths.length > 2000 || paths.some((p) => typeof p !== 'string')) throw new Error('chemins invalides');
   const root = storageRoot(dir);
   if (!isUsablePath(root)) throw new Error('dossier de stockage invalide');
-  return enqueueImport(root, () => importAudioFiles(paths, root));
+  return enqueueImport(root, () => importAudioFiles(paths, root, log));
 });
 
 H('file:read', async (_e, p) => {
@@ -543,9 +548,16 @@ function writeRestoreMarker(obj) {
 }
 // Garde externe : si ce process meurt sans will-quit (kill, crash, BSOD),
 // le guard detache restaure le micro a la mort du parent.
+// Un SEUL guard est utile : tous surveillent le meme pid parent et se
+// reveilleraient ensemble a sa mort (N 'set capture' COM concurrents sur
+// le meme marqueur). A chaque nouvelle bascule on tue les precedents.
+const micGuardPids = new Set();
 function spawnMicGuard(tool) {
   try {
+    for (const pid of micGuardPids) { try { process.kill(pid); } catch {} }
+    micGuardPids.clear();
     const g = spawn(tool, ['guard', String(process.pid), restoreFile()], { detached: true, stdio: 'ignore', windowsHide: true });
+    if (g.pid) micGuardPids.add(g.pid);
     // 'error' async (exe disparu entre ensureAudioTool et le spawn) sans
     // listener = uncaughtException -> crash de l'app.
     g.on('error', (e) => log('[mic-guard] ' + (e && e.message), 'warn'));
@@ -910,12 +922,16 @@ let audioTapKilling = false; // vrai entre kill() et l'evenement 'exit' (anti do
 let audioTapFailed = false;  // spawn en echec (evenement 'error') sur le processus courant
 let tapPcmRem = Buffer.alloc(0); // reste PCM non aligne (stdout livre des chunks arbitraires)
 
+// Meme backoff que ensureAudioTool : sans lui, un csc.exe en panne
+// relancait une compilation de 60 s a chaque tentative d'enregistrement.
+let audioTapFailAt = 0;
 async function ensureAudioTap() {
   const p = audioTapPath();
-  if (toolSane(p, 4096)) return p;
+  if (toolSane(p, 4096)) { audioTapFailAt = 0; return p; }
+  if (Date.now() - audioTapFailAt < 10 * 60 * 1000) return null;
   if (fs.existsSync(p)) discardCorruptTool(p, 'AudioTap');
-  try { return await compileCs('AudioTap', 'AudioTap'); }
-  catch (e) { lastToolErr = e.message; log('[audiotap] compilation: ' + e.message, 'error'); return null; }
+  try { const t = await compileCs('AudioTap', 'AudioTap'); audioTapFailAt = 0; return t; }
+  catch (e) { audioTapFailAt = Date.now(); lastToolErr = e.message; log('[audiotap] compilation: ' + e.message, 'error'); return null; }
 }
 
 // Mutex : deux tapStart concurrents (double-clic, retry renderer) passaient

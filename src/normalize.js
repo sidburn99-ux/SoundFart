@@ -116,6 +116,10 @@ async function testNormLufs(targetLufs) {
     const g = ctx.createGain();
     src.connect(g); g.connect(out.bus);
     src.onended = () => { try { g.disconnect(); } catch {} };
+    // Contexte suspendu (veille, devicechange en cours) : onended ne tire
+    // jamais et le gain resterait connecte au bus — deconnexion de secours.
+    setTimeout(() => { try { src.stop(); g.disconnect(); } catch {} },
+      Math.ceil(buf.duration * 1000) + 1500);
     src.start();
     toast('Test : loudness ' + target + ' LUFS — écouté sur « ' + (cfg.settings.monLabel || 'écoute locale') + ' » uniquement.');
   } catch (e) { logErr('testNormLufs', e); toast('Test impossible : ' + (e && e.message || e), 'warn'); }

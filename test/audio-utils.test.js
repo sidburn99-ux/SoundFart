@@ -48,6 +48,17 @@ test('findCableCapture : pas de capture -> null', () => {
   assert.equal(U.findCableCapture([{ flow: 'render', id: 'r', name: 'CABLE Input' }], 'CABLE Input'), null);
 });
 
+test('parseEndpoints : nom vide reste vide (pas de repli sur l ID)', () => {
+  // AudioEndpoint.exe ecrit 'capture|{guid}|' quand DeviceName() echoue :
+  // name doit rester '' pour que chooseRestoreIds ne le prenne pas pour
+  // un peripherique non virtuel (garde SF-REL-0660).
+  const eps = U.parseEndpoints('capture|{0.0.1.00000000}.{guid}|\nrender|{r}|CABLE Input');
+  assert.equal(eps[0].name, '');
+  assert.equal(eps[0].id, '{0.0.1.00000000}.{guid}');
+  const ids = U.chooseRestoreIds(eps, { console: '{0.0.1.00000000}.{guid}', comm: '', multi: '' }, { console: '', comm: '', multi: '' });
+  assert.notEqual(ids.consoleId, '{0.0.1.00000000}.{guid}', 'endpoint sans nom jamais restaure');
+});
+
 test('parseEndpoints : lignes malformees ne produisent pas de name undefined', () => {
   const eps = U.parseEndpoints('capture|{x}\n|\ntexte-sans-separateur\nrender|{r}|OK');
   for (const e of eps) {

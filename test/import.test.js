@@ -7,7 +7,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
-const { importAudioFiles, enqueueImport } = require('../lib/import');
+const { importAudioFiles, enqueueImport, sweepStaleTemps } = require('../lib/import');
 
 function dirs() {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-imp-'));
@@ -136,6 +136,20 @@ test('fichier >512 Mo : refusé à l’import (file:read ne pourrait jamais le l
   const out = await importAudioFiles([big], root);
   assert.equal(out[0].error, 'trop volumineux (> 512 Mo)');
   assert.ok(!fs.existsSync(path.join(root, 'sons', 'gros.mp3')), 'rien copié');
+});
+
+test('sweepStaleTemps : .part de plus de 1 h supprimés, récents conservés', async () => {
+  const { root } = dirs();
+  const sons = path.join(root, 'sons');
+  fs.mkdirSync(sons, { recursive: true });
+  const old = path.join(sons, 'vieux.part'), recent = path.join(sons, 'recent.part'), mig = path.join(sons, 'x.migtmp-1');
+  fs.writeFileSync(old, 'x'); fs.writeFileSync(recent, 'x'); fs.writeFileSync(mig, 'x');
+  const oldTime = (Date.now() - 2 * 3600e3) / 1000;
+  fs.utimesSync(old, oldTime, oldTime); fs.utimesSync(mig, oldTime, oldTime);
+  await sweepStaleTemps(sons);
+  assert.ok(!fs.existsSync(old), 'vieux .part supprimé');
+  assert.ok(!fs.existsSync(mig), 'vieux .migtmp supprimé');
+  assert.ok(fs.existsSync(recent), 'récent .part conservé (copie possible en vol)');
 });
 
 test('extensions non audio ignorées silencieusement', async () => {

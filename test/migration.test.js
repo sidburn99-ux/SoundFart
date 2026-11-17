@@ -193,6 +193,19 @@ test('storageDir == SoundFart-data : tous les sous-dossiers racine copiés', () 
   assert.equal(fs.readFileSync(path.join(dst, 'divers', 'x.bin'), 'utf8'), 'data');
 });
 
+test('chemin frère partageant le préfixe : JAMAIS réécrit', () => {
+  // 'E:\SoundFart-data-old\x' n'est PAS dans SoundFart-data : le remplacement
+  // par préfixe corromprait en '<appData>-old\x' (chemin mort silencieux).
+  const { src, dst } = tmpdirs();
+  const sibling = src + '-old'; // ex. SoundFart-data-old
+  const cfgObj = { settings: { storageDir: sibling + '\\sons' }, sounds: [] };
+  fs.writeFileSync(path.join(src, 'config.json'), JSON.stringify(cfgObj));
+  runPortableMigration({ portableDataDir: src, appData: dst, log });
+  const out = fs.readFileSync(path.join(dst, 'config.json'), 'utf8');
+  assert.ok(out.includes(sibling.replace(/\\/g, '\\\\')), 'le chemin frère est intact');
+  assert.ok(!out.includes(dst.replace(/\\/g, '\\\\') + '-old'), 'pas de appData-old fantôme');
+});
+
 test('sources absentes : ignorées sans erreur', () => {
   const { src, dst } = tmpdirs();
   fs.writeFileSync(path.join(src, 'config.json'), cfg(src));

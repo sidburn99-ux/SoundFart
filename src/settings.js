@@ -89,7 +89,7 @@ function importConfig(onDone) {
       missing.clear();
       // Purge le cache decode : les AudioBuffer des anciens chemins ne
       // servent plus (jusqu'a 256 Mo d'orphelins sinon).
-      bufCache.clear(); bufCacheBytes = 0; longWarned.clear(); bufInflight.clear();
+      bufCache.clear(); bufCacheBytes = 0; longWarned.clear(); bufInflight.clear(); truncWarned.clear();
       save();
       updateStorageUi(); // la banniere dossier de sons depend de storageDir importe
       await refreshDevices(false);

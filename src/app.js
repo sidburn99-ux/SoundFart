@@ -51,6 +51,7 @@ function el(tag, props = {}, ...kids) {
 // ================================================================ etat
 let cfg;
 let missing = new Set();
+let missingPaths = new Set(); // chemins absents du disque (checkMissing) — anti-cache-fantome
 let fileSigs = null; // path -> 'size:mtimeMs' de la derniere verification (checkMissing)
 const cardEls = new Map();
 const playingCount = new Map();
@@ -325,6 +326,8 @@ let bufCacheBytes = 0;
 
 const bufInflight = new Map(); // path -> Promise<buf> : evite le double decodage concurrent
 let decodeActive = 0; // semaphore : 2 decodeAudioData simultanes max
+let decodeZombies = 0; // decodages ayant timeout mais encore pendants en arriere-plan
+const MAX_DECODE_ZOMBIES = 2; // borne : au-dela on refuse de nouveaux decodages
 const decodeQueue = []; // {res, bytes} en attente de slot decode
 let decodeQueuedBytes = 0; // chaque waiter retient son ArrayBuffer brut
 const DECODE_QUEUE_MAX = 64;
@@ -357,6 +360,13 @@ async function getBuffer(path, allowCache) {
   }
   if (bufInflight.has(path)) return bufInflight.get(path);
   const p = (async () => {
+    // Decodages zombies (timeout mais decodeAudioData toujours pendante) :
+    // chacun retient son ArrayBuffer brut jusqu'a ~150 Mo. Sans borne, des
+    // clics repetes sur fichiers corrompus different(s) accumulaient des
+    // zombies jusqu'a saturation memoire du renderer — on refuse tot.
+    if (decodeZombies >= MAX_DECODE_ZOMBIES) {
+      const e = new Error('Décodage audio bloqué — redémarrez l\'application.'); e.noFileErr = true; throw e;
+    }
     const data = await window.sf.readFile(path).catch((e) => {
       // Seul un vrai manquant (ENOENT) doit badge « introuvable » : un
       // fichier present mais trop gros / non lisible / extension refusee
@@ -381,11 +391,20 @@ async function getBuffer(path, allowCache) {
     // decodeAudioData peut pendre indefiniment sur un fichier pathologique
     // : sans timeout les 2 slots du semaphore n'etaient jamais relaches et
     // TOUTES les lectures suivantes restaient muettes (promesse pendante,
-    // aucun toast). Le decode continue en arriere-plan, resultat ignore.
+    // aucun toast). Le decode continue en arriere-plan : on le compte en
+    // zombie (borne MAX_DECODE_ZOMBIES) jusqu'a son reglement reel pour ne
+    // pas accumuler des ArrayBuffers retenus sans limite.
+    const decP = decoder.decodeAudioData(ab);
+    let decSettled = false;
+    decP.then(() => { decSettled = true; }, () => { decSettled = true; });
     buf = await Promise.race([
-      decoder.decodeAudioData(ab),
+      decP,
       new Promise((_, rej) => setTimeout(() => {
-        const e = new Error('Décodage trop long — fichier peut-être corrompu.'); e.noFileErr = true; rej(e);
+        if (decSettled) return; // decP a deja gagne : timer sans objet
+        const e = new Error('Décodage trop long — fichier peut-être corrompu.'); e.noFileErr = true;
+        decodeZombies++;
+        decP.then(() => decodeZombies--, () => decodeZombies--);
+        rej(e);
       }, 30000)),
     ]);
   }
@@ -418,7 +437,10 @@ async function getBuffer(path, allowCache) {
   // allowCache : les apercus (preview YouTube, editeur) pointent des
   // fichiers hors cfg.sounds — sans ca chaque « Ecouter » relisait et
   // redecodait jusqu'a 150 Mo. Le cache LRU reste borne (256 Mo).
-  if (allowCache || cfg.sounds.some((x) => x.path === path)) {
+  // Garde « fichier disparu » : un decode en vol peut se terminer APRES le
+  // checkMissing qui a purge — sans ce test il remettrait le buffer en
+  // cache pour un path qui n'existe plus (lecture fantome au prochain play).
+  if ((allowCache || cfg.sounds.some((x) => x.path === path)) && !missingPaths.has(path)) {
     bufCache.set(path, { buf, bytes });
     bufCacheBytes += bytes;
     while (bufCacheBytes > BUF_CACHE_MAX && bufCache.size > 1) {
@@ -1416,9 +1438,21 @@ async function checkMissing() {
   }
   fileSigs = new Map(Object.entries(sigs));
   const miss = new Set((r && r.missing) || []);
+  // Fichier DISPARU : sa signature n'apparait pas dans sigs (checkFiles ne
+  // retourne que les presents) donc le bloc ci-dessus ne le voit pas — le
+  // PCM reste en cache et play() le jouerait en « fantome » alors que le
+  // badge dit « introuvable ». On purge explicitement les manquants.
+  for (const p of miss) {
+    if (bufCache.has(p) || bufInflight.has(p)) {
+      cacheDelete(p);
+      bufInflight.delete(p);
+      uiLog('cache audio purge (fichier disparu) : ' + p);
+    }
+  }
   const next = new Set(cfg.sounds.filter((s) => miss.has(s.path)).map((s) => s.id));
   const changed = next.size !== missing.size || [...next].some((i) => !missing.has(i));
   missing = next;
+  missingPaths = miss;
   if (changed) renderGrid();
 }
 
