@@ -68,7 +68,10 @@ async function recorderModal() {
   let devs;
   try {
     devs = (await navigator.mediaDevices.enumerateDevices())
-      .filter((d) => d.kind === 'audioinput' && d.deviceId !== 'communications' && d.deviceId !== 'default');
+      // deviceId '' = placeholder sans permission : le garder donnerait une
+      // option vide et un getUserMedia sans contrainte (peripherique par
+      // defaut Windows, potentiellement CABLE Output = la soundboard).
+      .filter((d) => d.kind === 'audioinput' && d.deviceId && d.deviceId !== 'communications' && d.deviceId !== 'default');
   } catch (e) {
     if (offTapDead) offTapDead();
     if (offTapPcm) offTapPcm();
@@ -233,8 +236,13 @@ async function recorderModal() {
         if (dead) { deadCleanup(); return; }
       }
       const want = [];
-      if (micOn.checked) want.push(['micro', () => navigator.mediaDevices.getUserMedia({
-        audio: { deviceId: micSel.value ? { exact: micSel.value } : undefined, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      // Sans deviceId exploitable, getUserMedia partirait sans contrainte
+      // sur le peripherique par defaut Windows — qui peut etre CABLE Output
+      // (la soundboard elle-meme) : on refuse la source micro plutot que
+      // d'enregistrer autre chose que la voix.
+      if (micOn.checked && !micSel.value) status.textContent = 'Aucun micro détecté — source micro ignorée.';
+      if (micOn.checked && micSel.value) want.push(['micro', () => navigator.mediaDevices.getUserMedia({
+        audio: { deviceId: { exact: micSel.value }, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       })]);
       if (pcOn.checked && !tapOn) want.push(['audio du PC', systemStream]);
       if (cableOn.checked) want.push(['câble SoundFart', cableStream]);
@@ -423,7 +431,22 @@ async function recorderModal() {
               el('span', { class: 'hint', text: 'Fin' }), trimEndIn),
               'Laisse tel quel pour tout garder. Si tu rognes, le fichier est enregistré en WAV (plus lourd mais sans perte).'),
           ];
-          const destDir = await askDestDir([{ label: 'Écouter', onclick: () => previewRec() }], trimNodes);
+          // Modale enregistreur fermee pendant la prise : askDestDir
+          // detruirait toute modale ouverte entre-temps (slot unique) —
+          // on sauvegarde directement dans le dossier connu, sans demander.
+          let destDir = closedDuringRec
+            ? (cfg.settings.storageDir || cfg.settings.lastDestDir || null)
+            : await askDestDir([{ label: 'Écouter', onclick: () => previewRec() }], trimNodes);
+          if (destDir === null && cfg.settings.storageDir) {
+            // « Annuler » tuait la prise en silence (des centaines de Mo
+            // perdus apres un arret volontaire). Si un dossier de sons
+            // principal existe, on propose d'y enregistrer plutot que de
+            // jeter — un second « Annuler » confirme la perte.
+            if (await confirmBox('Enregistrement non sauvegardé',
+                'Veux-tu quand même l\'enregistrer dans ton dossier de sons ?', 'Enregistrer')) {
+              destDir = cfg.settings.storageDir;
+            }
+          }
           if (destDir === null) {
             // La modale a ete detruite par askDestDir : status est detache,
             // seul un toast reste visible — l'utilisateur doit etre informe.
@@ -437,7 +460,12 @@ async function recorderModal() {
           const t1raw = trimEndIn.value.trim();
           const t1 = t1raw === '' ? null : Math.max(0, +t1raw || 0);
           if (t0 > 0.01 || (t1 != null && t1 > 0)) {
-            try {
+            // Garde memoire : decodeAudioData + encodeWav dupliquent le PCM
+            // — une prise de ~30+ min stereo saturait le renderer (crash
+            // -1/143). Au-dela de 150 Mo on garde le fichier complet.
+            if (ab.byteLength > 150 * 1024 * 1024) {
+              toast('Rognage ignoré : prise trop longue pour être retraitée en mémoire — fichier complet sauvegardé.', 'warn');
+            } else try {
               const buf = await decoder.decodeAudioData(ab.slice(0));
               const dur = buf.duration;
               const end = (t1 != null && t1 > 0) ? Math.min(t1, dur) : dur;
@@ -521,6 +549,12 @@ async function recorderModal() {
       // « Audio du PC » coche mais ni worklet PCM ni repli systeme n'ont
       // abouti : demarrer produirait un fichier silencieux indetectable.
       if (pcOn.checked && !pcConnected) throw new Error('audio du PC : aucune source disponible (capture et repli système en échec)');
+      // Source acquise puis morte PENDANT la preparation (micro debranche
+      // entre getUserMedia et rec.start — watchEnded ne couvre que
+      // l'etat 'recording') : demarrer produirait un fichier partiellement
+      // silencieux sans aucune alerte.
+      const deadSrc = streams.some((st) => st.getAudioTracks().some((t) => t.readyState !== 'live'));
+      if (deadSrc) throw new Error('une source audio est morte avant le démarrage');
       if (tapNode) {
         // Flush du ring buffer : le PCM arrive des l'audioTapStart, avant les
         // getUserMedia -> sans ca le debut du fichier contiendrait de l'audio

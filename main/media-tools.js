@@ -30,7 +30,16 @@ let ffmpegPromise = null; // single-flight : un seul telechargement/extraction a
 
 async function ensureFfmpeg() {
   // ffmpeg.exe ~80 Mo : en dessous de 10 Mo c'est un reste tronque/corrompu.
-  if (toolSane(ffmpegPath(), 10 * 1024 * 1024)) return ffmpegDir();
+  if (toolSane(ffmpegPath(), 10 * 1024 * 1024)) {
+    // Sonde d'execution : un crash pendant « tar -xf » pouvait laisser un
+    // exe PARTIEL >10 Mo — reutilise a vie, media:cut cassait jusqu'a
+    // nettoyage manuel. -version est la seule verite (~100 ms).
+    try { await execFileTracked(ffmpegPath(), ['-version'], { timeout: 15000 }); return ffmpegDir(); }
+    catch {
+      try { fs.rmSync(ffmpegDir(), { recursive: true, force: true }); } catch {}
+      log('[ffmpeg] exe present mais --version en echec — reinstallation', 'warn');
+    }
+  }
   if (fs.existsSync(ffmpegPath())) discardCorruptTool(ffmpegPath(), 'ffmpeg');
   if (ffmpegPromise) return ffmpegPromise;
   ffmpegPromise = (async () => {
@@ -57,6 +66,9 @@ async function ensureFfmpeg() {
           onProgress: (f) => { if (getWin() && !getWin().isDestroyed()) { try { getWin().webContents.send('sf:ytprogress', Math.round(f * 100)); } catch {} } },
         });
         const dest = ffmpegDir();
+        // ffmpegDir() peut etre un FICHIER (restes corrompus) : mkdirSync
+        // jetterait ENOTDIR a chaque appel sans auto-guérison.
+        try { if (fs.existsSync(dest) && !fs.statSync(dest).isDirectory()) fs.rmSync(dest, { force: true }); } catch {}
         fs.mkdirSync(dest, { recursive: true });
         // bsdtar de System32 lit le zip nativement ; le tar GNU de Git
         // present dans le PATH ne lit PAS zip -> « not a tar archive »
@@ -244,14 +256,18 @@ function httpsGetText(url, depth = 0, deadline = 0) {
     // chaque saut recreait 60 s -> ~5 min au lieu de 1 et ytdlpPromise
     // (donc tous les yt:*) restait bloque pendant ce temps.
     if (!deadline) deadline = Date.now() + 60000;
-    const killer = setTimeout(() => { try { req.destroy(); } catch {} rej(new Error('délai total dépassé (60 s)')); }, Math.max(1, deadline - Date.now()));
+    // req en let (pas const) : si https.get jette de facon synchrone, le
+    // timer resterait arme et evaluerait req.destroy() en TDZ ->
+    // ReferenceError dans un timer = uncaughtException -> app.quit().
+    let req = null;
+    const killer = setTimeout(() => { try { if (req) req.destroy(); } catch {} rej(new Error('délai total dépassé (60 s)')); }, Math.max(1, deadline - Date.now()));
     const done = (fn, v) => { clearTimeout(killer); fn(v); };
     const rej = (e) => done(reject, e), res = (v) => done(resolve, v);
     // Bornes : HTTPS only a chaque saut (anti-downgrade) et max 5
     // redirections — sinon une redirection circulaire bouclerait a vie.
     if (!/^https:\/\//i.test(url)) return rej(new Error('URL non-HTTPS refusée'));
     if (depth > 5) return rej(new Error('trop de redirections'));
-    const req = https.get(url, { headers: { 'User-Agent': 'SoundFart' } }, (r) => {
+    req = https.get(url, { headers: { 'User-Agent': 'SoundFart' } }, (r) => {
       if (r.statusCode >= 300 && r.statusCode < 400 && r.headers.location) {
         r.resume();
         let loc;
@@ -315,10 +331,10 @@ let ytdlpPromise = null;
 let lastToolErr = ''; // dernier echec de compilation d'outil natif (remonte a l'UI)
 
 async function ytdlpInstalledVersion() {
-  try {
-    const meta = JSON.parse(fs.readFileSync(ytdlpMetaFile(), 'utf-8'));
-    if (meta && meta.version) return meta.version;
-  } catch {}
+  // Le BINAIRE fait foi, pas yt-dlp.json : un exe corrompu >1 Mo passait
+  // toolSane et la meta declarait « derniere version » -> maybeUpdateYtDlp
+  // ne reinstallait jamais (latest <= current sur une meta menteuse).
+  // Coût : un exec --version (~100 ms) par ensure, single-flight.
   try {
     const { stdout } = await execFileTracked(ytdlpPath(), ['--version', '--ignore-config'], { timeout: 15000 });
     const v = String(stdout).trim().split(/\s+/)[0];
@@ -400,6 +416,12 @@ async function ensureYtDlp() {
       if (!toolSane(ytdlpPath(), 1024 * 1024)) {
         if (fs.existsSync(ytdlpPath())) discardCorruptTool(ytdlpPath(), 'yt-dlp');
         await installYtDlp(YTDLP_VERSION);
+      } else if (!(await ytdlpInstalledVersion())) {
+        // Exe present et >1 Mo mais n'execute pas (--version echoue) :
+        // corrompu sans etre tronque. Sans cette sonde, tous les yt:*
+        // echouaient jusqu'a suppression manuelle.
+        discardCorruptTool(ytdlpPath(), 'yt-dlp');
+        await installYtDlp(YTDLP_VERSION);
       } else {
         await maybeUpdateYtDlp();
       }
@@ -443,7 +465,10 @@ function runYt(args, onProgress) {
       const s = String(d);
       const m = /\[download\]\s+([\d.]+)%/.exec(s);
       if (m) { try { onProgress(parseFloat(m[1])); } catch {} }
-      if (err.length < 65536) err += d;
+      // stderr = progression + avertissements : on garde les 64 DERNIERS
+      // Ko — un cap frontal figeait les anciennes lignes et l'erreur
+      // finale (« ERROR: ... ») n'apparaissait jamais dans le message.
+      err = (err + String(d)).slice(-65536);
     });
     p.stdout.on('data', (d) => {
       const m = /\[download\]\s+([\d.]+)%/.exec(String(d));
@@ -467,16 +492,29 @@ const ytCancelledErr = () => { const e = new Error('yt-dlp annulé par l\'utilis
 const ytThrowIfCancelled = () => { if (ytCancelReq) throw ytCancelledErr(); };
 
 // Annulation utilisateur : tue l'arbre yt-dlp (+ ffmpeg petit-enfant)
-// et arme le jeton pour les phases hors runYt.
-// Le close handler rejette avec une erreur « annulé » distincte.
+// et arme le jeton pour les phases hors runYt. Couvre aussi yt:info
+// (activeInfo.p) — un dump-single-json long n'est plus incancellable.
+// Sans operation active on ne sert PAS le jeton : un yt:cancel orphelin
+// empoisonnait tous les yt:info suivants (« annule » jusqu'au prochain
+// yt:download qui seul remettait le jeton a zero).
+let activeInfo = null;
+let ytInfoBusy = false; // single-flight yt:info (comme ytDownloadBusy)
 H('yt:cancel', () => {
-  ytCancelReq = true;
   const rec = activeYt;
-  if (!rec) return ytDownloadBusy; // annulation en phase ensure/update : le jeton suffit
-  rec.cancelled = true;
-  try { killTree(rec.p.pid); } catch {}
-  try { rec.p.kill(); } catch {}
-  return true;
+  if (rec) {
+    ytCancelReq = true; rec.cancelled = true;
+    try { killTree(rec.p.pid); } catch {}
+    try { rec.p.kill(); } catch {}
+    return true;
+  }
+  if (activeInfo && activeInfo.p) {
+    ytCancelReq = true;
+    try { killTree(activeInfo.p.pid); } catch {}
+    try { activeInfo.p.kill(); } catch {}
+    return true;
+  }
+  if (ytDownloadBusy || ytInfoBusy) { ytCancelReq = true; return true; }
+  return false; // rien en cours : pas de jeton — evite l'empoisonnement
 });
 
 // f vaut -1 (reset) ou un pourcentage 0-100 deja pret (yt-dlp, downloadVerified).
@@ -499,15 +537,32 @@ const isYoutubeUrl = (url) => {
 
 H('yt:info', async (_e, url) => {
   if (!validHttpUrl(url) || !isYoutubeUrl(url)) throw new Error('URL YouTube invalide');
-  await ensureYtDlp();
-  ytProgress(-1);
-  // execFileTracked (et non execFileP) : le process est suivi dans
-  // childProcs et tue au will-quit — un yt:info en vol ne survit pas.
-  const { stdout } = await execFileTracked(ytdlpPath(), ['--ignore-config', '--dump-single-json', '--no-playlist', '--no-warnings', url], { timeout: 120000, windowsHide: true }); // stdout plafonne a 4 Mo par execFileTracked (maxBuffer n'existe pas sur spawn)
-  let j;
-  try { j = JSON.parse(stdout); }
-  catch (e) { throw new Error('yt-dlp a renvoyé des métadonnées illisibles : ' + e.message); }
-  return { title: j.title || '', duration: j.duration || 0, url: j.webpage_url || url };
+  // Single-flight : deux yt:info concurrents s'ecrasaient activeInfo
+  // (yt:cancel ne tuait que le dernier) et entrelaçaient ytProgress(-1).
+  if (ytInfoBusy) throw new Error('Une analyse YouTube est déjà en cours.');
+  if (ytDownloadBusy) throw new Error('Un import YouTube est déjà en cours — attends la fin.');
+  ytInfoBusy = true;
+  ytCancelReq = false; // operation fraiche : le jeton repart a zero
+  try {
+    await ensureYtDlp();
+    ytThrowIfCancelled();
+    ytProgress(-1);
+    // execFileTracked (et non execFileP) : le process est suivi dans
+    // childProcs et tue au will-quit — un yt:info en vol ne survit pas.
+    // opts.rec expose le ChildProcess : yt:cancel peut l'interrompre.
+    activeInfo = {};
+    let stdout;
+    try {
+      ({ stdout } = await execFileTracked(ytdlpPath(), ['--ignore-config', '--dump-single-json', '--no-playlist', '--no-warnings', url], { timeout: 120000, windowsHide: true, rec: activeInfo }));
+    } catch (e) {
+      if (ytCancelReq) throw ytCancelledErr();
+      throw e;
+    } finally { activeInfo = null; }
+    let j;
+    try { j = JSON.parse(stdout); }
+    catch (e) { throw new Error('yt-dlp a renvoyé des métadonnées illisibles : ' + e.message); }
+    return { title: j.title || '', duration: j.duration || 0, url: j.webpage_url || url };
+  } finally { ytInfoBusy = false; }
 });
 
 let ytDownloadBusy = false; // single-flight : 2 imports concurrents = progression entrelacee + update yt-dlp possible pendant execution
@@ -515,6 +570,7 @@ H('yt:download', async (_e, o) => {
   if (!o || typeof o !== 'object' || Array.isArray(o)) throw new Error('options invalides');
   const { url, start, end, dir, full } = o;
   if (ytDownloadBusy) throw new Error('Un import YouTube est déjà en cours — attends la fin.');
+  if (ytInfoBusy) throw new Error('Une analyse YouTube est déjà en cours — attends la fin.');
   ytDownloadBusy = true;
   ytCancelReq = false; // nouveau telechargement : le jeton d'annulation repart a zero
   try {
@@ -540,13 +596,18 @@ H('yt:download', async (_e, o) => {
     // ffmpeg n'est requis que pour l'extrait sectionne (-x + download-sections) ;
     // un import « audio complet » ne doit PAS declencher le telechargement
     // d'~80 Mo d'ffmpeg inutilement.
+    // Coercition numerique comme media:cut : '0x10' passerait Number.isFinite
+    // puis serait interpole brut dans --download-sections (section invalide
+    // cote yt-dlp -> repli audio complet silencieux). Non fini -> repli
+    // audio complet comme avant (pas de section 0-...).
     const wantSection = !full && Number.isFinite(+start) && Number.isFinite(+end) && +end > +start;
+    const secStart = Math.max(0, +start || 0), secEnd = Math.max(0, +end || 0);
     let ffDir = null;
     if (wantSection) { try { ffDir = await ensureFfmpeg(); } catch (e) { log('[yt] ffmpeg indisponible pour la coupe, repli audio complet : ' + (e && e.message), 'warn'); } }
     ytThrowIfCancelled(); // annulation pendant le telechargement ffmpeg (~80 Mo)
     if (wantSection && ffDir) {
       try {
-        await runYt([...baseArgs, '--ffmpeg-location', ffDir, '-f', 'bestaudio', '-x', '--audio-format', 'mp3', '--download-sections', `*${start}-${end}`, url], ytProgress);
+        await runYt([...baseArgs, '--ffmpeg-location', ffDir, '-f', 'bestaudio', '-x', '--audio-format', 'mp3', '--download-sections', `*${secStart}-${secEnd}`, url], ytProgress);
         sectioned = true;
       } catch (e) {
         // Annulation = intention utilisateur : JAMAIS de repli sur

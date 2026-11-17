@@ -26,10 +26,16 @@ const killTree = (pid) => { try { execFile('taskkill', ['/pid', String(pid), '/T
 function execFileTracked(file, args, opts = {}) {
   return new Promise((resolve, reject) => {
     const p = trackChild(spawn(file, args, { ...opts, windowsHide: true }));
+    // opts.rec : objet externe recevant le ChildProcess des le spawn —
+    // permet a yt:cancel de tuer un yt:info en vol comme un runYt.
+    if (opts.rec) opts.rec.p = p;
     let out = '', err = '', done = false;
     const timer = opts.timeout ? setTimeout(() => { if (!done) { done = true; try { killTree(p.pid); } catch {} try { p.kill(); } catch {} reject(new Error('délai dépassé')); } }, opts.timeout) : null;
-    if (p.stdout) p.stdout.on('data', (d) => { if (out.length < 4 * 1024 * 1024) out += d; });
-    if (p.stderr) p.stderr.on('data', (d) => { if (err.length < 65536) err += d; });
+    // Caps « derniers N octets » (slice(-N)) : un cap frontal conservait le
+    // DEBUT du flux — sur un long ffmpeg/csc, err.slice(-500) renvoyait des
+    // lignes de progression anciennes au lieu de l'erreur finale.
+    if (p.stdout) p.stdout.on('data', (d) => { const t = out + d; out = t.length > 4 * 1024 * 1024 ? t.slice(-4 * 1024 * 1024) : t; });
+    if (p.stderr) p.stderr.on('data', (d) => { const t = err + d; err = t.length > 65536 ? t.slice(-65536) : t; });
     p.on('error', (e) => { if (!done) { done = true; if (timer) clearTimeout(timer); reject(e); } });
     p.on('close', (code) => {
       if (done) return;
@@ -125,60 +131,15 @@ if (!isPrimary) {
 // Migration unique depuis l'ancien SoundFart-data : config, marqueur micro,
 // outils et fichiers crees sont copies une fois, les chemins de la config
 // reecrits vers le nouveau dossier. SoundFart-data devient obsolete.
+// Implementation dans lib/migration.js : reprenable, sans ecrasement,
+// marqueur ecrit seulement si TOUTES les copies ont reussi.
+const { runPortableMigration } = require('./lib/migration');
 const portableDataDir = process.env.PORTABLE_EXECUTABLE_DIR && !process.argv.includes('--test-profile')
   ? path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'SoundFart-data') : null;
 if (portableDataDir) {
-  const appData = app.getPath('userData');
   try {
-    const oldCfg = path.join(portableDataDir, 'config.json');
-    // Marqueur de migration : SoundFart-data est la source de verite UNE
-    // fois — les configs %APPDATA% anterieures ne sont que des restes de
-    // sessions dev (npm start). Sans marqueur, une config AppData existante
-    // (meme perimee) bloquait la migration et l'app tournait sur un profil
-    // etrangere. Le marqueur empeche toute re-migration ulterieure.
-    const migrated = path.join(appData, '.migrated-from-portable');
-    if (portableDataDir !== appData && fs.existsSync(oldCfg) && !fs.existsSync(migrated)) {
-      fs.mkdirSync(appData, { recursive: true });
-      const ts = new Date().toISOString().replace(/[:.]/g, '-');
-      // Backup des eventuelles configs AppData precedentes (restes dev) :
-      // jamais d'ecrasement silencieux de donnees utilisateur.
-      for (const f of ['config.json', 'config.json.bak']) {
-        try {
-          const p = path.join(appData, f);
-          if (fs.existsSync(p)) fs.renameSync(p, p + '.pre-migration-' + ts);
-        } catch {}
-      }
-      // JSON echappe les backslashes (\\) : on remplace la forme echappee
-      // PUIS la forme brute pour couvrir les deux ecritures possibles.
-      const fromJ = portableDataDir.replace(/\\/g, '\\\\');
-      const toJ = appData.replace(/\\/g, '\\\\');
-      // JSON peut contenir des chemins en '/' (valide, isUsablePath
-      // l'accepte) : sans cette forme, un config etranger/editable-main
-      // garderait des pointeurs vers l'ancien dossier portable.
-      const fromF = portableDataDir.replace(/\\/g, '/');
-      const toF = appData.replace(/\\/g, '/');
-      const rewrite = (f) => {
-        const t = fs.readFileSync(path.join(portableDataDir, f), 'utf-8');
-        fs.writeFileSync(path.join(appData, f),
-          t.split(fromJ).join(toJ).split(portableDataDir).join(appData)
-           .split(fromF).join(toF));
-      };
-      for (const f of ['config.json', 'config.json.bak', 'audio-restore.json']) {
-        try { if (fs.existsSync(path.join(portableDataDir, f))) rewrite(f); } catch {}
-      }
-      // Fichiers crees par l'app (sons recopies, imports, enregistrements,
-      // extraits, outils, seeds) : copies pour ne casser aucune reference
-      // de la config migree. Une copie locale, une seule fois.
-      for (const d of ['tools', 'imports', 'recordings', 'cuts', 'default-sounds']) {
-        try {
-          const src = path.join(portableDataDir, d);
-          if (fs.existsSync(src)) fs.cpSync(src, path.join(appData, d), { recursive: true, force: true });
-        } catch (e) { log('[migration] copie ' + d + ' : ' + e.message, 'warn'); }
-      }
-      try { fs.writeFileSync(migrated, new Date().toISOString()); } catch {}
-      log('[migration] donnees reprises de SoundFart-data vers ' + appData);
-    }
-  } catch (e) { log('[migration] ' + e.message, 'warn'); }
+    runPortableMigration({ portableDataDir, appData: app.getPath('userData'), log });
+  } catch (e) { log('[migration] ' + (e && e.message), 'warn'); }
 }
 
 // Mode test : --test-profile isole config/outils/logs dans %TEMP%\SoundFart-test (config reelle intacte)
@@ -385,8 +346,16 @@ H('config:save', (_e, cfg) => {
   const body = JSON.stringify(cfg, null, 2);
   if (body.length > 5 * 1024 * 1024) throw new Error('configuration trop volumineuse');
   fs.mkdirSync(path.dirname(f), { recursive: true });
-  // sauvegarde .bak avant ecrasement : une ecriture cassee reste recuperable
-  try { if (fs.existsSync(f)) fs.copyFileSync(f, f + '.bak'); } catch {}
+  // sauvegarde .bak avant ecrasement : une ecriture cassee reste recuperable.
+  // Copie via .tmp + rename : un copyFileSync interrompu (crash, disque
+  // plein) laissait un .bak TRONQUE — le fallback relirait un JSON invalide.
+  try {
+    if (fs.existsSync(f)) {
+      const bakTmp = f + '.bak.tmp';
+      fs.copyFileSync(f, bakTmp);
+      fs.renameSync(bakTmp, f + '.bak');
+    }
+  } catch (e) { log('[config] sauvegarde .bak : ' + (e && e.message), 'warn'); }
   fs.writeFileSync(tmp, body, 'utf-8');
   fs.renameSync(tmp, f);
   return true;
@@ -398,7 +367,12 @@ const toolsDir = () => path.join(app.getPath('userData'), 'tools');
 // Un dir relatif ou non-chainable est ignore (protection contre une config importee malveillante).
 function storageRoot(dir) {
   const d = dir && String(dir).trim();
-  return d && path.isAbsolute(d) ? d : app.getPath('userData');
+  if (!d || !path.isAbsolute(d)) return app.getPath('userData');
+  // Durcissement commun a tous les handlers (imports, rec:save, imports:list,
+  // media:cut, yt:download) : un dir absolu avec caracteres de controle
+  // etait accepte tel quel — isUsablePath rejette comme files:import.
+  if (!isUsablePath(d)) throw new Error('dossier de stockage invalide');
+  return d;
 }
 // expandPaths/expandPathsAsync viennent de lib/audio-utils.js — testables via node:test.
 
@@ -429,67 +403,19 @@ H('files:pickDir', async () => {
 
 // Import avec copie : les sons ajoutes sont COPIES dans <storageRoot>/sons/
 // (dossier choisi par l'utilisateur) — la bibliotheque devient autonome et ne
-// depend plus des emplacements d'origine. Dedoublonnage nom+taille+echantillons :
-// un fichier deja present est reutilise, jamais recopie. Copie .part+rename.
-// Sequence pour les .part de files:import : deux imports concurrents sur
-// des sources differentes mais le meme target calculeraient le meme
-// « target.part » -> copyFile entrelace = fichier mixte renomme en
-// silence. Nom unique par process+sequence (pattern writeRecording).
-let importPartSeq = 0;
-const sameFileQuick = async (a, b) => {
-  // Compare taille implicite faite par l'appelant + 4 KiB en tete et en queue.
-  const rd = async (p, off, len) => {
-    const fd = await fs.promises.open(p, 'r');
-    try {
-      const buf = Buffer.alloc(len);
-      const { bytesRead } = await fd.read(buf, 0, len, off);
-      return buf.subarray(0, bytesRead);
-    } finally { await fd.close(); }
-  };
-  const sa = await fs.promises.stat(a), sb = await fs.promises.stat(b);
-  if (sa.size !== sb.size) return false;
-  const n = Math.min(4096, sa.size);
-  const [ha, hb, ta, tb] = await Promise.all([rd(a, 0, n), rd(b, 0, n), rd(a, Math.max(0, sa.size - n), n), rd(b, Math.max(0, sb.size - n), n)]);
-  return ha.equals(hb) && ta.equals(tb);
-};
+// depend plus des emplacements d'origine. Dedoublonnage nom+taille+
+// echantillons+SHA-256 : un fichier deja present est reutilise, jamais
+// recopie ni substitue. Copie .part+rename, serialisee par dossier.
+// Implementation dans lib/import.js (testable via node:test).
+const { importAudioFiles, enqueueImport, sweepStaleTemps } = require('./lib/import');
 
-H('files:import', async (_e, paths, dir) => {
-  if (!Array.isArray(paths) || !paths.length || paths.length > 2000 || paths.some((p) => typeof p !== 'string')) throw new Error('chemins invalides');
+H('files:import', (_e, paths, dir) => {
+  // Chemins absolus exiges (comme file:read) : un relatif serait resolu
+  // contre le CWD du process main — import involontaire hors dossier voulu.
+  if (!Array.isArray(paths) || !paths.length || paths.length > 2000 || paths.some((p) => typeof p !== 'string' || !path.isAbsolute(p))) throw new Error('chemins invalides');
   const root = storageRoot(dir);
   if (!isUsablePath(root)) throw new Error('dossier de stockage invalide');
-  const dest = path.join(root, 'sons');
-  await fs.promises.mkdir(dest, { recursive: true });
-  const out = [];
-  for (const src of paths) {
-    const ext = path.extname(src).toLowerCase();
-    if (!AUDIO_EXT.includes(ext)) continue;
-    const st = await fs.promises.stat(src).catch(() => null);
-    if (!st || !st.isFile()) { out.push({ path: src, label: '', error: 'illisible' }); continue; }
-    const base = path.basename(src);
-    const stem = base.slice(0, base.length - ext.length) || base;
-    let reused = null, target = null;
-    for (let i = 0; i < 1000 && !target && !reused; i++) {
-      const cand = path.join(dest, i === 0 ? base : `${stem} (${i})${ext}`);
-      const cst = await fs.promises.stat(cand).catch(() => null);
-      if (!cst) target = cand;
-      else if (cst.size === st.size && await sameFileQuick(src, cand).catch(() => false)) reused = cand;
-    }
-    if (reused) { out.push({ path: reused, label: stem }); continue; }
-    if (!target) { out.push({ path: src, label: '', error: 'nom introuvable' }); continue; }
-    const tmp = `${target}.${process.pid}.${importPartSeq++}.part`;
-    try {
-      await fs.promises.copyFile(src, tmp);
-      const cst = await fs.promises.stat(tmp);
-      if (cst.size !== st.size) throw new Error('copie incomplète');
-      await fs.promises.rename(tmp, target);
-    } catch (e2) {
-      try { await fs.promises.unlink(tmp); } catch {}
-      out.push({ path: src, label: '', error: e2.message });
-      continue;
-    }
-    out.push({ path: target, label: stem });
-  }
-  return out;
+  return enqueueImport(root, () => importAudioFiles(paths, root, log));
 });
 
 H('file:read', async (_e, p) => {
@@ -598,6 +524,10 @@ H('rec:save', async (_e, opts) => {
   if (data == null) throw new Error('données audio manquantes');
   const rdir = path.join(storageRoot(dir), 'recordings');
   await fs.promises.mkdir(rdir, { recursive: true }); // async : UNC ne gele pas le main (SF-REL-0602)
+  // Menage des .part orphelins (>1 h) : un kill entre writeFile(tmp) et
+  // link laissait un partiel definitif — le sweep de lib/import.js ne
+  // couvrait que sons/.
+  await sweepStaleTemps(rdir, log);
   // string : data.length = unites UTF-16, Buffer.from encode en UTF-8
   // (jusqu'a ~3x pour le CJK) — un texte de ~200 M caracteres passait le
   // cap 512 Mo puis allouait ~600 Mo. byteLength mesure le vrai cout.
@@ -638,9 +568,23 @@ function writeRestoreMarker(obj) {
 }
 // Garde externe : si ce process meurt sans will-quit (kill, crash, BSOD),
 // le guard detache restaure le micro a la mort du parent.
+// Un SEUL guard est utile : tous surveillent le meme pid parent et se
+// reveilleraient ensemble a sa mort (N 'set capture' COM concurrents sur
+// le meme marqueur). A chaque nouvelle bascule on tue les precedents.
+const micGuardPids = new Set();
 function spawnMicGuard(tool) {
   try {
+    for (const pid of micGuardPids) { try { process.kill(pid); } catch {} }
+    micGuardPids.clear();
     const g = spawn(tool, ['guard', String(process.pid), restoreFile()], { detached: true, stdio: 'ignore', windowsHide: true });
+    if (g.pid) {
+      micGuardPids.add(g.pid);
+      // Purge a la mort : sans ca, le pid d'un guard sorti restait dans le
+      // Set et le prochain spawnMicGuard faisait process.kill() sur un PID
+      // potentiellement REUTILISE par un processus innocent.
+      g.on('exit', () => micGuardPids.delete(g.pid));
+      g.on('error', () => micGuardPids.delete(g.pid));
+    }
     // 'error' async (exe disparu entre ensureAudioTool et le spawn) sans
     // listener = uncaughtException -> crash de l'app.
     g.on('error', (e) => log('[mic-guard] ' + (e && e.message), 'warn'));
@@ -1005,12 +949,16 @@ let audioTapKilling = false; // vrai entre kill() et l'evenement 'exit' (anti do
 let audioTapFailed = false;  // spawn en echec (evenement 'error') sur le processus courant
 let tapPcmRem = Buffer.alloc(0); // reste PCM non aligne (stdout livre des chunks arbitraires)
 
+// Meme backoff que ensureAudioTool : sans lui, un csc.exe en panne
+// relancait une compilation de 60 s a chaque tentative d'enregistrement.
+let audioTapFailAt = 0;
 async function ensureAudioTap() {
   const p = audioTapPath();
-  if (toolSane(p, 4096)) return p;
+  if (toolSane(p, 4096)) { audioTapFailAt = 0; return p; }
+  if (Date.now() - audioTapFailAt < 10 * 60 * 1000) return null;
   if (fs.existsSync(p)) discardCorruptTool(p, 'AudioTap');
-  try { return await compileCs('AudioTap', 'AudioTap'); }
-  catch (e) { lastToolErr = e.message; log('[audiotap] compilation: ' + e.message, 'error'); return null; }
+  try { const t = await compileCs('AudioTap', 'AudioTap'); audioTapFailAt = 0; return t; }
+  catch (e) { audioTapFailAt = Date.now(); lastToolErr = e.message; log('[audiotap] compilation: ' + e.message, 'error'); return null; }
 }
 
 // Mutex : deux tapStart concurrents (double-clic, retry renderer) passaient
@@ -1363,8 +1311,15 @@ app.on('will-quit', () => {
   // execFileSync borne (2 s/PID) : killTree async n'aurait pas le temps de
   // finir avant la mort du process — ffmpeg restait orphelin et continuait
   // d'ecrire un MP3 partiel apres la fermeture.
+  // Budget global 6 s : N enfants x 2 s de taskkill pouvaient geler la
+  // fermeture plusieurs dizaines de secondes. Au-dela on se contente de
+  // p.kill() (non bloquant) — un orphelin court est prefere a un gel.
+  const killDeadline = Date.now() + 6000;
   for (const p of [...childProcs]) {
-    try { execFileSync('taskkill', ['/pid', String(p.pid), '/T', '/F'], { timeout: 2000, windowsHide: true }); } catch {}
+    if (p.exitCode !== null) continue; // deja sorti : taskkill frapperait un PID reutilise
+    const left = killDeadline - Date.now();
+    if (left <= 0) { try { p.kill(); } catch {} break; }
+    try { execFileSync('taskkill', ['/pid', String(p.pid), '/T', '/F'], { timeout: Math.min(2000, left), windowsHide: true }); } catch {}
     try { p.kill(); } catch {}
   }
   childProcs.clear();

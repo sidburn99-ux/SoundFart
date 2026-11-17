@@ -272,10 +272,16 @@ internal static class AudioEndpoint
     {
         // Attente de la mort du parent (poll 500 ms). On memorise StartTime pour
         // detecter une reutilisation du PID par un autre processus (comme AudioTap).
+        // ArgumentException = process inexistant : le parent est DEJA mort dans
+        // la fenetre spawn->premier check — on ne sort pas sans restaurer, on
+        // tombe directement dans le bloc de restauration (le check owner du
+        // marqueur garantit qu'on ne restaure que notre propre bascule).
         DateTime startTime;
+        bool parentGone = false;
         try { startTime = System.Diagnostics.Process.GetProcessById(pid).StartTime; }
+        catch (ArgumentException) { parentGone = true; startTime = DateTime.MinValue; }
         catch { return 0; }
-        for (;;)
+        while (!parentGone)
         {
             try
             {

@@ -51,6 +51,7 @@ function el(tag, props = {}, ...kids) {
 // ================================================================ etat
 let cfg;
 let missing = new Set();
+let missingPaths = new Set(); // chemins absents du disque (checkMissing) — anti-cache-fantome
 let fileSigs = null; // path -> 'size:mtimeMs' de la derniere verification (checkMissing)
 const cardEls = new Map();
 const playingCount = new Map();
@@ -320,11 +321,18 @@ const truncWarned = new Set(); // chemin -> deja prevu : un toast par fichier
 const voices = new Set();
 let playGen = 0; // generation audio : stopAll/teardownAudio l'incrementent pour avorter les play() en vol
 let deadRetries = 0; // retry borne sur 'interrupted'/'closed' (reset sur 'running')
+let closedRetries = 0; // boucle 'closed' SPECIFIQUE : deadRetries etait
+// reset a chaque rebuild productif (ligne ~668) — un driver qui ferme le
+// ctx en cycle produisait un rebuild toutes les ~2,5 s a vie, chacun avec
+// teardownAudio -> stopAll : sons coupes en rafale + toasts en boucle.
+let lastClosedAt = 0;
 let muteWarnAt = 0; // throttle toast « micro muet » : un BT peut couper/remettre le mute en rafale
 let bufCacheBytes = 0;
 
 const bufInflight = new Map(); // path -> Promise<buf> : evite le double decodage concurrent
 let decodeActive = 0; // semaphore : 2 decodeAudioData simultanes max
+let decodeZombies = 0; // decodages ayant timeout mais encore pendants en arriere-plan
+const MAX_DECODE_ZOMBIES = 2; // borne : au-dela on refuse de nouveaux decodages
 const decodeQueue = []; // {res, bytes} en attente de slot decode
 let decodeQueuedBytes = 0; // chaque waiter retient son ArrayBuffer brut
 const DECODE_QUEUE_MAX = 64;
@@ -357,6 +365,13 @@ async function getBuffer(path, allowCache) {
   }
   if (bufInflight.has(path)) return bufInflight.get(path);
   const p = (async () => {
+    // Decodages zombies (timeout mais decodeAudioData toujours pendante) :
+    // chacun retient son ArrayBuffer brut jusqu'a ~150 Mo. Sans borne, des
+    // clics repetes sur fichiers corrompus different(s) accumulaient des
+    // zombies jusqu'a saturation memoire du renderer — on refuse tot.
+    if (decodeZombies >= MAX_DECODE_ZOMBIES) {
+      const e = new Error('Décodage audio bloqué — redémarrez l\'application.'); e.noFileErr = true; throw e;
+    }
     const data = await window.sf.readFile(path).catch((e) => {
       // Seul un vrai manquant (ENOENT) doit badge « introuvable » : un
       // fichier present mais trop gros / non lisible / extension refusee
@@ -381,11 +396,20 @@ async function getBuffer(path, allowCache) {
     // decodeAudioData peut pendre indefiniment sur un fichier pathologique
     // : sans timeout les 2 slots du semaphore n'etaient jamais relaches et
     // TOUTES les lectures suivantes restaient muettes (promesse pendante,
-    // aucun toast). Le decode continue en arriere-plan, resultat ignore.
+    // aucun toast). Le decode continue en arriere-plan : on le compte en
+    // zombie (borne MAX_DECODE_ZOMBIES) jusqu'a son reglement reel pour ne
+    // pas accumuler des ArrayBuffers retenus sans limite.
+    const decP = decoder.decodeAudioData(ab);
+    let decSettled = false;
+    decP.then(() => { decSettled = true; }, () => { decSettled = true; });
     buf = await Promise.race([
-      decoder.decodeAudioData(ab),
+      decP,
       new Promise((_, rej) => setTimeout(() => {
-        const e = new Error('Décodage trop long — fichier peut-être corrompu.'); e.noFileErr = true; rej(e);
+        if (decSettled) return; // decP a deja gagne : timer sans objet
+        const e = new Error('Décodage trop long — fichier peut-être corrompu.'); e.noFileErr = true;
+        decodeZombies++;
+        decP.then(() => decodeZombies--, () => decodeZombies--);
+        rej(e);
       }, 30000)),
     ]);
   }
@@ -418,7 +442,10 @@ async function getBuffer(path, allowCache) {
   // allowCache : les apercus (preview YouTube, editeur) pointent des
   // fichiers hors cfg.sounds — sans ca chaque « Ecouter » relisait et
   // redecodait jusqu'a 150 Mo. Le cache LRU reste borne (256 Mo).
-  if (allowCache || cfg.sounds.some((x) => x.path === path)) {
+  // Garde « fichier disparu » : un decode en vol peut se terminer APRES le
+  // checkMissing qui a purge — sans ce test il remettrait le buffer en
+  // cache pour un path qui n'existe plus (lecture fantome au prochain play).
+  if ((allowCache || cfg.sounds.some((x) => x.path === path)) && !missingPaths.has(path)) {
     bufCache.set(path, { buf, bytes });
     bufCacheBytes += bytes;
     while (bufCacheBytes > BUF_CACHE_MAX && bufCache.size > 1) {
@@ -465,7 +492,7 @@ async function makeOutput(deviceId) {
   // (teardownAudio null audio[k] AVANT close) n'est plus reference -> on ne
   // rebuild pas pour lui.
   ctx.addEventListener('statechange', () => {
-    if (ctx.state === 'running') deadRetries = 0;
+    if (ctx.state === 'running') { deadRetries = 0; closedRetries = 0; }
     if (ctx.state === 'suspended') { uiLog('sortie audio suspendue (device=' + (deviceId || 'defaut') + ')'); return; }
     if (ctx.state === 'interrupted' || ctx.state === 'closed') {
       uiLog('sortie audio ' + ctx.state + ' (device=' + (deviceId || 'defaut') + ')');
@@ -475,10 +502,23 @@ async function makeOutput(deviceId) {
       else toast('Sortie audio fermée par le système — reconstruction en cours…', 'warn');
       // Reconstruction bornee : applyAudio recree les sorties. Ferme =
       // device probablement en re-init (reveil) -> delai plus long, plus
-      // de tentatives que 'interrupted'.
-      if (deadRetries < 5) {
+      // de tentatives que 'interrupted'. 'closed' a son propre compteur
+      // NON reset par un rebuild productif : sinon une cause cyclique
+      // (driver en re-init) bouclait a vie. Backoff progressif + reset
+      // de la fenetre apres 5 min sans close (incident isole ne doit pas
+      // epuiser le budget a vie).
+      if (ctx.state === 'closed') {
+        if (Date.now() - lastClosedAt > 300000) closedRetries = 0;
+        lastClosedAt = Date.now();
+        if (closedRetries < 8) {
+          closedRetries++;
+          setTimeout(() => { applyAudio().catch((e) => logErr('applyAudio retry', e)); }, Math.min(2500 * closedRetries, 20000));
+        } else {
+          toast('Sortie audio toujours instable — reconstruction automatique suspendue jusqu\'au prochain changement de périphérique.', 'warn');
+        }
+      } else if (deadRetries < 5) {
         deadRetries++;
-        setTimeout(() => { applyAudio().catch((e) => logErr('applyAudio retry', e)); }, ctx.state === 'closed' ? 2500 : 1500);
+        setTimeout(() => { applyAudio().catch((e) => logErr('applyAudio retry', e)); }, 1500);
       }
     }
   });
@@ -607,12 +647,23 @@ async function applyAudioInner() {
               processorOptions: VOICE_DSP[Math.min(4, Math.max(1, +(s.voiceDspLvl || 2)))],
             });
             src.connect(gate);
-            gate.connect(out.lim);
+            try {
+              gate.connect(out.lim);
+            } catch (ge) {
+              // Si gate.connect jette APRES src->gate reussi, le catch
+              // externe connectait aussi src->lim : voix en double (gate
+              // toujours dans le chemin). On retire le chemin gate d'abord.
+              try { src.disconnect(gate); } catch {}
+              throw ge;
+            }
           } else {
             src.connect(audio.cable.lim);
           }
         } catch (e) {
           uiLog('voice-gate indisponible, micro connecte direct : ' + (e && e.message));
+          // src->gate a pu reussir avant l'echec : sans disconnect, le
+          // repli src->lim laissait le gate zombie dans le chemin.
+          try { src.disconnect(); } catch {}
           src.connect(audio.cable.lim);
         }
         audio.micStream = stream; // apres connect : un echec ne laisse pas de piste orpheline
@@ -815,13 +866,18 @@ function play(sound, opts = {}) {
   // jouer deux fois sur le meme device = +6 dB et echos possibles.
   const seenDev = new Set();
   const uniq = active.filter((o) => !seenDev.has(o.deviceId || o.ctx.destination) && seenDev.add(o.deviceId || o.ctx.destination));
-  return getBuffer(sound.path, opts.preview === true)
+  // Chemin fige AVANT le decode : relocateSound peut changer s.path pendant
+  // le decodeAudioData — comparer x.path a sound.path (meme objet, deja
+  // mute) rendait la garde vacuante et lisait l'ANCIEN fichier une fois.
+  const decodePath = sound.path;
+  return getBuffer(decodePath, opts.preview === true)
     .catch((e) => { fileErr = !(e && e.noFileErr); throw e; })
     .then((buf) => {
     if (gen !== playGen) return null; // lecture percutee par un stop : ne pas demarrer la voix
     // Supprime/relocalise pendant le decode async : ne pas jouer un fantome
     // (ancien fichier) ni un son qui n'existe plus.
-    if (!opts.preview && !cfg.sounds.some((x) => x.id === sound.id && x.path === sound.path)) return null;
+    const cur = cfg.sounds.find((x) => x.id === sound.id);
+    if (!opts.preview && (!cur || cur.path !== decodePath)) return null;
     // Le plafond de 32 voix est revérifié ICI : des clics pendant le
     // decodeAudioData passaient tous le check synchrone de l'entree —
     // le pic de nodes n'etait alors borne que par le nombre de clics.
@@ -1416,9 +1472,21 @@ async function checkMissing() {
   }
   fileSigs = new Map(Object.entries(sigs));
   const miss = new Set((r && r.missing) || []);
+  // Fichier DISPARU : sa signature n'apparait pas dans sigs (checkFiles ne
+  // retourne que les presents) donc le bloc ci-dessus ne le voit pas — le
+  // PCM reste en cache et play() le jouerait en « fantome » alors que le
+  // badge dit « introuvable ». On purge explicitement les manquants.
+  for (const p of miss) {
+    if (bufCache.has(p) || bufInflight.has(p)) {
+      cacheDelete(p);
+      bufInflight.delete(p);
+      uiLog('cache audio purge (fichier disparu) : ' + p);
+    }
+  }
   const next = new Set(cfg.sounds.filter((s) => miss.has(s.path)).map((s) => s.id));
   const changed = next.size !== missing.size || [...next].some((i) => !missing.has(i));
   missing = next;
+  missingPaths = miss;
   if (changed) renderGrid();
 }
 

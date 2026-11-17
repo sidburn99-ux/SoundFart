@@ -57,6 +57,13 @@ class VoiceGateProcessor extends AudioWorkletProcessor {
       }
       this.xPrev[c] = xp; this.yPrev[c] = yp; this.lpPrev[c] = lp;
     }
+    // Canaux de sortie SANS entree correspondante (micro mono -> sortie
+    // stereo forcee) : output[c] n'etait jamais ecrit -> haut parleur
+    // droit muet vers Discord. On duplique le resultat filtre du canal 0.
+    for (let c = nCh; c < output.length; c++) {
+      const src = output[0], dst = output[c];
+      for (let i = 0; i < n; i++) dst[i] = src[i];
+    }
     // Passe 2 : enveloppe + gain UNE fois par echantillon, applique a
     // tous les canaux. Avant, les canaux >0 recevaient le gain fige a la
     // fin du bloc du canal 0 (~2,7 ms de decalage sur chaque transition
@@ -73,7 +80,9 @@ class VoiceGateProcessor extends AudioWorkletProcessor {
       // jamais — apres ~30 s de silence env/g tombaient en sous-normaux.
       if (this.env < 1e-20) this.env = 0;
       if (this.g < 1e-20) this.g = target;
-      for (let c = 0; c < nCh; c++) output[c][i] *= this.g;
+      // output.length (pas nCh) : les canaux dupliques mono->stereo
+      // doivent recevoir le gain du gate comme les autres.
+      for (let c = 0; c < output.length; c++) output[c][i] *= this.g;
     }
     return true;
   }

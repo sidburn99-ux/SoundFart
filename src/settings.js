@@ -87,9 +87,14 @@ function importConfig(onDone) {
       // potentiellement differents) : on les arrete comme removeSound.
       stopAll(true);
       missing.clear();
+      // Un checkMissing() demarre AVANT l'import peut se terminer APRES :
+      // sans invalider son jeton, il reecrivait missingPaths avec les
+      // chemins MANQUANTS de l'ANCIENNE config — getBuffer refusait alors
+      // de cacher des sons importes presents jusqu'au prochain scan.
+      missingPaths = new Set(); checkSeq++;
       // Purge le cache decode : les AudioBuffer des anciens chemins ne
       // servent plus (jusqu'a 256 Mo d'orphelins sinon).
-      bufCache.clear(); bufCacheBytes = 0; longWarned.clear(); bufInflight.clear();
+      bufCache.clear(); bufCacheBytes = 0; longWarned.clear(); bufInflight.clear(); truncWarned.clear();
       save();
       updateStorageUi(); // la banniere dossier de sons depend de storageDir importe
       await refreshDevices(false);
@@ -127,6 +132,12 @@ function settingsModal() {
   // selecionnait silencieusement le 1er peripherique (eventuellement un
   // virtuel) a l'application des reglages.
   const micSel = el('select', {}, el('option', { value: '', text: '(auto — premier vrai micro)' }), opts(audio.devices.inp, s.micId, false));
+  // '' = placeholder « auto » : sans ce drapeau, choisir « auto » puis
+  // Appliquer conservait l'ANCIEN micId (le placeholder s'affiche aussi
+  // quand le peripherique configure a disparu — la distinction « choisi
+  // par l'utilisateur » vs « affiche par defaut » exige un event change).
+  let micAutoPicked = false;
+  micSel.addEventListener('change', () => { micAutoPicked = micSel.value === ''; });
   const mix = el('input', { type: 'checkbox', checked: s.micMix });
   // Surbrillance des choix recommandes : ★ = a privilegier, ⚠ = a eviter.
   // dataset.label garde le libelle propre (sans prefixe) pour le stockage.
@@ -376,19 +387,28 @@ function settingsModal() {
       const pickVal = (sel, list, curId, curLabel) => {
         const noEnum = audio.devicesDegraded || !list || !list.length;
         if (noEnum && curId && ![...sel.options].some((o) => o.value === curId)) return { id: curId, label: curLabel };
-        return { id: sel.value, label: lbl(sel) };
+        const id = sel.value;
+        // Select fige a l'ouverture du panneau : si l'id choisi n'existe
+        // plus dans la liste a jour (devicechange pendant le panneau
+        // ouvert), on retombe sur '' plutot que de persister un
+        // peripherique disparu — sinon Appliquer annulait la
+        // re-resolution automatique de resolveDevices().
+        if (id && list && list.length && !list.some((d) => d.deviceId === id)) return { id: '', label: '' };
+        return { id, label: lbl(sel) };
       };
       const cv = pickVal(cableSel, audio.devices.out, s.cableId, s.cableLabel);
       s.cableId = cv.id; s.cableLabel = cv.label;
       const mv = pickVal(monSel, audio.devices.out, s.monId, s.monLabel);
       s.monId = mv.id; s.monLabel = mv.label;
       const iv = pickVal(micSel, audio.devices.inp, s.micId, s.micLabel);
-      // '' = placeholder « auto » : on conserve le micId existant (le
-      // placeholder s'affiche aussi quand le peripherique configure est
-      // absent — effacer ici perdrait le reglage sans action utilisateur).
+      // micAutoPicked : l'utilisateur a EXPLICITEMENT choisi « (auto) » —
+      // seul cas ou micId est efface. Sinon '' preserve l'existant car le
+      // placeholder s'affiche aussi quand le peripherique configure a
+      // disparu de la liste (effacer ici perdrait le reglage sans action).
       // MicId vide -> applyAudioInner prend le premier vrai micro non
       // virtuel ; pas de label '(choisir…)' stocke.
-      s.micId = iv.id || s.micId || ''; s.micLabel = iv.id ? iv.label : s.micLabel;
+      if (micAutoPicked) { s.micId = ''; s.micLabel = ''; }
+      else { s.micId = iv.id || s.micId || ''; s.micLabel = iv.id ? iv.label : s.micLabel; }
       s.micMix = mix.checked;
       s.stopShortcut = stopSc || '';
       s.storageDir = s.storageDir || '';
