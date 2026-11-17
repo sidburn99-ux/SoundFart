@@ -26,7 +26,7 @@
 - [ ] **Limite de durée** `maxSoundDur` (défaut 45 s, 0 = illimité) → lecture bornée + toast une fois. **[U] 16/11 : reporté — non testé.** *(non coché : reporté par l'utilisateur)*
 - [ ] Champ « Durée max » vidé puis Appliquer → la valeur affichée revient à la cible (plus de `0` silencieux = illimité). **[A] 17/11** : garde `''`→NaN ajoutée.
 - [x] Champ « Cible loudness (LUFS) » vidé puis « Normaliser toute la bibliothèque » → la normalisation utilise l'ancienne cible, **pas** 0 LUFS. **[A] 17/11** : `+''===0` corrigé (`lufsField`) **+ vérifié runtime CDP** : champ vidé → `normLufs` reste -18, affichage restauré.
-- [ ] Remplacer un fichier audio à **chemin constant** (ré-export/écrasement dans `sons/`) → `checkMissing` détecte le changement `size:mtime` et le prochain clic joue la **nouvelle** version. **[A] 17/11** : `file:check` retourne `sigs`, cache invalidé.
+- [x] Remplacer un fichier audio à **chemin constant** (ré-export/écrasement dans `sons/`) → `checkMissing` détecte le changement `size:mtime` et le prochain clic joue la **nouvelle** version. **[A] 17/11** : `file:check` retourne `sigs` **+ vérifié runtime CDP E2E** : fichier copié modifié → `checkMissing` → `bufCache` évincé (`cacheApres:false`), pas de badge missing.
 - [x] >32 clics rapides sur des sons non cachés → le plafond de voix tient après décodage (plus de pic >32). **[A] 17/11** : re-check post-`await` **+ vérifié runtime CDP** : 45 `play()` concurrents → pic exactement 32 voix, 0 après STOP.
 - [ ] Fichier audio corrompu/pathologique → `decodeAudioData` timeout 30 s → toast « Décodage trop long », lectures suivantes OK. **[A] 17/11** : `Promise.race` ajouté — **non reproduit**.
 - [ ] Aperçu YouTube « Écouter » cliqué 3× sur le même fichier → 2ᵉ/3ᵉ clic quasi instantané (cache aperçu). **[A] 17/11** : `allowCache` pour `preview`.
@@ -113,9 +113,9 @@
 ## H. Stockage & premier lancement (feature 17/11 — NON testée terrain)
 
 - [ ] Premier lancement sans `storageDir` → bannière « Choisis ton dossier de sons » visible, skippable. **[A] 17/11 partiel** : profil test sans storageDir → bannière visible (`hidden=false`) ; `updateStorageUi` bascule correctement dans les 2 sens (vérifié CDP). Reste : parcours complet choisir→persister→restart.
-- [ ] Glisser-déposer un MP3 → **copié** dans `<dossier>/sons/` (copie atomique), carte pointe sur la copie.
-- [ ] Réimporter le même fichier → réutilise la copie existante (nom+taille+échantillons), **pas de doublon** disque.
-- [ ] Importer sans dossier choisi → blocage + proposition de choisir (bannière/re-modale), pas d'écriture dans AppData.
+- [x] Glisser-déposer un MP3 → **copié** dans `<dossier>/sons/` (copie atomique), carte pointe sur la copie. **[A] 17/11 runtime CDP** : `addPaths` → fichier physique dans `sf-dest\sons\`, son ajouté (30→31).
+- [x] Réimporter le même fichier → réutilise la copie existante (nom+taille+échantillons), **pas de doublon** disque. **[A] 17/11 runtime CDP** : 2ᵉ import → 31 sons, 1 seul fichier dans `sons/`.
+- [x] Importer sans dossier choisi → blocage + proposition de choisir (bannière/re-modale), pas d'écriture dans AppData. **[A] 17/11 runtime CDP** : `confirmBox` « Choisir un dossier » affichée, « Annuler » annule proprement (aucun modal résiduel, aucun fichier créé).
 - [ ] YouTube → `imports/`, enregistreur → `recordings/`, extrait MP3 → `cuts/` sous le dossier choisi.
 - [ ] Retirer un son de la bibliothèque → le fichier copié **reste** dans `sons/`.
 - [ ] Paramètres → « Choisir… »/« Réinitialiser » le dossier → **persisté immédiatement** (visible après restart), bannière mise à jour.
