@@ -175,6 +175,7 @@ function editSound(s) {
     const v = await play(s, {
       monitorOnly: true, preview: true,
       volume: +vol.value,
+      norm, // norm locale non enregistree : l'apercu reflete « Enregistrer »
       trimStart: from ?? outStart(),
       trimEnd: outEnd(),
       fadeIn: Math.min(5000, Math.max(0, +fiIn.value || 0)), fadeOut: Math.min(5000, Math.max(0, +foIn.value || 0)),

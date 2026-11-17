@@ -800,7 +800,11 @@ function play(sound, opts = {}) {
     // Supprime/relocalise pendant le decode async : ne pas jouer un fantome
     // (ancien fichier) ni un son qui n'existe plus.
     if (!opts.preview && !cfg.sounds.some((x) => x.id === sound.id && x.path === sound.path)) return null;
-    const vol = ((opts.volume ?? sound.volume) / 100) * (sound.norm ?? 1);
+    // opts.norm : l'editeur passe la normalisation EN COURS non enregistree
+    // pour que l'apercu corresponde a ce que « Enregistrer » stockera —
+    // sans lui, play() lisait s.norm (ancienne valeur sauvee) et
+    // l'apercu ne collait pas au toast « Volume normalise : xN ».
+    const vol = ((opts.volume ?? sound.volume) / 100) * (opts.norm ?? sound.norm ?? 1);
     const offset = Math.min(Math.max(0, opts.trimStart ?? sound.trimStart ?? 0), Math.max(0, buf.duration - 0.05));
     const endRaw = opts.trimEnd !== undefined ? opts.trimEnd : sound.trimEnd;
     let endEff = endRaw ?? buf.duration;
