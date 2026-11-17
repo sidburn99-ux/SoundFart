@@ -115,7 +115,7 @@
 
 ## H. Stockage & premier lancement (feature 17/11 — NON testée terrain)
 
-- [ ] Premier lancement sans `storageDir` → bannière « Choisis ton dossier de sons » visible, skippable. **[A] 17/11 partiel** : profil test sans storageDir → bannière visible (`hidden=false`) ; `updateStorageUi` bascule correctement dans les 2 sens (vérifié CDP). Reste : parcours complet choisir→persister→restart.
+- [x] Premier lancement sans `storageDir` → bannière « Choisis ton dossier de sons » visible, skippable. **[A] 17/11 complet** : profil sans storageDir → bannière visible ; suppression persistée (`config.json` `""`) → **restart → bannière réaffichée** ; re-saisie `sf-dest` + save → **restart → bannière masquée, storageDir persisté**. Seul le dialogue natif `pickDir` reste non cliqué.
 - [x] Glisser-déposer un MP3 → **copié** dans `<dossier>/sons/` (copie atomique), carte pointe sur la copie. **[A] 17/11 runtime CDP** : `addPaths` → fichier physique dans `sf-dest\sons\`, son ajouté (30→31).
 - [x] Réimporter le même fichier → réutilise la copie existante (nom+taille+échantillons), **pas de doublon** disque. **[A] 17/11 runtime CDP** : 2ᵉ import → 31 sons, 1 seul fichier dans `sons/`.
 - [x] Importer sans dossier choisi → blocage + proposition de choisir (bannière/re-modale), pas d'écriture dans AppData. **[A] 17/11 runtime CDP** : `confirmBox` « Choisir un dossier » affichée, « Annuler » annule proprement (aucun modal résiduel, aucun fichier créé).
