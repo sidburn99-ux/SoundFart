@@ -7,10 +7,10 @@
 // Secrets/vars requis (wrangler) :
 //   GITHUB_TOKEN   : Fine-grained Personal Access Token GitHub, UNIQUEMENT
 //                   « Contents: Read and write » sur le depot PRIVE
-//                   « soundfart-reports » (aucun autre depot, aucune
+//                   « SoundFart-reports » (aucun autre depot, aucune
 //                   permission supplementaire).
 //                   -> `wrangler secret put GITHUB_TOKEN`
-//   GITHUB_REPO    : "proprietaire/soundfart-reports" (var, pas secret)
+//   GITHUB_REPO    : "proprietaire/SoundFart-reports" (var, pas secret)
 //   GITHUB_BRANCH  : branche par defaut (var, optionnel, defaut "main")
 //
 // Limites : pas d'authentification cote client (l'URL n'est pas un secret
@@ -48,17 +48,22 @@ const SECRET_RES = [
   /\b(?:sk|pk|xox[baprs]|AKIA)[A-Za-z0-9_-]{12,}/g,
   /\b[A-Fa-f0-9]{40,}\b/g, // tokens hex longs (SHA-1 complet etc.)
 ];
-const PATH_RES = [
-  /[A-Za-z]:\\\\[^\s"'`<>)\]]+/g,          // C:\Users\…
-  /\\\\[^\s"'`<>)\]]+/g,                  // \\serveur\partage
-  /\bfile:\/\/\/[^\s"'`<>)\]]+/gi,        // file:///…
-];
+// Chemins : lettre de lecteur (C:\…, C:/…), UNC (\\srv\partage) et
+// file:///… Le prefixe exige un separateur comme cote client
+// (lib/crash-report.js PATH_TOKEN_RE) pour ne pas matcher « et/ou »,
+// « 12/05/2024 » ni casser « https://… » (le « s:/ » de « https:/ »
+// n'est pas precede d'un separateur).
+const DRIVE_PATH_RE = /(^|[\s"'`(=\[{<])[A-Za-z]:[\\/][^\s"'`<>)\]]+/g;
+const UNC_PATH_RE = /\\\\[^\s"'`<>)\]]+/g;
+const FILE_URL_RE = /\bfile:\/\/\/[^\s"'`<>)\]]+/gi;
 const URL_Q_RE = /https?:\/\/[^\s"'`<>)\]]+/g;
 function scrubText(s) {
   if (typeof s !== 'string') return s;
   let out = s;
   out = out.replace(URL_Q_RE, (u) => u.replace(/[?#][^\s"'`<>)\]]*$/, '?…'));
-  for (const re of PATH_RES) out = out.replace(re, '<path>');
+  out = out.replace(DRIVE_PATH_RE, '$1<path>');
+  out = out.replace(UNC_PATH_RE, '<path>');
+  out = out.replace(FILE_URL_RE, '<path>');
   for (const re of SECRET_RES) out = out.replace(re, (m, p1) => (p1 ? p1 + ' <redacted>' : '<redacted>'));
   return out;
 }

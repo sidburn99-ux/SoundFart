@@ -18,12 +18,12 @@ Aucune issue n'est jamais créée — le worker n'appelle que
 
 ## Prérequis (une fois)
 
-1. **Dépôt GitHub privé** `soundfart-reports` dans le compte du projet
+1. **Dépôt GitHub privé** `SoundFart-reports` dans le compte du projet
    (GitHub → New repository → Private, sans README ni licence).
 2. **Fine-grained Personal Access Token** :
    GitHub → Settings → Developer settings → Personal access tokens →
    Fine-grained tokens → Generate new token :
-   - *Repository access* : **Only select repositories** → `soundfart-reports`
+   - *Repository access* : **Only select repositories** → `SoundFart-reports`
    - *Permissions* : **Contents → Read and write** (rien d'autre)
    - Expiration : au choix (prévoir le renouvellement)
 
@@ -33,7 +33,7 @@ Aucune issue n'est jamais créée — le worker n'appelle que
 cd service
 npm i -g wrangler   # ou npx wrangler
 wrangler login
-wrangler secret put GITHUB_TOKEN   # Fine-grained PAT : Contents R/W sur soundfart-reports
+wrangler secret put GITHUB_TOKEN   # Fine-grained PAT : Contents R/W sur SoundFart-reports
 # GITHUB_REPO / GITHUB_BRANCH sont deja dans wrangler.toml — adapter si besoin
 wrangler deploy
 ```
@@ -42,8 +42,8 @@ Secrets et variables :
 
 | Nom | Type | Rôle |
 |---|---|---|
-| `GITHUB_TOKEN` | secret (`wrangler secret put`) | **Fine-grained PAT uniquement** : `Contents: Read and write`, limité au seul dépôt privé `soundfart-reports` — ne pas utiliser un PAT classique `repo` (accès à tous les dépôts privés du compte) |
-| `GITHUB_REPO` | var (`wrangler.toml`) | `sidburn99-ux/soundfart-reports` — adapter si le dépôt diffère |
+| `GITHUB_TOKEN` | secret (`wrangler secret put`) | **Fine-grained PAT uniquement** : `Contents: Read and write`, limité au seul dépôt privé `SoundFart-reports` — ne pas utiliser un PAT classique `repo` (accès à tous les dépôts privés du compte) |
+| `GITHUB_REPO` | var (`wrangler.toml`) | `sidburn99-ux/SoundFart-reports` — adapter si le dépôt diffère |
 | `GITHUB_BRANCH` | var (`wrangler.toml`) | `main` |
 
 Checklist de vérification après déploiement :
@@ -94,7 +94,7 @@ Chaque rapport est écrit dans `reports/AAAA-MM-JJ/<sha256-16>.json`
   par IP ; à ajouter seulement si un abus réel est observé (les commits
   git spam restent visibles et supprimables).
 - Token GitHub : **fine-grained PAT obligatoire**, `Contents: Read and
-  write` limité au seul dépôt `soundfart-reports`. Un PAT classique
+  write` limité au seul dépôt `SoundFart-reports`. Un PAT classique
   `repo` donnerait accès à TOUS les dépôts privés du compte — ne pas
   l'utiliser.
 - **Honnêteté** : la transmission réelle n'a PAS été testée sans service

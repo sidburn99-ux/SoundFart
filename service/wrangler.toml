@@ -9,13 +9,13 @@ compatibility_date = "2025-01-01"
 [vars]
 # Depot GitHub PRIVE dedie aux rapports. Le PAT (fine-grained, Contents:
 # Read and write sur CE depot uniquement) est un secret Worker, jamais ici.
-GITHUB_REPO = "sidburn99-ux/soundfart-reports"
+GITHUB_REPO = "sidburn99-ux/SoundFart-reports"
 GITHUB_BRANCH = "main"
 
 # Deploiement :
 #   1. wrangler login
 #   2. wrangler secret put GITHUB_TOKEN   # Fine-grained PAT : Contents R/W
-#                                         # sur sidburn99-ux/soundfart-reports
+#                                         # sur sidburn99-ux/SoundFart-reports
 #   3. wrangler deploy
 # L'URL publique du worker (https://soundfart-reports.<compte>.workers.dev)
 # est ensuite renseignee cote client dans main.js (REPORT_ENDPOINT) ou via
