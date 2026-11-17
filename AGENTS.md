@@ -18,6 +18,15 @@
 - **Always** : `node --check` sur chaque JS modifié ; `npm test` ; `npm run dist` après changement fonctionnel ; `git push` après chaque commit ; statuts honnêtes dans `suivi.tsv`.
 - **Ask first** : nouvelle dépendance, refonte d'un module, changement de comportement audio, push sur `main` sans autorisation, force-push ou réécriture d'historique.
 
+## Multiplateforme (Windows + Linux)
+
+- `main.js` expose `IS_WIN` / `IS_LINUX` ; `src/*.js` lisent `window.sf.platform` (exposé par `preload.js`). Toujours garder une branche `process.platform === 'win32'` explicite pour tout appel Windows-only — jamais d'exécution aveugle de `.exe`, `csc.exe`, `taskkill`, `powershell` ou des `.cs` (AudioEndpoint/AudioTap, WASAPI).
+- Windows-only assumé (désactivé proprement sous Linux, sans bloquer le démarrage) : bascule micro CABLE, AudioTap « audio du PC », VB-CABLE (pilote + écran d'invitation), restauration micro Windows. Routage Discord Linux = PipeWire, **chantier futur non implémenté** — ne jamais prétendre qu'il fonctionne.
+- `main/media-tools.js` : binaires par plateforme — Windows = `ffmpeg.exe` (gyan.dev) + `yt-dlp.exe` ; Linux = `ffmpeg`/`yt-dlp` (asset `yt-dlp_linux`, build statique BtbN tag épinglé). Tout téléchargement reste vérifié SHA-256 ; `chmod 0o755` après install sous Linux. Ne jamais télécharger de binaire Windows sous Linux.
+- Processus enfants : `killTree` = `taskkill /T` sous Windows, `kill(-pid)` (groupe, `detached` au spawn) ailleurs ; `will-quit` tue l'arbre avant de restaurer le micro.
+- Builds : `npm run dist` (Windows portable, préserve l'existant) et `npm run dist:linux` (AppImage x64 — **nécessite Linux** ; sous Windows passer par le workflow `.github/workflows/build-linux.yml`).
+- Les fonctionnalités portables (bibliothèque, lecture/édition, favoris, enregistreur micro, import YouTube, i18n, crash reporting opt-in) ne doivent jamais être conditionnées par la plateforme.
+
 ## Architecture (contraignante)
 
 ```

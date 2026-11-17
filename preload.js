@@ -7,6 +7,9 @@ const on = (channel) => (cb) => {
 };
 
 contextBridge.exposeInMainWorld('sf', {
+  // process.platform est expose par le polyfill de preload sandboxe ;
+  // sert a desactiver les fonctions Windows-only cote UI.
+  platform: (typeof process !== 'undefined' && process.platform) || '',
   getVersion: () => ipcRenderer.invoke('app:version'),
   getDataDir: () => ipcRenderer.invoke('app:dataDir'),
   loadConfig: () => ipcRenderer.invoke('config:load'),

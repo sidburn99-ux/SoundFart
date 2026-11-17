@@ -3,6 +3,9 @@
 // Extrait de app.js — depend des globals du script principal (chargé en dernier).
 // ================================================================ reglages audio
 // ================================================================ sauvegarde (export/import)
+// Plateforme (preload) : les reglages audio specifiques Windows
+// (cable VB-CABLE, bascule micro, AudioTap) sont masques sous Linux.
+const IS_LINUX = !!(window.sf && window.sf.platform === 'linux');
 function exportConfig() {
   const blob = new Blob([JSON.stringify(cfg, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
@@ -339,10 +342,12 @@ function settingsModal() {
 
   const groups = [
     { cat: t('Audio'), icon: '🔊', label: t('Sortie audio'), desc: t('Par où sortent les sons de la soundboard : la sortie Discord (câble virtuel VB-CABLE) et ton écoute locale. La voix du micro a son propre chemin — voir « Micro & voix ».'), nodes: [
-      el('div', { class: 'hint', text: t('★ = choix recommandé (bordure rose) · ⚠ = à éviter (bordure rouge). Pour faire fonctionner la soundboard : sortie Discord = CABLE Input, écoute locale = ton casque, micro = ton vrai micro.') }),
-      field(t('Sortie vers Discord (micro virtuel)'), el('div', { class: 'row' }, cableSel, cableVerifyBtn, cableInstallBtn),
-        cablePresent() ? t('Choisis « CABLE Input ». Dans Discord, mets « CABLE Output » comme micro.')
-          : t('Aucun câble virtuel détecté : la diffusion vers Discord est désactivée. VB-CABLE est un pilote gratuit de VB-Audio, à installer toi-même (vb-audio.com/Cable), puis redémarre le PC.')),
+      ...(IS_LINUX ? [] : [
+        el('div', { class: 'hint', text: t('★ = choix recommandé (bordure rose) · ⚠ = à éviter (bordure rouge). Pour faire fonctionner la soundboard : sortie Discord = CABLE Input, écoute locale = ton casque, micro = ton vrai micro.') }),
+        field(t('Sortie vers Discord (micro virtuel)'), el('div', { class: 'row' }, cableSel, cableVerifyBtn, cableInstallBtn),
+          cablePresent() ? t('Choisis « CABLE Input ». Dans Discord, mets « CABLE Output » comme micro.')
+            : t('Aucun câble virtuel détecté : la diffusion vers Discord est désactivée. VB-CABLE est un pilote gratuit de VB-Audio, à installer toi-même (vb-audio.com/Cable), puis redémarre le PC.')),
+      ]),
       field(t('Écoute locale (ton casque)'), monSel, s.monId && s.monId === s.cableId
         ? t('⚠ Écoute locale = sortie Discord : tu risks une boucle/écho — choisis un périphérique différent.')
         : t('Choisis ton casque/écoute habituelle — pas un périphérique « CABLE » (boucle).')),
@@ -351,15 +356,17 @@ function settingsModal() {
       field(t('Mon micro'), micSel, t('Le vrai micro est ★ ; les périphériques virtuels (CABLE Output, Voicemeeter…) sont ⚠ déconseillés ici.')),
       el('label', { class: 'check' }, mix,
         el('span', { text: t('Mixer mon micro dans la sortie Discord (sinon tes potes n\'entendent que les sons). Décoche si tu utilises « Écouter ce périphérique » de Windows.') })),
-      field(t('Bascule micro automatique'), el('label', { class: 'check' }, autoMic,
-        el('span', { text: t('Au lancement, SEUL le micro (entrée Windows) passe sur « CABLE Output » et revient à ton micro à la fermeture — tes sorties (Discord, écoute locale) restent sur tes périphériques habituels. Dans Discord, choisis « Défaut » comme périphérique d\'entrée pour que ça suive.') }))),
-      field(t('Surveillance micro automatique'), el('label', { class: 'check' }, watchMic,
-        el('span', { text: t('Pendant que SoundFart tourne, revérifie régulièrement que l\'entrée micro est toujours sur le câble. Si tu changes le micro toi-même (ou qu\'une app le change), la surveillance se met en pause jusqu\'au prochain lancement.') }))),
-      field(t('Récupération micro'), el('button', { class: 'ghost', text: t('Restaurer mon micro Windows'), title: t('Force le retour de l\'entrée micro Windows sur ton vrai micro — à utiliser si elle est restée bloquée sur « CABLE Output » (crash, coupure).'), onclick: () => {
-          window.sf.restoreMic(true);
-          toast(t('Restauration du micro demandée — si l\'entrée était bloquée sur le câble, elle revient sur ton micro.'), 'info');
-        } }),
-        t('À utiliser si ton micro Windows est resté bloqué sur « CABLE Output » (coupure, crash). Ramène l\'entrée sur ton vrai micro.')),
+      ...(IS_LINUX ? [] : [
+        field(t('Bascule micro automatique'), el('label', { class: 'check' }, autoMic,
+          el('span', { text: t('Au lancement, SEUL le micro (entrée Windows) passe sur « CABLE Output » et revient à ton micro à la fermeture — tes sorties (Discord, écoute locale) restent sur tes périphériques habituels. Dans Discord, choisis « Défaut » comme périphérique d\'entrée pour que ça suive.') }))),
+        field(t('Surveillance micro automatique'), el('label', { class: 'check' }, watchMic,
+          el('span', { text: t('Pendant que SoundFart tourne, revérifie régulièrement que l\'entrée micro est toujours sur le câble. Si tu changes le micro toi-même (ou qu\'une app le change), la surveillance se met en pause jusqu\'au prochain lancement.') }))),
+        field(t('Récupération micro'), el('button', { class: 'ghost', text: t('Restaurer mon micro Windows'), title: t('Force le retour de l\'entrée micro Windows sur ton vrai micro — à utiliser si elle est restée bloquée sur « CABLE Output » (crash, coupure).'), onclick: () => {
+            window.sf.restoreMic(true);
+            toast(t('Restauration du micro demandée — si l\'entrée était bloquée sur le câble, elle revient sur ton micro.'), 'info');
+          } }),
+          t('À utiliser si ton micro Windows est resté bloqué sur « CABLE Output » (coupure, crash). Ramène l\'entrée sur ton vrai micro.')),
+      ]),
       field(t('Traitement vocal'), el('label', { class: 'check' }, voiceDsp,
         el('span', { text: t('Réduction de bruit et écho sur la voix uniquement — n\'affecte pas les sons. Le gain micro reste indépendant du volume general.') })),
         t('Agit sur le micro envoyé à Discord : annulation d\'écho, suppression de bruit et filtre passe-bande (coupe les graves de clavier et le souffle). Décoche si ta voix sonne étouffée ou si tu utilises déjà un filtre Discord/Teams.')),

@@ -8,6 +8,10 @@ const VIRTUAL_RE = window.SFUtils.VIRTUAL_RE;
 // window.plural) — utilisables dans tous les modules charges par index.html.
 // La cle de t() est le texte FRANCAIS source : le fallback est le francais.
 const SFI18n = window.SFI18n;
+// Plateforme exposee par preload (process.platform du main) : les
+// fonctions audio Windows-only (bascule micro CABLE, AudioTap WASAPI,
+// VB-CABLE) sont desactivees proprement sous Linux — voir main.js.
+const IS_LINUX = !!(window.sf && window.sf.platform === 'linux');
 const PALETTE = ['#8b5cf6', '#ec4899', '#f97316', '#22c55e', '#06b6d4', '#eab308', '#ef4444', '#3b82f6'];
 const THUMB_EMOJIS = ['💨', '🔊', '📢', '🎺', '🦖', '🤖', '👽', '🔥', '⚡', '🍕', '🎮', '🏆', '💣', '🧨', '🎉', '😱', '🤣', '🤡', '👻', '🐔', '🐸', '🐵', '🦁', '🐯', '🐙', '🚀', '🌈', '🍔', '🍿', '🎯', '🎲', '🃏', '🎰', '📯', '🎷', '🎸', '🥁', '🎻', '🎤', '📻', '🔔', '⏰', '💎', '🪙', '🎁', '🍩', '🧃', '🥤', '👑', '🃏'];
 
@@ -775,6 +779,7 @@ function resolveDevices() {
 // un etat coincide (entrees deja sur CABLE Output sans marqueur) merite une
 // proposition de reparation explicite — sans ca Discord restait sans micro.
 async function runAutoSetup() {
+  if (IS_LINUX) return; // bascule micro = Windows-only (AudioEndpoint/C#)
   try {
     const r = await window.sf.audioAutoSetup({ enabled: cfg.settings.autoSwitchMic, cableLabel: cfg.settings.cableLabel });
     if (!r) return;
@@ -791,7 +796,9 @@ async function runAutoSetup() {
   } catch (e) { logErr('audioAutoSetup', e); }
 }
 
-const cablePresent = () => audio.devicesDegraded || audio.devices.out.some((d) => /cable/i.test(d.label));
+// Sous Linux aucun cable virtuel VB-CABLE n'est gere : on retourne
+// toujours « absent » pour ne jamais declencher l'ecran d'installation.
+const cablePresent = () => !IS_LINUX && (audio.devicesDegraded || audio.devices.out.some((d) => /cable/i.test(d.label)));
 let cableScreenEl = null;
 
 function cableScreen() {
@@ -832,12 +839,14 @@ function cableScreen() {
 function updateCableUi() {
   const present = cablePresent();
   const banner = $('#cable-banner');
-  if (banner) banner.hidden = present;
-  if (present && cableScreenEl) { cableScreenEl.remove(); cableScreenEl = null; }
+  // Linux : la banniere « VB-CABLE requis » n'a pas de sens — masquee.
+  if (banner) banner.hidden = IS_LINUX ? true : present;
+  if ((present || IS_LINUX) && cableScreenEl) { cableScreenEl.remove(); cableScreenEl = null; }
   return present;
 }
 
 function showCableScreen() {
+  if (IS_LINUX) return; // VB-CABLE est un pilote Windows
   if (!cablePresent()) cableScreen();
   updateCableUi();
 }

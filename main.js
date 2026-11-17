@@ -9,6 +9,12 @@ const { createMediaTools } = require('./main/media-tools');
 // enfants a la sortie du parent — on les suit pour les tuer au will-quit,
 // sinon un telechargement continue sans UI ni possibilite d'arret.
 const childProcs = new Set();
+// Plateforme : les outils natifs C# (AudioEndpoint bascule micro,
+// AudioTap loopback WASAPI) et VB-CABLE sont Windows-only. Sur les
+// autres OS tout le chemin audio-systeme est desactive proprement
+// (handlers IPC repondent sans erreur fatale, jamais de spawn exe).
+const IS_WIN = process.platform === 'win32';
+const IS_LINUX = process.platform === 'linux';
 const trackChild = (p) => {
   childProcs.add(p);
   p.on('close', () => childProcs.delete(p));
@@ -21,11 +27,24 @@ const trackChild = (p) => {
   p.on('exit', () => childProcs.delete(p));
   return p;
 };
-const killTree = (pid) => { try { execFile('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true }, () => {}); } catch (e) { try { log('[killTree] ' + e.message, 'warn'); } catch {} } };
+// Windows : taskkill /T emporte l'arbre (yt-dlp -> ffmpeg petit-enfant).
+// POSIX : les enfants sont spawnes detached=true (groupe de process
+// propre, voir execFileTracked/runYt) -> kill(-pid) touche tout le
+// groupe ; repli sur le pid seul si le groupe est deja mort.
+const killTree = (pid) => {
+  if (IS_WIN) {
+    try { execFile('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true }, () => {}); } catch (e) { try { log('[killTree] ' + e.message, 'warn'); } catch {} }
+    return;
+  }
+  try { process.kill(-pid, 'SIGKILL'); } catch { try { process.kill(pid, 'SIGKILL'); } catch {} }
+};
 // execFile avec handle suivi (promisify ne donne pas le ChildProcess).
 function execFileTracked(file, args, opts = {}) {
   return new Promise((resolve, reject) => {
-    const p = trackChild(spawn(file, args, { ...opts, windowsHide: true }));
+    // detached sur Linux : nouveau groupe de process -> killTree(-pid)
+    // peut tuer l'arbre yt-dlp/ffmpeg sans toucher au groupe de l'app.
+    // Sans effet sur Windows (windowsHide y reste la norme).
+    const p = trackChild(spawn(file, args, { ...opts, windowsHide: true, detached: IS_LINUX }));
     // opts.rec : objet externe recevant le ChildProcess des le spawn —
     // permet a yt:cancel de tuer un yt:info en vol comme un runYt.
     if (opts.rec) opts.rec.p = p;
@@ -351,6 +370,10 @@ H('desktop:source', async () => {
 
 H('app:version', () => app.getVersion());
 H('app:dataDir', () => app.getPath('userData'));
+// Plateforme pour le renderer : garde les fonctions Windows-only
+// (bascule micro CABLE, AudioTap WASAPI, VB-CABLE) desactivees sous
+// Linux au lieu de proposer des actions vouees a l'echec.
+H('app:platform', () => process.platform);
 
 // ---------- rapports d'erreurs opt-in (crashs/erreurs uniquement) ----------
 // Consentement : settings.crashReport dans config.json ('yes'/'no'/absent).
@@ -764,6 +787,10 @@ function compileCs(csName, exeBase) {
 }
 
 async function doCompileCs(csName, exeBase) {
+  // Garde plateforme : csc.exe et les .cs (AudioEndpoint/AudioTap) sont
+  // des technologies .NET Framework / WASAPI — Windows uniquement.
+  // Sur Linux/macOS on refuse AVANT toute recherche de csc.exe.
+  if (!IS_WIN) throw new Error('outils audio natifs : Windows uniquement');
   const csInAsar = path.join(__dirname, csName + '.cs');
   const csc = CSC_CANDIDATES.find((p) => fs.existsSync(p));
   if (!csc) throw new Error('compilateur C# introuvable (csc.exe absent — installe .NET Framework 4.x)');
@@ -796,6 +823,7 @@ async function doCompileCs(csName, exeBase) {
 // (binaire produit) reinitialise immediatement.
 let audioToolFailAt = 0;
 async function ensureAudioTool() {
+  if (!IS_WIN) return null; // pas de compilation C# hors Windows
   const p = audioToolPath();
   if (toolSane(p, 4096)) { audioToolFailAt = 0; return p; }
   if (Date.now() - audioToolFailAt < 10 * 60 * 1000) return null;
@@ -933,6 +961,10 @@ H('audio:autoSetup', (e, opts) => {
   return run;
 });
 async function autoSetupImpl({ enabled, cableLabel }) {
+  // Bascule micro Windows (CABLE Output) : sans objet sous Linux —
+  // le routage PipeWire est un chantier futur. ok:true pour ne pas
+  // afficher d'erreur : il n'y a simplement rien a faire.
+  if (!IS_WIN) return { ok: true, changed: false, unsupported: true };
   if (quitting) return { ok: false, err: 'quitte' }; // ne pas spawner AudioEndpoint pendant la sortie
   micSwitching = true;
   try {
@@ -1016,6 +1048,7 @@ ipcMain.on('audio:restore', (e, force) => {
   autoSetupChain = run.catch(() => {});
 });
 async function audioRestoreImpl(force) {
+  if (!IS_WIN) return; // restauration micro = specificite Windows
   if (quitting) return; // ne pas compiler/lancer AudioEndpoint pendant la sortie
   micSwitching = true;
   try {
@@ -1092,6 +1125,7 @@ let tapPcmRem = Buffer.alloc(0); // reste PCM non aligne (stdout livre des chunk
 // relancait une compilation de 60 s a chaque tentative d'enregistrement.
 let audioTapFailAt = 0;
 async function ensureAudioTap() {
+  if (!IS_WIN) return null; // AudioTap = loopback WASAPI : Windows uniquement
   const p = audioTapPath();
   if (toolSane(p, 4096)) { audioTapFailAt = 0; return p; }
   if (Date.now() - audioTapFailAt < 10 * 60 * 1000) return null;
@@ -1106,6 +1140,9 @@ async function ensureAudioTap() {
 let tapStartBusy = false;
 
 H('audio:tapStart', async () => {
+  // Capture « audio du PC » via AudioTap (WASAPI loopback) : Windows
+  // uniquement. Le message reste honnete — PipeWire non encore porte.
+  if (!IS_WIN) return { ok: false, err: 'capture système indisponible sur cette plateforme (portage PipeWire à venir)' };
   if (tapStartBusy) return { ok: false, err: 'démarrage AudioTap déjà en cours' };
   const ep = tapEpoch; // un tapStop pendant la compilation ne doit pas etre ignore
   tapStartBusy = true;
@@ -1216,7 +1253,8 @@ async function watchdogMic() {
   // quitting : un tick dans la fenetre will-quit -> process.exit pouvait
   // lancer ensureAudioTool (compile csc 60 s) et spawn des enfants APRES
   // la boucle de kill du will-quit -> csc.exe/AudioEndpoint orphelins.
-  if (quitting || watchdogBusy || micWatchSuspended || micSwitching) return;
+  // !IS_WIN : le watchdog interroge AudioEndpoint (COM Windows) — inutile ailleurs.
+  if (!IS_WIN || quitting || watchdogBusy || micWatchSuspended || micSwitching) return;
   watchdogBusy = true;
   try {
     if (!fs.existsSync(restoreFile()) || !fs.existsSync(configFile())) return;
@@ -1457,8 +1495,10 @@ process.on('uncaughtException', (e) => {
   log('[fatal] uncaughtException: ' + (e && e.stack || e), 'error');
   crashReport({ module: 'main', type: 'uncaughtException', message: e && e.message, stack: e && e.stack });
   try {
-    const t = audioToolPath();
-    if (fs.existsSync(t) && fs.existsSync(restoreFile())) restoreMicNow(t);
+    if (IS_WIN) {
+      const t = audioToolPath();
+      if (fs.existsSync(t) && fs.existsSync(restoreFile())) restoreMicNow(t);
+    }
   } catch {}
   // Continuer dans un etat potentiellement corrompu est plus risque que de
   // sortir : on restaure le micro (will-quit le refera, idempotent) puis on
@@ -1489,20 +1529,29 @@ app.on('will-quit', () => {
     if (p.exitCode !== null) continue; // deja sorti : taskkill frapperait un PID reutilise
     const left = killDeadline - Date.now();
     if (left <= 0) { try { p.kill(); } catch {} break; }
-    try { execFileSync('taskkill', ['/pid', String(p.pid), '/T', '/F'], { timeout: Math.min(2000, left), windowsHide: true }); } catch {}
+    if (IS_WIN) {
+      try { execFileSync('taskkill', ['/pid', String(p.pid), '/T', '/F'], { timeout: Math.min(2000, left), windowsHide: true }); } catch {}
+    } else {
+      // POSIX : kill du groupe (enfants spawnes detached) puis du pid.
+      try { process.kill(-p.pid, 'SIGKILL'); } catch { try { p.kill('SIGKILL'); } catch {} }
+    }
     try { p.kill(); } catch {}
   }
   childProcs.clear();
   try { if (audioTapProc) audioTapProc.kill(); } catch {}
   audioTapProc = null;
   try {
-    const tool = audioToolPath();
-    if (fs.existsSync(restoreFile())) {
-      log('[mic] will-quit : marqueur present, restauration lancee');
-      if (!fs.existsSync(tool)) log('[mic] restauration impossible : AudioEndpoint.exe absent', 'warn');
-      else if (!restoreMicNow(tool)) log('[mic] restauration a la fermeture echouee — micro peut rester sur le peripherique virtuel', 'warn');
-    } else {
-      log('[mic] will-quit : pas de marqueur audio-restore (bascule jamais faite ou deja restauree)');
+    // audio-restore.json ne peut exister que si une bascule Windows a eu
+    // lieu : hors Windows il n'y a rien a restaurer (et pas de csc.exe).
+    if (IS_WIN) {
+      const tool = audioToolPath();
+      if (fs.existsSync(restoreFile())) {
+        log('[mic] will-quit : marqueur present, restauration lancee');
+        if (!fs.existsSync(tool)) log('[mic] restauration impossible : AudioEndpoint.exe absent', 'warn');
+        else if (!restoreMicNow(tool)) log('[mic] restauration a la fermeture echouee — micro peut rester sur le peripherique virtuel', 'warn');
+      } else {
+        log('[mic] will-quit : pas de marqueur audio-restore (bascule jamais faite ou deja restauree)');
+      }
     }
   } catch (e) { log('[mic] restauration will-quit: ' + (e && e.message), 'warn'); }
 });

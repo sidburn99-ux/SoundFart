@@ -7,6 +7,10 @@
 // recente. Chaque audioTapStart reussi prend un jeton ; on n'arrete que
 // si le notre est toujours le dernier delivre.
 let tapGenCounter = 0, lastTapGen = 0;
+// Plateforme (preload) : « Audio du PC » passe par AudioTap (loopback
+// WASAPI, Windows-only) — sous Linux la source est desactivee proprement
+// (le repli getDisplayMedia/loopback n'existe pas non plus sous Linux).
+const IS_LINUX = !!(window.sf && window.sf.platform === 'linux');
 
 async function recorderModal() {
   let streams = [], actx = null, rec = null, chunks = [];
@@ -96,6 +100,7 @@ async function recorderModal() {
   }
   const micOn = el('input', { type: 'checkbox', checked: true, title: t('Enregistre la voix via ton micro (avec réduction d\'écho et de bruit).') });
   const pcOn = el('input', { type: 'checkbox', checked: false, title: t('Enregistre tout ce que tu entends sur le PC (vidéo, jeu, musique) — capturé directement à la sortie, sans repasser par le câble.') });
+  if (IS_LINUX) { pcOn.disabled = true; pcOn.title = t('Capture « audio du PC » indisponible sous Linux (portage PipeWire à venir).'); }
   const cableOn = el('input', { type: 'checkbox', checked: false, title: t('Enregistre ce que SoundFart envoie vers Discord (les sons de la soundboard).') });
   const status = el('div', { class: 'hint', text: t('Choisis les sources, puis lance l\'enregistrement.') });
   // Jauge de niveau en direct : une barre de « progression » n'a pas de sens

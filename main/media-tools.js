@@ -10,6 +10,13 @@ const { AUDIO_EXT, safeName, cbOrNoop } = require('../lib/audio-utils');
 
 function createMediaTools(deps) {
   const { log, execFileTracked, trackChild, killTree, H, toolSane, discardCorruptTool, toolsDir, storageRoot, getWin } = deps;
+  // Plateforme : sous Windows les outils sont des .exe (gyan.dev pour
+  // ffmpeg, release yt-dlp .exe) ; sous Linux ce sont des binaires
+  // sans extension (build statique BtbN ffmpeg / yt-dlp_linux), toujours
+  // telecharges avec verification SHA-256 — jamais de binaire Windows.
+  const IS_WIN = process.platform === 'win32';
+  const EXE = IS_WIN ? '.exe' : '';
+  const FFMPEG_BIN = 'ffmpeg' + EXE;
 // ---------- ffmpeg : coupe physique des extraits (MP3) ----------
 function findFile(dir, name, depth = 0) {
   if (depth > 4) return null;
@@ -48,7 +55,7 @@ async function ensureFfmpeg() {
       // (ffmpegDir() peut etre un FICHIER : existsSync vrai mais readdirSync
       // dans findFile jetterait ENOTDIR a chaque appel).
       if (fs.existsSync(ffmpegDir()) && fs.statSync(ffmpegDir()).isDirectory()) {
-        const existing = findFile(ffmpegDir(), 'ffmpeg.exe');
+        const existing = findFile(ffmpegDir(), FFMPEG_BIN);
         // Un exe <10 Mo est un reste d'extraction tuee par timeout :
         // on purge le dossier et on retente un telechargement propre.
         if (existing) {
@@ -59,28 +66,49 @@ async function ensureFfmpeg() {
         }
       }
       fs.mkdirSync(toolsDir(), { recursive: true });
-      const zip = path.join(toolsDir(), 'ffmpeg.zip');
+      const zip = path.join(toolsDir(), IS_WIN ? 'ffmpeg.zip' : 'ffmpeg.tar.xz');
       try {
-        await downloadVerified({
-          url: FFMPEG_URL, dest: zip, sumsUrl: FFMPEG_SUMS_URL, match: 'ffmpeg-' + FFMPEG_VERSION + '-essentials_build.zip',
-          onProgress: (f) => { if (getWin() && !getWin().isDestroyed()) { try { getWin().webContents.send('sf:ytprogress', Math.round(f * 100)); } catch {} } },
-        });
+        if (IS_WIN) {
+          await downloadVerified({
+            url: FFMPEG_URL, dest: zip, sumsUrl: FFMPEG_SUMS_URL, match: 'ffmpeg-' + FFMPEG_VERSION + '-essentials_build.zip',
+            onProgress: (f) => { if (getWin() && !getWin().isDestroyed()) { try { getWin().webContents.send('sf:ytprogress', Math.round(f * 100)); } catch {} } },
+          });
+        } else {
+          // Build statique linux64 epingle (tag autobuild immuable) +
+          // checksums.sha256 de la MEME release — verification SHA-256
+          // identique a Windows, jamais de binaire non verifie.
+          await downloadVerified({
+            url: FFMPEG_LINUX_URL, dest: zip, sumsUrl: FFMPEG_LINUX_SUMS_URL, match: FFMPEG_LINUX_MATCH,
+            onProgress: (f) => { if (getWin() && !getWin().isDestroyed()) { try { getWin().webContents.send('sf:ytprogress', Math.round(f * 100)); } catch {} } },
+          });
+        }
         const dest = ffmpegDir();
         // ffmpegDir() peut etre un FICHIER (restes corrompus) : mkdirSync
         // jetterait ENOTDIR a chaque appel sans auto-guérison.
         try { if (fs.existsSync(dest) && !fs.statSync(dest).isDirectory()) fs.rmSync(dest, { force: true }); } catch {}
         fs.mkdirSync(dest, { recursive: true });
-        // bsdtar de System32 lit le zip nativement ; le tar GNU de Git
-        // present dans le PATH ne lit PAS zip -> « not a tar archive »
-        // (SF-REL-0613). On privilegie System32\\tar.exe, repli sur PATH.
-        const sysTar = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe');
-        const tarBin = fs.existsSync(sysTar) ? sysTar : 'tar';
-        try {
-          await execFileTracked(tarBin, ['-xf', zip, '-C', dest, '*ffmpeg.exe'], { timeout: 180000 });
-        } catch {
-          await execFileTracked(tarBin, ['-xf', zip, '-C', dest], { timeout: 300000 });
+        if (IS_WIN) {
+          // bsdtar de System32 lit le zip nativement ; le tar GNU de Git
+          // present dans le PATH ne lit PAS zip -> « not a tar archive »
+          // (SF-REL-0613). On privilegie System32\\tar.exe, repli sur PATH.
+          const sysTar = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe');
+          const tarBin = fs.existsSync(sysTar) ? sysTar : 'tar';
+          try {
+            await execFileTracked(tarBin, ['-xf', zip, '-C', dest, '*ffmpeg.exe'], { timeout: 180000 });
+          } catch {
+            await execFileTracked(tarBin, ['-xf', zip, '-C', dest], { timeout: 300000 });
+          }
+        } else {
+          // tar.xz : GNU tar detecte la compression automatiquement.
+          // On n'extrait que bin/ffmpeg (build statique, rien d'autre
+          // n'est requis) — ~400 Mo decompresses deviennent ~80 Mo.
+          await execFileTracked('tar', ['-xf', zip, '-C', dest, '--wildcards', '*/bin/ffmpeg'], { timeout: 300000 });
+          const nested = findFile(dest, FFMPEG_BIN);
+          if (nested && nested !== ffmpegPath()) {
+            try { fs.chmodSync(nested, 0o755); } catch {}
+          }
         }
-        const found = findFile(dest, 'ffmpeg.exe');
+        const found = findFile(dest, FFMPEG_BIN);
         if (found && found !== ffmpegPath()) {
           // Repli inter-volume : copie via .part + rename — jamais d'exe
           // partiel detectable par existsSync apres un crash/AV.
@@ -91,11 +119,12 @@ async function ensureFfmpeg() {
             try { fs.copyFileSync(found, tmp); fs.renameSync(tmp, dst); }
             catch (ce) { try { fs.unlinkSync(tmp); } catch {} throw ce; }
           }
+          if (!IS_WIN) { try { fs.chmodSync(dst, 0o755); } catch {} } // exec bit apres copie inter-device
         }
       } finally {
         try { fs.unlinkSync(zip); } catch {}
       }
-      if (!fs.existsSync(ffmpegPath())) throw new Error('ffmpeg.exe introuvable dans l\'archive téléchargée.');
+      if (!fs.existsSync(ffmpegPath())) throw new Error(FFMPEG_BIN + ' introuvable dans l\'archive téléchargée.');
       return ffmpegDir();
     } finally {
       ffmpegPromise = null;
@@ -141,7 +170,7 @@ H('media:cut', async (_e, o) => {
   if (!out) throw new Error('trop d\'extraits existants dans cuts/ — nettoie le dossier');
   // protocol_whitelist file : ffmpeg ne doit pas suivre de playlist/URL externe
   try {
-    await execFileTracked(path.join(fdir, 'ffmpeg.exe'),
+    await execFileTracked(path.join(fdir, FFMPEG_BIN),
       ['-y', '-protocol_whitelist', 'file', '-ss', String(Math.max(0, +start || 0)), '-i', String(input), '-t', String(Math.max(0.1, dur)), '-vn', '-c:a', 'libmp3lame', '-q:a', '4', out],
       { timeout: 600000 });
   } catch (fe) {
@@ -163,17 +192,27 @@ H('media:cut', async (_e, o) => {
 });
 
 // ---------- import YouTube (yt-dlp, telecharge au premier usage) ----------
-const ytdlpPath = () => path.join(toolsDir(), 'yt-dlp.exe');
+const ytdlpPath = () => path.join(toolsDir(), 'yt-dlp' + EXE);
 const ffmpegDir = () => path.join(toolsDir(), 'ffmpeg');
-const ffmpegPath = () => path.join(ffmpegDir(), 'ffmpeg.exe');
+const ffmpegPath = () => path.join(ffmpegDir(), FFMPEG_BIN);
 // Versions epinglees + sommes publiees par les editeurs : un binaire telecharge n'est
 // jamais execute sans verification SHA-256 (fichier de sommes de la release).
 const YTDLP_VERSION = '2026.10.26';
-const YTDLP_URL = (v) => `https://github.com/yt-dlp/yt-dlp/releases/download/${v}/yt-dlp.exe`;
+// Windows : yt-dlp.exe (binaire autonome). Linux : yt-dlp_linux — meme
+// release, SHA2-256SUMS couvre les deux (match = nom de l'asset).
+const YTDLP_ASSET = IS_WIN ? 'yt-dlp.exe' : 'yt-dlp_linux';
+const YTDLP_URL = (v) => `https://github.com/yt-dlp/yt-dlp/releases/download/${v}/${YTDLP_ASSET}`;
 const YTDLP_SUMS_URL = (v) => `https://github.com/yt-dlp/yt-dlp/releases/download/${v}/SHA2-256SUMS`;
 const FFMPEG_VERSION = '9.0.2';
 const FFMPEG_URL = `https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-${FFMPEG_VERSION}-essentials_build.zip`;
 const FFMPEG_SUMS_URL = FFMPEG_URL + '.sha256';
+// Linux : build statique BtbN ffmpeg-builds, tag autobuild IMMUABLE
+// (les URLs « latest » de BtbN bougent — un tag date pointe des assets
+// figes). checksums.sha256 est publie dans la meme release.
+const FFMPEG_LINUX_TAG = 'autobuild-2026-11-14-12-37';
+const FFMPEG_LINUX_MATCH = 'ffmpeg-n9.0.2-57-gd838f9f9ae-linux64-gpl-9.0.tar.xz';
+const FFMPEG_LINUX_URL = `https://github.com/BtbN/FFmpeg-Builds/releases/download/${FFMPEG_LINUX_TAG}/${FFMPEG_LINUX_MATCH}`;
+const FFMPEG_LINUX_SUMS_URL = `https://github.com/BtbN/FFmpeg-Builds/releases/download/${FFMPEG_LINUX_TAG}/checksums.sha256`;
 
 const validHttpUrl = (u) => {
   try { const x = new URL(String(u)); return x.protocol === 'https:'; } catch { return false; }
@@ -357,10 +396,11 @@ async function doInstallYtDlp(version) {
   const tmp = ytdlpPath() + '.part';
   try {
     await downloadVerified({
-      url: YTDLP_URL(version), dest: tmp, sumsUrl: YTDLP_SUMS_URL(version), match: 'yt-dlp.exe',
+      url: YTDLP_URL(version), dest: tmp, sumsUrl: YTDLP_SUMS_URL(version), match: YTDLP_ASSET,
       onProgress: (f) => { if (getWin() && !getWin().isDestroyed()) { try { getWin().webContents.send('sf:ytprogress', Math.round(f * 100)); } catch {} } },
     });
     fs.renameSync(tmp, ytdlpPath());
+    if (!IS_WIN) { try { fs.chmodSync(ytdlpPath(), 0o755); } catch {} } // exec bit : binaire telecharge
     // Meta atomique (.tmp + rename) comme maybeUpdateYtDlp : un crash
     // pendant le write laisserait un JSON tronque.
     const metaTmp = ytdlpMetaFile() + '.tmp';
@@ -442,7 +482,7 @@ function runYt(args, onProgress) {
   return new Promise((resolve, reject) => {
     // stdin ignore : un outil externe ne doit pas heriter d'un pipe ouvert
     // (yt-dlp/ffmpeg peuvent y attendre une saisie et pendre).
-    const p = trackChild(spawn(ytdlpPath(), ['--ignore-config', ...args], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }));
+    const p = trackChild(spawn(ytdlpPath(), ['--ignore-config', ...args], { windowsHide: true, detached: !IS_WIN, stdio: ['ignore', 'pipe', 'pipe'] }));
     const rec = { p, cancelled: false };
     activeYt = rec;
     const release = () => { if (activeYt === rec) activeYt = null; };
