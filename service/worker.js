@@ -5,10 +5,12 @@
 // l'API Contents. AUCUNE issue publique n'est jamais creee.
 //
 // Secrets/vars requis (wrangler) :
-//   GITHUB_TOKEN   : Personal Access Token classique, scope « repo »
-//                   (contents:write) sur un depot PRIVE dedie.
+//   GITHUB_TOKEN   : Fine-grained Personal Access Token GitHub, UNIQUEMENT
+//                   « Contents: Read and write » sur le depot PRIVE
+//                   « soundfart-reports » (aucun autre depot, aucune
+//                   permission supplementaire).
 //                   -> `wrangler secret put GITHUB_TOKEN`
-//   GITHUB_REPO    : "proprietaire/nom-du-depot" (var, pas secret)
+//   GITHUB_REPO    : "proprietaire/soundfart-reports" (var, pas secret)
 //   GITHUB_BRANCH  : branche par defaut (var, optionnel, defaut "main")
 //
 // Limites : pas d'authentification cote client (l'URL n'est pas un secret

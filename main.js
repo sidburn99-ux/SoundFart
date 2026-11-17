@@ -50,9 +50,11 @@ const SFI18n = require('./lib/i18n');
 // Collecte opt-in des rapports d'erreurs (erreurs/crashs uniquement,
 // jamais de telemetrie comportementale). Voir lib/crash-report.js.
 const { createCrashReporter } = require('./lib/crash-report');
-// Endpoint du service de collecte (worker Cloudflare, voir service/).
-// A RENSEIGNER au deploiement : chaine vide = les rapports restent dans
-// la file locale userData/reports/, aucun envoi, aucune erreur.
+// Endpoint du service de collecte (worker Cloudflare, voir service/README.md
+// pour le deploiement). A RENSEIGNER apres `wrangler deploy` :
+// https://soundfart-reports.<compte>.workers.dev
+// Chaine vide = les rapports restent dans la file locale
+// userData/reports/, aucun envoi, aucune erreur.
 // Surcharge possible en dev : SOUNDFART_REPORT_URL=https://... electron .
 const REPORT_ENDPOINT = process.env.SOUNDFART_REPORT_URL || '';
 let win = null;

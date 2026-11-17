@@ -1,20 +1,22 @@
 # SoundFart — service de collecte de rapports d'erreurs
-# Cloudflare Workers. UNIQUEMENT des commentaires : aucun secret ici.
-#
+# Cloudflare Workers. AUCUN secret dans ce fichier : GITHUB_TOKEN passe
+# par `wrangler secret put` (voir README.md).
+
+name = "soundfart-reports"
+main = "worker.js"
+compatibility_date = "2025-01-01"
+
+[vars]
+# Depot GitHub PRIVE dedie aux rapports. Le PAT (fine-grained, Contents:
+# Read and write sur CE depot uniquement) est un secret Worker, jamais ici.
+GITHUB_REPO = "sidburn99-ux/soundfart-reports"
+GITHUB_BRANCH = "main"
+
 # Deploiement :
 #   1. wrangler login
-#   2. wrangler secret put GITHUB_TOKEN   # PAT scope "repo" sur depot PRIVE
-#   3. Decommenter ce qui suit et adapter :
-#
-# name = "soundfart-reports"
-# main = "worker.js"
-# compatibility_date = "2025-01-01"
-#
-# [vars]
-# GITHUB_REPO = "votre-compte/soundfart-reports"   # depot GitHub PRIVE dedie
-# GITHUB_BRANCH = "main"                            # optionnel
-#
-# Puis : wrangler deploy
+#   2. wrangler secret put GITHUB_TOKEN   # Fine-grained PAT : Contents R/W
+#                                         # sur sidburn99-ux/soundfart-reports
+#   3. wrangler deploy
 # L'URL publique du worker (https://soundfart-reports.<compte>.workers.dev)
 # est ensuite renseignee cote client dans main.js (REPORT_ENDPOINT) ou via
 # la variable d'environnement SOUNDFART_REPORT_URL.
