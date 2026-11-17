@@ -75,7 +75,7 @@
 - [x] **Annuler le téléchargement** → modale fermée proprement, pas de pseudo-erreur, pas de second yt-dlp (bug « repli audio complet » corrigé 16/11). **[U] 16/11**.
 - [x] Erreurs YouTube en français (privée, indisponible, réseau). **[U] 16/11**.
 - [x] Extrait avec timeline → MP3 de la bonne durée. **[U] 16/11** (extraits validés ; **[A]** chemin `media:cut`).
-- [x] Couper un extrait (`media:cut`) → MP3 créé, **original intact**. **[U] 16/11**.
+- [x] Couper un extrait (`media:cut`) → MP3 créé, **original intact**. **[U] 16/11** ; **revérifié [A] 17/11** : coupe 1-5 s d'un enregistrement câble → `cuts\*_extrait.mp3` ID3, durée exactement 4,00 s, **peak 0,145 / RMS 0,018** (audio réel), routé sous `sf-dest\cuts\`.
 - [x] Sans timeline → audio complet + trim dans l'éditeur. **[A] 17/11 — parcours UI complet validé** : modale → URL → « Analyser » (titre + durée 0:19 réels) → « Télécharger l'extrait » → « Ajouter à la bibliothèque » → son « Me at the zoo » dans la bibliothèque (33 sons), fichier `sf-dest\imports\*.webm` 252 Ko décodé 19 s / peak 0,32. (L'API directe `yt:download`/full avait aussi été validée.)
 - [ ] Débrancher le réseau pendant le téléchargement → erreur propre, pas de `.part` géant.
 - [ ] **Imports YouTube concurrents** : deux téléchargages lancés ensemble → `.part` uniques, pas de fichier mixte. **[A] 17/11** : noms `pid+seq` — **non reproduit**.
@@ -119,7 +119,7 @@
 - [x] Glisser-déposer un MP3 → **copié** dans `<dossier>/sons/` (copie atomique), carte pointe sur la copie. **[A] 17/11 runtime CDP** : `addPaths` → fichier physique dans `sf-dest\sons\`, son ajouté (30→31).
 - [x] Réimporter le même fichier → réutilise la copie existante (nom+taille+échantillons), **pas de doublon** disque. **[A] 17/11 runtime CDP** : 2ᵉ import → 31 sons, 1 seul fichier dans `sons/`.
 - [x] Importer sans dossier choisi → blocage + proposition de choisir (bannière/re-modale), pas d'écriture dans AppData. **[A] 17/11 runtime CDP** : `confirmBox` « Choisir un dossier » affichée, « Annuler » annule proprement (aucun modal résiduel, aucun fichier créé).
-- [x] Enregistreur → `recordings/` sous le dossier choisi. **[A] 17/11** : `storageDir=sf-dest` → fichier écrit dans `sf-dest\recordings\`. (YouTube → `imports/` et extrait MP3 → `cuts/` restent à valider dans le même geste.)
+- [x] YouTube → `imports/`, enregistreur → `recordings/`, extrait MP3 → `cuts/` sous le dossier choisi. **[A] 17/11** : les trois dossiers respectent `storageDir` — `sf-dest\imports\` (YouTube), `sf-dest\recordings\` (prises), `sf-dest\cuts\` (extrait MP3).
 - [ ] Retirer un son de la bibliothèque → le fichier copié **reste** dans `sons/`.
 - [ ] Paramètres → « Choisir… »/« Réinitialiser » le dossier → **persisté immédiatement** (visible après restart), bannière mise à jour.
 - [ ] Export/import `config.json` → bannière storageDir reflète la config importée ; « Annuler » l'import depuis les réglages **rouvre le panneau**.
