@@ -10,16 +10,17 @@ const YT_RE = /^(https?:\/\/)?(www\.|m\.)?(youtube\.com|youtu\.be|music\.youtube
 
 // yt-dlp/ffmpeg ecrivent leurs erreurs en anglais sur stderr — on traduit
 // les cas courants pour l'utilisateur, le detail technique reste en log.
+// Les retours passent par t() : la langue courante est appliquee.
 function ytErrFr(e) {
   const raw = String((e && e.message) || e || '');
-  if (/annul/i.test(raw)) return 'Téléchargement annulé.';
-  if (/délai dépassé|timed?\s*out/i.test(raw)) return 'Délai dépassé — la vidéo est peut-être trop longue ou YouTube est lent. Réessaie.';
-  if (/private|sign in|login|authentication/i.test(raw)) return 'Vidéo privée ou connexion YouTube requise.';
-  if (/unavailable|removed|deleted|does not exist|404/i.test(raw)) return 'Vidéo indisponible, supprimée ou introuvable.';
-  if (/429|too many requests/i.test(raw)) return 'YouTube limite les requêtes — réessaie dans quelques minutes.';
-  if (/403|forbidden/i.test(raw)) return 'YouTube a refusé l\'accès à cette vidéo.';
-  if (/url|http|dns|network|connexion|getaddrinfo/i.test(raw) && /fail|error|refus/i.test(raw)) return 'Problème réseau — vérifie ta connexion et réessaie.';
-  return raw || 'Erreur inconnue.';
+  if (/annul/i.test(raw)) return t('Téléchargement annulé.');
+  if (/délai dépassé|timed?\s*out/i.test(raw)) return t('Délai dépassé — la vidéo est peut-être trop longue ou YouTube est lent. Réessaie.');
+  if (/private|sign in|login|authentication/i.test(raw)) return t('Vidéo privée ou connexion YouTube requise.');
+  if (/unavailable|removed|deleted|does not exist|404/i.test(raw)) return t('Vidéo indisponible, supprimée ou introuvable.');
+  if (/429|too many requests/i.test(raw)) return t('YouTube limite les requêtes — réessaie dans quelques minutes.');
+  if (/403|forbidden/i.test(raw)) return t('YouTube a refusé l\'accès à cette vidéo.');
+  if (/url|http|dns|network|connexion|getaddrinfo/i.test(raw) && /fail|error|refus/i.test(raw)) return t('Problème réseau — vérifie ta connexion et réessaie.');
+  return raw || t('Erreur inconnue.');
 }
 
 // Fichiers imports/ non ajoutes a la bibliotheque : un download YouTube
@@ -44,20 +45,20 @@ async function orphanImportsModal() {
       }
     } catch (e) { logErr('listImports', e); }
   }
-  if (!files.length) { toast('Aucun fichier non ajouté dans imports/.', 'info'); return; }
+  if (!files.length) { toast(t('Aucun fichier non ajouté dans imports/.'), 'info'); return; }
   const checks = files.map((f) => {
     const cb = el('input', { type: 'checkbox', checked: true });
     const sz = f.size > 1048576 ? (f.size / 1048576).toFixed(1) + ' Mo' : Math.round(f.size / 1024) + ' Ko';
     return { f, cb, row: el('label', { class: 'check' }, cb,
-      el('span', { text: f.name.replace(/^sf-[a-z0-9]+-?/i, '') + ' — ' + sz + ' — ' + new Date(f.mtime).toLocaleDateString('fr-FR') })) };
+      el('span', { text: f.name.replace(/^sf-[a-z0-9]+-?/i, '') + ' — ' + sz + ' — ' + new Date(f.mtime).toLocaleDateString(SFI18n.lang() === 'fr' ? 'fr-FR' : SFI18n.lang()) })) };
   });
-  modal('Fichiers importés non ajoutés (' + files.length + ')', [
+  modal(t('Fichiers importés non ajoutés ({n})', { n: files.length }), [
     el('div', { class: 'hint', style: { maxHeight: '50vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px' } },
       checks.map((c) => c.row)),
-    el('div', { class: 'hint', text: 'Ce sont des fichiers téléchargés (YouTube) ou déposés dans imports/ qui ne sont pas encore dans ta bibliothèque. Coche ceux à ajouter.' }),
+    el('div', { class: 'hint', text: t('Ce sont des fichiers téléchargés (YouTube) ou déposés dans imports/ qui ne sont pas encore dans ta bibliothèque. Coche ceux à ajouter.') }),
   ], [
-    { label: 'Fermer', onclick: (c) => c() },
-    { label: 'Ajouter la sélection', kind: 'primary', onclick: (c) => {
+    { label: t('Fermer'), onclick: (c) => c() },
+    { label: t('Ajouter la sélection'), kind: 'primary', onclick: (c) => {
       let n = 0;
       for (const { f, cb } of checks) {
         if (!cb.checked) continue;
@@ -69,7 +70,7 @@ async function orphanImportsModal() {
         if (pushSound(s)) n++;
       }
       save(); renderAll(); c();
-      toast(n ? n + ' fichier(s) ajouté(s) à la bibliothèque.' : 'Aucun fichier ajouté.', n ? 'info' : 'warn');
+      toast(n ? t('{n} fichier(s) ajouté(s) à la bibliothèque.', { n }) : t('Aucun fichier ajouté.'), n ? 'info' : 'warn');
     } },
   ], { wide: true });
 }
@@ -77,13 +78,13 @@ async function orphanImportsModal() {
 function youtubeModal() {
   const urlIn = el('input', { type: 'text', placeholder: 'https://www.youtube.com/watch?v=…' });
   urlIn.style.flex = '1';
-  const infoBox = el('div', { class: 'hint', text: 'Colle un lien YouTube puis « Analyser ».' });
+  const infoBox = el('div', { class: 'hint', text: t('Colle un lien YouTube puis « Analyser ».') });
   const startIn = el('input', { type: 'text', placeholder: '0 ou 02:15', value: '0' });
   const endIn = el('input', { type: 'text', placeholder: '13 ou 02:28', value: '' });
   startIn.style.flex = '1'; endIn.style.flex = '1';
-  const nameIn = el('input', { type: 'text', placeholder: 'Nom du son (titre par défaut)', maxlength: 80 });
+  const nameIn = el('input', { type: 'text', placeholder: t('Nom du son (titre par défaut)'), maxlength: 80 });
   const catSel = el('select', {},
-    el('option', { value: '', text: 'Sans catégorie' }),
+    el('option', { value: '', text: t('Sans catégorie') }),
     sortedCategories().map((c) => el('option', { value: c.id, text: c.name })));
   const prog = el('div', { class: 'hint' });
   const bar = el('div', { class: 'ytbar' }, el('i'));
@@ -93,8 +94,8 @@ function youtubeModal() {
   // pickDir natif (jamais askDestDir/confirmBox : slot modal() unique,
   // detruirait cette modale — SF-REL-0067).
   let destDir = cfg.settings.storageDir || cfg.settings.lastDestDir || '';
-  const destLabel = el('span', { class: 'hint', text: destDir || '(choisis un dossier)' });
-  const destBtn = el('button', { text: 'Changer…', onclick: async () => {
+  const destLabel = el('span', { class: 'hint', text: destDir || t('(choisis un dossier)') });
+  const destBtn = el('button', { text: t('Changer…'), onclick: async () => {
     try {
       const d = await window.sf.pickDir();
       // Premier choix explicite = dossier de sons principal (coherence
@@ -110,82 +111,82 @@ function youtubeModal() {
   // place ; le fichier reste recuperable via imports/ (orphelins).
   let ytGone = false;
   const setProg = (p, label) => {
-    const what = label || 'Téléchargement…';
+    const what = label || t('Téléchargement…');
     if (p === -1 || p == null) { prog.textContent = what; barFill.style.width = '100%'; barFill.style.opacity = '.4'; }
     else { prog.textContent = what + ' ' + p + ' %'; barFill.style.opacity = '1'; barFill.style.width = p + '%'; }
   };
 
-  const analyzeBtn = el('button', { text: 'Analyser', onclick: async () => {
+  const analyzeBtn = el('button', { text: t('Analyser'), onclick: async () => {
     const url = urlIn.value.trim();
-    if (!YT_RE.test(url)) { infoBox.textContent = 'Ce lien ne ressemble pas à une URL YouTube.'; return; }
+    if (!YT_RE.test(url)) { infoBox.textContent = t('Ce lien ne ressemble pas à une URL YouTube.'); return; }
     // Pas d'analyse pendant un telechargement : yt:info emet ytProgress(-1)
     // qui ecraserait la barre du download, et les deux flaky flags
     // shared 'busy' permettaient un double yt:download.
     if (busy || analyzeBusy) return;
     analyzeBusy = true;
-    infoBox.textContent = 'Vérification de l\'outil de téléchargement…';
+    infoBox.textContent = t('Vérification de l\'outil de téléchargement…');
     try {
       if (offProg) offProg(); // un seul ecouteur ytprogress a la fois
       // « Préparation… » pendant ensure/info : ytProgress(-1) y est emis
       // aussi — « Téléchargement… » induirait en erreur pendant l'analyse.
-      offProg = window.sf.onYtProgress((p) => setProg(p, 'Préparation…'));
+      offProg = window.sf.onYtProgress((p) => setProg(p, t('Préparation…')));
       await window.sf.ytEnsure();
-      infoBox.textContent = 'Lecture des infos de la vidéo…';
+      infoBox.textContent = t('Lecture des infos de la vidéo…');
       info = await window.sf.ytInfo(url);
       analyzedUrl = url;
-      infoBox.textContent = `« ${info.title} » — durée ${fmtTime(info.duration)}.`;
+      infoBox.textContent = t('« {title} » — durée {dur}.', { title: info.title, dur: fmtTime(info.duration) });
       const md = +cfg.settings.maxSoundDur;
-      if (md > 0 && info.duration > md) infoBox.textContent += ` ⚠ Plus long que la limite de lecture (${md} s) : seuls les ${md} premières secondes seront jouées.`;
+      if (md > 0 && info.duration > md) infoBox.textContent += t(' ⚠ Plus long que la limite de lecture ({n} s) : seuls les {n} premières secondes seront jouées.', { n: md });
       if (!nameIn.value) nameIn.value = String(info.title).slice(0, 80);
-      endIn.placeholder = info.duration ? 'Fin (max ' + fmtTime(info.duration) + ')' : 'Fin';
+      endIn.placeholder = info.duration ? t('Fin (max {dur})', { dur: fmtTime(info.duration) }) : t('Fin');
     } catch (e) {
       info = null; analyzedUrl = null;
-      infoBox.textContent = 'Analyse impossible : ' + ytErrFr(e);
+      infoBox.textContent = t('Analyse impossible : {err}', { err: ytErrFr(e) });
     } finally {
       analyzeBusy = false;
     }
   } });
 
-  const cancelBtn = el('button', { text: 'Annuler le téléchargement', disabled: true, onclick: async () => {
+  const cancelBtn = el('button', { text: t('Annuler le téléchargement'), disabled: true, onclick: async () => {
     // yt:cancel tue le process yt-dlp : runYt rejette « annulé », le catch
     // affiche le message traduit et finally reactive les boutons.
     try { await window.sf.ytCancel(); } catch (e) { logErr('ytCancel', e); }
   } });
 
-  const dlBtn = el('button', { text: 'Télécharger l\'extrait', onclick: async () => {
+  const dlBtn = el('button', { text: t('Télécharger l\'extrait'), onclick: async () => {
     if (!info || busy || analyzeBusy) return;
     const curUrl = urlIn.value.trim();
     // info correspond a analyzedUrl : si le lien a change depuis
     // « Analyser », le nom/duree affiches ne decriraient pas le fichier.
-    if (curUrl !== analyzedUrl) { prog.textContent = 'Le lien a changé : relance « Analyser ».'; return; }
+    if (curUrl !== analyzedUrl) { prog.textContent = t('Le lien a changé : relance « Analyser ».'); return; }
     const start = parseTs(startIn.value);
     const hasTimeline = endIn.value.trim() !== '' && startIn.value.trim() !== '';
     const end = endIn.value.trim() === '' ? 0 : parseTs(endIn.value);
     if (endIn.value.trim() !== '' && startIn.value.trim() === '') {
-      prog.textContent = 'Fin sans début : renseigne aussi le début, ou vide les deux pour le fichier complet.'; return;
+      prog.textContent = t('Fin sans début : renseigne aussi le début, ou vide les deux pour le fichier complet.'); return;
     }
     // « 00 »/« 0:00 » = debut nul (parseTs -> 0), pas une timeline
     // incomplete — comparaison sur la valeur parsee, pas la saisie brute.
     if (!hasTimeline && startIn.value.trim() !== '' && start !== 0) {
-      prog.textContent = 'Timeline incomplète : définis le début ET la fin, ou laisse les deux vides pour le fichier complet.'; return;
+      prog.textContent = t('Timeline incomplète : définis le début ET la fin, ou laisse les deux vides pour le fichier complet.'); return;
     }
     if (hasTimeline && (isNaN(start) || isNaN(end) || !(end > start))) {
-      prog.textContent = 'Heure invalide : la fin doit être après le début.'; return;
+      prog.textContent = t('Heure invalide : la fin doit être après le début.'); return;
     }
     // Dossier de sons obligatoire : pickDir natif ne detruit pas la modale.
     if (!destDir) {
       try {
         const d = await window.sf.pickDir();
-        if (!d) { prog.textContent = 'Téléchargement annulé : aucun dossier choisi.'; return; }
+        if (!d) { prog.textContent = t('Téléchargement annulé : aucun dossier choisi.'); return; }
         destDir = d; cfg.settings.lastDestDir = d;
         if (!cfg.settings.storageDir) { cfg.settings.storageDir = d; updateStorageUi(); }
         save(); destLabel.textContent = d;
-      } catch (e) { logErr('pickDir', e); prog.textContent = 'Choix du dossier impossible.'; return; }
+      } catch (e) { logErr('pickDir', e); prog.textContent = t('Choix du dossier impossible.'); return; }
     }
     busy = true;
     dl = null;
     cancelBtn.disabled = false;
-    prog.textContent = 'Téléchargement…';
+    prog.textContent = t('Téléchargement…');
     barFill.style.width = '0%'; barFill.style.opacity = '1';
     try {
       // La modale est restee vivante (pickDir natif) : progression visible.
@@ -193,21 +194,21 @@ function youtubeModal() {
       offProg = window.sf.onYtProgress(setProg);
       const r = await window.sf.ytDownload({ url: urlIn.value.trim(), start: hasTimeline ? start : 0, end: hasTimeline ? end : 0, dir: destDir, full: !hasTimeline });
       // Contrat IPC : un path non-string creerait un son invalide silencieusement.
-      if (!r || typeof r.path !== 'string' || !r.path) throw new Error('réponse yt:download invalide');
+      if (!r || typeof r.path !== 'string' || !r.path) throw new Error(t('réponse yt:download invalide'));
       dl = { path: r.path, sectioned: !!r.sectioned, start: hasTimeline ? start : 0, end: hasTimeline ? end : null };
       // Une AUTRE modale est ouverte (pas la notre) OU l'utilisateur a
       // ferme la modale YouTube pendant le download (ytGone via onClose,
       // modalClose redevenu null) : ne pas la detruire ni la rouvrir.
       // Le fichier est dans imports/ — toast avec le chemin.
-      if (ytGone || (modalClose && modalClose !== ytModalClose)) { toast('Téléchargement terminé : ' + r.path, 'info'); return; }
-      modal('Téléchargement terminé', [
-        el('div', { class: 'hint', text: (r.sectioned ? 'Extrait MP3' : 'Audio complet') + ' — ' + r.path }),
-        field('Nom', nameIn),
-        field('Catégorie', catSel),
+      if (ytGone || (modalClose && modalClose !== ytModalClose)) { toast(t('Téléchargement terminé : {path}', { path: r.path }), 'info'); return; }
+      modal(t('Téléchargement terminé'), [
+        el('div', { class: 'hint', text: (r.sectioned ? t('Extrait MP3') : t('Audio complet')) + ' — ' + r.path }),
+        field(t('Nom'), nameIn),
+        field(t('Catégorie'), catSel),
       ], [
-        { label: 'Fermer', onclick: (c) => c() },
-        { label: 'Écouter', onclick: () => previewSound() },
-        { label: 'Ajouter à la bibliothèque', kind: 'primary', onclick: (c) => {
+        { label: t('Fermer'), onclick: (c) => c() },
+        { label: t('Écouter'), onclick: () => previewSound() },
+        { label: t('Ajouter à la bibliothèque'), kind: 'primary', onclick: (c) => {
           if (!dl) return;
           const s = {
             id: uid(),
@@ -223,22 +224,22 @@ function youtubeModal() {
           dl = null;
           if (!pushSound(s)) { c(); return; }
           save(); renderAll(); c();
-          toast('Son YouTube ajouté : ' + s.path);
+          toast(t('Son YouTube ajouté : {path}', { path: dl.path }));
         } },
       ]);
       prog.textContent = r.sectioned
-        ? 'Extrait MP3 prêt (' + fmtTime(end - start) + ').'
+        ? t('Extrait MP3 prêt ({dur}).', { dur: fmtTime(end - start) })
         : hasTimeline
-          ? 'Audio complet téléchargé ; seul l\'extrait choisi sera joué (' + fmtTime(end - start) + ' sur ' + fmtTime(info.duration) + ').'
-          : 'Fichier audio complet téléchargé — ajuste le début/fin dans l\'éditeur si besoin.';
+          ? t('Audio complet téléchargé ; seul l\'extrait choisi sera joué ({sel} sur {tot}).', { sel: fmtTime(end - start), tot: fmtTime(info.duration) })
+          : t('Fichier audio complet téléchargé — ajuste le début/fin dans l\'éditeur si besoin.');
     } catch (e) {
       // Annulation explicite : on quitte la modale d'importation plutot
       // que d'afficher une « erreur » — demande utilisateur.
       if (/annul/i.test(String((e && e.message) || e))) {
-        prog.textContent = 'Téléchargement annulé.';
+        prog.textContent = t('Téléchargement annulé.');
         if (modalClose === ytModalClose) ytModalClose();
       } else {
-        prog.textContent = 'Téléchargement impossible : ' + ytErrFr(e) + ' — vérifie le lien, ta connexion, et réessaie.';
+        prog.textContent = t('Téléchargement impossible : {err} — vérifie le lien, ta connexion, et réessaie.', { err: ytErrFr(e) });
       }
     } finally {
       busy = false;
@@ -258,23 +259,23 @@ const previewSound = () => {
     }, { monitorOnly: true, preview: true });
   };
 
-  const ytModalClose = modal('Importer depuis YouTube', [
-    field('Lien YouTube', el('div', { class: 'row' }, urlIn, analyzeBtn)),
+  const ytModalClose = modal(t('Importer depuis YouTube'), [
+    field(t('Lien YouTube'), el('div', { class: 'row' }, urlIn, analyzeBtn)),
     infoBox,
-    field('Extrait (secondes ou hh:mm:ss)', el('div', { class: 'row' },
-      el('span', { class: 'hint', text: 'Début' }), startIn,
-      el('span', { class: 'hint', text: 'Fin' }), endIn),
-      'Ex. début « 02:15 », fin « 02:28 » pour un extrait de 13 s.'),
-    field('Dossier', el('div', { class: 'row' }, destLabel, destBtn), 'Le fichier audio est enregistré dans « imports » de ce dossier.'),
+    field(t('Extrait (secondes ou hh:mm:ss)'), el('div', { class: 'row' },
+      el('span', { class: 'hint', text: t('Début') }), startIn,
+      el('span', { class: 'hint', text: t('Fin') }), endIn),
+      t('Ex. début « 02:15 », fin « 02:28 » pour un extrait de 13 s.')),
+    field(t('Dossier'), el('div', { class: 'row' }, destLabel, destBtn), t('Le fichier audio est enregistré dans « imports » de ce dossier.')),
     el('div', { class: 'row' }, dlBtn, cancelBtn),
     prog, bar,
-    field('Nom', nameIn),
-    field('Catégorie', catSel),
-    el('div', { class: 'hint', text: 'Le fichier audio est enregistré dans le dossier « imports » du dossier choisi ci-dessus. Respecte les droits d\'auteur et les conditions de YouTube.' }),
+    field(t('Nom'), nameIn),
+    field(t('Catégorie'), catSel),
+    el('div', { class: 'hint', text: t('Le fichier audio est enregistré dans le dossier « imports » du dossier choisi ci-dessus. Respecte les droits d\'auteur et les conditions de YouTube.') }),
   ], [
-    { label: 'Fermer', onclick: (c) => c() },
-    { label: 'Ajouter à la bibliothèque', kind: 'primary', onclick: (c) => {
-      if (!dl) { toast('Télécharge d\'abord l\'extrait.', 'warn'); return; }
+    { label: t('Fermer'), onclick: (c) => c() },
+    { label: t('Ajouter à la bibliothèque'), kind: 'primary', onclick: (c) => {
+      if (!dl) { toast(t('Télécharge d\'abord l\'extrait.'), 'warn'); return; }
       const s = {
         id: uid(),
         name: nameIn.value.trim() || (info && info.title) || 'YouTube',
@@ -288,7 +289,7 @@ const previewSound = () => {
       };
       if (!pushSound(s)) { c(); return; }
       save(); renderAll(); c();
-      toast('Son YouTube ajouté : ' + dl.path);
+      toast(t('Son YouTube ajouté : {path}', { path: dl.path }));
     } },
   // Fermeture pendant un download : sans yt:cancel le process tournait
   // jusqu'a 2 min (voire ~15 min si une maj d'outil etait en vol) sans

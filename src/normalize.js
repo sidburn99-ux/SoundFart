@@ -49,23 +49,23 @@ async function computeNorm(path) {
 // d'autres reglages pendant la normalisation. Sans host : modale dediee.
 async function normalizeAll(host) {
   const targets = cfg.sounds.filter((s) => !missing.has(s.id));
-  if (!targets.length) { toast('Aucun son à normaliser.', 'warn'); return; }
+  if (!targets.length) { toast(t('Aucun son à normaliser.'), 'warn'); return; }
   const lufs = normLufsTarget();
   const prog = el('div', { class: 'hint', text: `0 / ${targets.length}` });
-  const hint = el('div', { class: 'hint', text: `La loudness de chaque son est ramenée à ${lufs} LUFS. Ça peut prendre un moment sur une grosse bibliothèque.` });
+  const hint = el('div', { class: 'hint', text: t('La loudness de chaque son est ramenée à {lufs} LUFS. Ça peut prendre un moment sur une grosse bibliothèque.', { lufs }) });
   let done = 0, failed = 0, cancelled = false, closeP = () => {};
   if (host) {
-    const cancelBtn = el('button', { class: 'ghost', text: 'Annuler', onclick: () => { cancelled = true; cancelBtn.disabled = true; cancelBtn.textContent = 'Annulation…'; } });
+    const cancelBtn = el('button', { class: 'ghost', text: t('Annuler'), onclick: () => { cancelled = true; cancelBtn.disabled = true; cancelBtn.textContent = t('Annulation…'); } });
     host.replaceChildren(prog, hint, el('div', { class: 'row' }, cancelBtn));
   } else {
-    closeP = modal('Normalisation de la bibliothèque', [prog, hint], [{ label: 'Fermer', onclick: (c) => c() }], { onClose: () => { cancelled = true; } });
+    closeP = modal(t('Normalisation de la bibliothèque'), [prog, hint], [{ label: t('Fermer'), onclick: (c) => c() }], { onClose: () => { cancelled = true; } });
   }
   for (const s of targets) {
     // Le panneau peut etre ferme pendant la boucle (modal settings
     // detruite) : sans ce test, normalizeAll continuait en invisible —
     // computeNorm sur toute la bibliotheque, save() et renderAll().
     if (cancelled || (host && !host.isConnected)) break;
-    prog.textContent = `${done + 1} / ${targets.length} — ${s.name || 'son'}`;
+    prog.textContent = `${done + 1} / ${targets.length} — ${s.name || t('son')}`;
     try {
       const n = await computeNorm(s.path);
       // null = silence/mesure impossible : ne pas ecrire 1 — ca
@@ -81,7 +81,9 @@ async function normalizeAll(host) {
   // le partiel est sauvegarde (comportement voulu) mais le message doit
   // le dire, pas annoncer une « normalisation terminee » complete.
   const interrupted = cancelled || (host && !host.isConnected && done < targets.length);
-  const msg = (interrupted && !cancelled ? 'Normalisation interrompue (panneau fermé) : ' : 'Normalisation terminée : ') + `${done - failed} son(s) ajusté(s)` + (failed ? `, ${failed} ignoré(s)` : '') + (cancelled ? ' (annulée)' : '') + '.';
+  const msg = (interrupted && !cancelled ? t('Normalisation interrompue (panneau fermé) : ') : t('Normalisation terminée : '))
+    + t(plural(done - failed, '{n} son ajusté', '{n} sons ajustés'), { n: done - failed })
+    + (failed ? t(', {n} ignoré(s)', { n: failed }) : '') + (cancelled ? t(' (annulée)') : '') + '.';
   save(); closeP();
   if (host) host.replaceChildren(el('div', { class: 'hint', text: msg }));
   renderAll();
@@ -94,11 +96,11 @@ async function normalizeAll(host) {
 // entendre le test).
 async function testNormLufs(targetLufs) {
   const out = audio.mon;
-  if (!out) { toast('Choisis d\'abord une « écoute locale » dans les réglages.', 'warn'); return; }
+  if (!out) { toast(t('Choisis d\'abord une « écoute locale » dans les réglages.'), 'warn'); return; }
   // monId === cableId : l'ecoute locale ET Discord partagent la meme
   // sortie — le test de loudness serait audible par les potes sur le
   // cable, contrairement au contrat « jamais sur le cable Discord ».
-  if (audio.cable && out.ctx === audio.cable.ctx) { toast('« Écoute locale » et « Discord » pointent la même sortie — le test serait audible sur le câble. Change l\'écoute locale dans les réglages.', 'warn'); return; }
+  if (audio.cable && out.ctx === audio.cable.ctx) { toast(t('« Écoute locale » et « Discord » pointent la même sortie — le test serait audible sur le câble. Change l\'écoute locale dans les réglages.'), 'warn'); return; }
   try {
     const ctx = out.ctx;
     if (ctx.state !== 'running') ctx.resume().catch((e) => logErr('testNormLufs resume', e));
@@ -137,6 +139,6 @@ async function testNormLufs(targetLufs) {
     setTimeout(() => { try { src.stop(); g.disconnect(); } catch {} },
       Math.ceil(buf.duration * 1000) + 1500);
     src.start();
-    toast('Test : loudness ' + target + ' LUFS — écouté sur « ' + (cfg.settings.monLabel || 'écoute locale') + ' » uniquement.');
-  } catch (e) { logErr('testNormLufs', e); toast('Test impossible : ' + (e && e.message || e), 'warn'); }
+    toast(t('Test : loudness {lufs} LUFS — écouté sur « {dev} » uniquement.', { lufs: target, dev: (cfg.settings.monLabel || t('écoute locale')) }));
+  } catch (e) { logErr('testNormLufs', e); toast(t('Test impossible : {err}', { err: (e && e.message || e) }), 'warn'); }
 }

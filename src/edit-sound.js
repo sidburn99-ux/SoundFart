@@ -5,7 +5,7 @@
 function editSound(s) {
   const nameIn = el('input', { type: 'text', value: s.name, maxlength: 80 });
   const catSel = el('select', {},
-    el('option', { value: '', text: 'Sans catégorie' }),
+    el('option', { value: '', text: t('Sans catégorie') }),
     sortedCategories().map((c) => el('option', { value: c.id, text: c.name, selected: c.id === s.categoryId })));
   const favChk = el('input', { type: 'checkbox', checked: !!s.favorite });
   const vol = el('input', { type: 'range', min: 0, max: 300, step: 5, value: s.volume });
@@ -14,25 +14,25 @@ function editSound(s) {
 
   // ---- raccourci clavier global
   let sc = s.shortcut || '';
-  const scBtn = el('button', { text: sc ? fmtAccel(sc) : 'Aucun — cliquer pour définir' });
-  const scHint = el('div', { class: 'hint', text: 'Fonctionne même fenêtre minimisée, Discord ou jeu au premier plan. Ex : Ctrl+Alt+Q ou F6.' });
+  const scBtn = el('button', { text: sc ? fmtAccel(sc) : t('Aucun — cliquer pour définir') });
+  const scHint = el('div', { class: 'hint', text: t('Fonctionne même fenêtre minimisée, Discord ou jeu au premier plan. Ex : Ctrl+Alt+Q ou F6.') });
   let scCleanup = () => {};
   scBtn.addEventListener('click', () => {
     scCleanup();
-    scBtn.textContent = 'Appuie sur le raccourci… (Échap pour annuler)';
+    scBtn.textContent = t('Appuie sur le raccourci… (Échap pour annuler)');
     const disarm = () => {
       window.removeEventListener('keydown', onKey, true);
       scCleanup = () => {};
-      scBtn.textContent = sc ? fmtAccel(sc) : 'Aucun — cliquer pour définir';
+      scBtn.textContent = sc ? fmtAccel(sc) : t('Aucun — cliquer pour définir');
     };
     const onKey = (e) => {
       e.preventDefault();
       e.stopPropagation();
       if (e.key === 'Escape') { disarm(); return; }
       const acc = buildAccel(e);
-      if (!acc) { scHint.textContent = 'Ajoute un modifieur (Ctrl, Alt, Maj) ou utilise une touche F.'; return; }
+      if (!acc) { scHint.textContent = t('Ajoute un modifieur (Ctrl, Alt, Maj) ou utilise une touche F.'); return; }
       const owner = findShortcutOwner(acc, s.id);
-      if (owner) { scHint.textContent = 'Ce raccourci est déjà utilisé par ' + owner + '.'; return; }
+      if (owner) { scHint.textContent = t('Ce raccourci est déjà utilisé par {owner}.', { owner }); return; }
       sc = acc;
       scBtn.textContent = fmtAccel(acc);
       scHint.textContent = '';
@@ -45,16 +45,16 @@ function editSound(s) {
   // ---- normalisation
   let norm = s.norm ?? 1;
   const normVal = el('span', { class: 'vol-val', text: '×' + (Math.round((s.norm ?? 1) * 100) / 100) });
-  const normBtn = el('button', { text: 'Normaliser ce son', onclick: async () => {
+  const normBtn = el('button', { text: t('Normaliser ce son'), onclick: async () => {
     try {
       const n = await computeNorm(s.path);
       // null = silence/mesure impossible : ne rien appliquer ni afficher
       // un « x1 » mensonger (computeNorm renvoie desormais null, pas 1).
-      if (n == null) { toast('Fichier silencieux ou mesure impossible — normalisation ignorée.', 'warn'); return; }
+      if (n == null) { toast(t('Fichier silencieux ou mesure impossible — normalisation ignorée.'), 'warn'); return; }
       norm = n;
       normVal.textContent = '×' + (+norm).toFixed(2);
-      toast(`Volume normalisé : ×${(+norm).toFixed(2)}.`);
-    } catch (e) { logErr('computeNorm', e); toast('Impossible d\'analyser ce fichier.', 'warn'); }
+      toast(t('Volume normalisé : ×{n}.', { n: (+norm).toFixed(2) }));
+    } catch (e) { logErr('computeNorm', e); toast(t('Impossible d\'analyser ce fichier.'), 'warn'); }
   } });
 
   // ---- decoupage non destructif (le fichier d'origine n'est jamais modifie)
@@ -67,7 +67,7 @@ function editSound(s) {
   const endIn = el('input', { type: 'number', min: 0, step: 0.01, value: '' });
   const fiIn = el('input', { type: 'number', min: 0, max: 5000, step: 50, value: s.fadeIn || 0 });
   const foIn = el('input', { type: 'number', min: 0, max: 5000, step: 50, value: s.fadeOut || 0 });
-  const info = el('div', { class: 'hint', text: "Chargement de l'onde…" });
+  const info = el('div', { class: 'hint', text: t('Chargement de l\'onde…') });
   const outStart = () => (ts > 0.005 ? ts : 0);
   // pendingReset : « Tout réinitialiser » pendant « Chargement de l'onde… »
   // puis « Enregistrer » avant la fin du decode -> outEnd() rendait
@@ -77,7 +77,7 @@ function editSound(s) {
   function sync() {
     startIn.value = ts.toFixed(2);
     endIn.value = dur ? te.toFixed(2) : '';
-    if (dur) info.textContent = `Durée jouée : ${(te - ts).toFixed(2)} s sur ${dur.toFixed(2)} s`;
+    if (dur) info.textContent = t('Durée jouée : {played} s sur {total} s', { played: (te - ts).toFixed(2), total: dur.toFixed(2) });
   }
   function draw() {
     const w = canvas.width, h = canvas.height, g = canvas.getContext('2d');
@@ -167,7 +167,7 @@ function editSound(s) {
       ts = Math.min(s.trimStart || 0, te - 0.05);
     }
     sync(); draw();
-  }).catch((e) => { logErr('loadWave', e); info.textContent = 'Onde indisponible (fichier introuvable ou illisible).'; });
+  }).catch((e) => { logErr('loadWave', e); info.textContent = t('Onde indisponible (fichier introuvable ou illisible).'); });
   loadWave();
 
   const pvTime = el('div', { class: 'hint pvtime' });
@@ -189,7 +189,7 @@ function editSound(s) {
       onProgress: (frac, absPos, regionDur, regionStart) => {
         if (frac == null) { pvPos = null; pvTime.textContent = ''; draw(); return; }
         pvPos = absPos;
-        pvTime.textContent = fmtTime(absPos - regionStart) + ' / ' + fmtTime(regionDur);
+        pvTime.textContent = fmtTime(absPos - regionStart) + ' / ' + fmtTime(regionDur); // positions : format identique toutes langues
         draw();
       },
     });
@@ -238,43 +238,43 @@ function editSound(s) {
   // annules puis rouvrait confirmBox + editeur sur une modale morte.
   let closed = false;
 
-  const scClear = el('button', { class: 'ghost', text: 'Effacer', onclick: () => { scCleanup(); sc = ''; scBtn.textContent = 'Aucun — cliquer pour définir'; scHint.textContent = ''; } });
+  const scClear = el('button', { class: 'ghost', text: t('Effacer'), onclick: () => { scCleanup(); sc = ''; scBtn.textContent = t('Aucun — cliquer pour définir'); scHint.textContent = ''; } });
   const times = el('div', { class: 'times' },
-    el('label', { text: 'Début (s)', title: 'Le son ne jouera qu\'à partir de cet instant. Le fichier d\'origine n\'est jamais modifié.' }), startIn,
-    el('label', { text: 'Fin (s)', title: 'Le son s\'arrêtera à cet instant. Vide = jusqu\'à la fin du fichier.' }), endIn,
-    el('label', { text: 'Fondu d\'entrée (ms)', title: 'Le volume monte progressivement de 0 au niveau normal sur cette durée.' }), fiIn,
-    el('label', { text: 'Fondu de sortie (ms)', title: 'Le volume redescend à 0 sur cette durée avant la fin du son.' }), foIn);
+    el('label', { text: t('Début (s)'), title: t('Le son ne jouera qu\'à partir de cet instant. Le fichier d\'origine n\'est jamais modifié.') }), startIn,
+    el('label', { text: t('Fin (s)'), title: t('Le son s\'arrêtera à cet instant. Vide = jusqu\'à la fin du fichier.') }), endIn,
+    el('label', { text: t('Fondu d\'entrée (ms)'), title: t('Le volume monte progressivement de 0 au niveau normal sur cette durée.') }), fiIn,
+    el('label', { text: t('Fondu de sortie (ms)'), title: t('Le volume redescend à 0 sur cette durée avant la fin du son.') }), foIn);
 
-  modal('Modifier le son', [
-    field('Nom', nameIn),
-    field('Catégorie', catSel),
-    field('Favori', el('label', { class: 'check' }, favChk,
-      el('span', { text: 'Visible dans la catégorie ★ Favoris, en haut de la barre latérale.' }))),
-    field('Volume de ce son', el('div', { class: 'row' }, vol, volLbl),
-      '100 % = volume d\'origine. Au-delà, le son est amplifié (un limiteur évite la saturation).'),
-    field('Normalisation', el('div', { class: 'row' }, normBtn, normVal),
-      `Ajuste le volume du son vers la loudness cible des réglages (${normLufsTarget()} LUFS) sans toucher au fichier. ×1 = inchangé.`),
-    field('Raccourci clavier global', el('div', { class: 'row' }, scBtn, scClear), scHint),
-    field('Découper (début / fin) et fondus', el('div', { class: 'trim' }, canvas, pvTime, info, times),
-      'Glisse les repères roses sur l\'onde ou tape les temps. Clique sur l\'onde pendant l\'écoute pour déplacer la tête de lecture. Le fichier original n\'est jamais modifié.'),
+  modal(t('Modifier le son'), [
+    field(t('Nom'), nameIn),
+    field(t('Catégorie'), catSel),
+    field(t('Favori'), el('label', { class: 'check' }, favChk,
+      el('span', { text: t('Visible dans la catégorie ★ Favoris, en haut de la barre latérale.') }))),
+    field(t('Volume de ce son'), el('div', { class: 'row' }, vol, volLbl),
+      t('100 % = volume d\'origine. Au-delà, le son est amplifié (un limiteur évite la saturation).')),
+    field(t('Normalisation'), el('div', { class: 'row' }, normBtn, normVal),
+      t('Ajuste le volume du son vers la loudness cible des réglages ({lufs} LUFS) sans toucher au fichier. ×1 = inchangé.', { lufs: normLufsTarget() })),
+    field(t('Raccourci clavier global'), el('div', { class: 'row' }, scBtn, scClear), scHint),
+    field(t('Découper (début / fin) et fondus'), el('div', { class: 'trim' }, canvas, pvTime, info, times),
+      t('Glisse les repères roses sur l\'onde ou tape les temps. Clique sur l\'onde pendant l\'écoute pour déplacer la tête de lecture. Le fichier original n\'est jamais modifié.')),
     el('div', { class: 'row' },
-      el('button', { text: '▶ Écouter (casque)', onclick: preview }),
-      el('button', { text: 'MP3 de l\'extrait', title: 'Crée un petit fichier MP3 contenant uniquement l\'extrait choisi (ffmpeg est téléchargé au premier usage)', onclick: async () => {
+      el('button', { text: t('▶ Écouter (casque)'), onclick: preview }),
+      el('button', { text: t('MP3 de l\'extrait'), title: t('Crée un petit fichier MP3 contenant uniquement l\'extrait choisi (ffmpeg est téléchargé au premier usage)'), onclick: async () => {
         if (exportBusy) return;
-        if (!dur) { toast('Attend le chargement de l\'onde.', 'warn'); return; }
+        if (!dur) { toast(t('Attend le chargement de l\'onde.'), 'warn'); return; }
         exportBusy = true;
         try {
           // Dossier de sons obligatoire : pickDir natif (confirmBox detruirait
           // cette modale — slot modal() unique).
           if (!cfg.settings.storageDir) {
             const d = await window.sf.pickDir();
-            if (!d) { toast('Export annulé : aucun dossier choisi.', 'warn'); return; }
+            if (!d) { toast(t('Export annulé : aucun dossier choisi.'), 'warn'); return; }
             cfg.settings.storageDir = d; updateStorageUi(); save();
           }
           if (closed) return; // modale fermee pendant le pickDir
           const out = await window.sf.mediaCut({ input: s.path, start: outStart(), end: outEnd() ?? dur, dir: cfg.settings.storageDir || '' });
-          if (typeof out !== 'string' || !out) throw new Error('réponse media:cut invalide');
-          if (closed) { toast('Extrait MP3 créé : ' + out, 'info'); return; } // MP3 fait, modale morte : pas de collectEdits ni de confirmBox
+          if (typeof out !== 'string' || !out) throw new Error(t('réponse media:cut invalide'));
+          if (closed) { toast(t('Extrait MP3 créé : {path}', { path: out }), 'info'); return; } // MP3 fait, modale morte : pas de collectEdits ni de confirmBox
           // confirmBox DETRUIT cette modale (slot unique) : on persiste les
           // edits courants d'abord (collectEdits : les champs saisis, pas
           // seulement trim/fades), puis on rouvre l'editeur apres la decision
@@ -285,26 +285,26 @@ function editSound(s) {
           // fades — les effacer detruisait un reglage que le fichier
           // resultant peut encore appliquer (play() re-echelonne si
           // fi+fo > duree). Seule la decoupe est rembobinee.
-          if (await confirmBox('Extrait MP3 créé', 'Fichier : ' + out + '\n\nL\'utiliser à la place du fichier actuel ? La découpe sera réinitialisée (le MP3 contient déjà l\'extrait) ; les fondus sont conservés.', 'Utiliser')) {
+          if (await confirmBox(t('Extrait MP3 créé'), t('Fichier : {path}\n\nL\'utiliser à la place du fichier actuel ? La découpe sera réinitialisée (le MP3 contient déjà l\'extrait) ; les fondus sont conservés.', { path: out }), t('Utiliser'))) {
             const oldPath = s.path;
             s.path = out;
             cacheDelete(oldPath);
             s.trimStart = 0; s.trimEnd = null;
             save(); renderAll();
-            toast('Fichier remplacé par l\'extrait MP3.');
+            toast(t('Fichier remplacé par l\'extrait MP3.'));
           } else {
-            toast('MP3 créé : ' + out);
+            toast(t('MP3 créé : {path}', { path: out }));
           }
           editSound(s); // rouvre l'editeur (la modale a ete detruite par confirmBox)
-        } catch (e) { toast('Export impossible : ' + e.message, 'warn'); }
+        } catch (e) { toast(t('Export impossible : {err}', { err: e.message }), 'warn'); }
         finally { exportBusy = false; }
       } }),
-      el('button', { text: 'Tout réinitialiser', onclick: reset }),
-      el('button', { text: 'Ouvrir l\'emplacement', onclick: () => window.sf.reveal(s.path).catch((e) => logErr('reveal', e)) })),
-    field('Fichier', el('div', { class: 'path hint', text: s.path })),
+      el('button', { text: t('Tout réinitialiser'), onclick: reset }),
+      el('button', { text: t('Ouvrir l\'emplacement'), onclick: () => window.sf.reveal(s.path).catch((e) => logErr('reveal', e)) })),
+    field(t('Fichier'), el('div', { class: 'path hint', text: s.path })),
   ], [
-    { label: 'Annuler', onclick: (c) => c() },
-    { label: 'Enregistrer', kind: 'primary', onclick: (c) => {
+    { label: t('Annuler'), onclick: (c) => c() },
+    { label: t('Enregistrer'), kind: 'primary', onclick: (c) => {
       collectEdits();
       save(); renderAll(); c();
       applyShortcuts();

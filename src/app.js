@@ -4,6 +4,10 @@ const SR = 48000;
 // Source unique : lib/audio-utils.js (SFUtils) — la copie locale avait
 // diverge possible entre main et renderer.
 const VIRTUAL_RE = window.SFUtils.VIRTUAL_RE;
+// i18n : t()/plural() sont exposes en global par lib/i18n.js (window.t /
+// window.plural) — utilisables dans tous les modules charges par index.html.
+// La cle de t() est le texte FRANCAIS source : le fallback est le francais.
+const SFI18n = window.SFI18n;
 const PALETTE = ['#8b5cf6', '#ec4899', '#f97316', '#22c55e', '#06b6d4', '#eab308', '#ef4444', '#3b82f6'];
 const THUMB_EMOJIS = ['💨', '🔊', '📢', '🎺', '🦖', '🤖', '👽', '🔥', '⚡', '🍕', '🎮', '🏆', '💣', '🧨', '🎉', '😱', '🤣', '🤡', '👻', '🐔', '🐸', '🐵', '🦁', '🐯', '🐙', '🚀', '🌈', '🍔', '🍿', '🎯', '🎲', '🃏', '🎰', '📯', '🎷', '🎸', '🥁', '🎻', '🎤', '📻', '🔔', '⏰', '💎', '🪙', '🎁', '🍩', '🧃', '🥤', '👑', '🃏'];
 
@@ -75,7 +79,7 @@ function save() {
     // suffit — l'utilisateur doit savoir que ses reglages sont perdus.
     // saveErrNotified est reset au prochain succes : sans ca, UN echec
     // transitoire rendait tous les echecs suivants silencieux.
-    if (!saveErrNotified) { saveErrNotified = true; toast('Sauvegarde impossible : ' + (e && e.message || e), 'warn'); }
+    if (!saveErrNotified) { saveErrNotified = true; toast(t('Sauvegarde impossible : {err}', { err: (e && e.message || e) }), 'warn'); }
   }), 250);
 }
 window.addEventListener('beforeunload', () => {
@@ -104,6 +108,15 @@ function normalizeCfg(saved) {
   c.settings.voiceDsp = c.settings.voiceDsp !== false;
   const vl = Math.round(+c.settings.voiceDspLvl);
   c.settings.voiceDspLvl = (Number.isFinite(vl) && vl >= 1 && vl <= 4) ? vl : 2;
+  // Langue : undefined = jamais choisie -> ecran de choix au prochain
+  // lancement. Valeur inconnue -> 'fr' (l'utilisateur a deja repondu, on ne
+  // redemande pas). Pas de t() ici : normalizeCfg est evalue hors DOM par
+  // test/normalize-cfg.test.js — la liste reste en dur, alignee sur i18n.js.
+  if (c.settings.lang !== undefined && c.settings.lang !== null) {
+    c.settings.lang = ['fr', 'en', 'de', 'es'].includes(c.settings.lang) ? c.settings.lang : 'fr';
+  } else {
+    delete c.settings.lang;
+  }
   if (!Number.isFinite(+c.settings.master)) c.settings.master = 80; else c.settings.master = Math.min(100, Math.max(0, +c.settings.master));
   if (typeof c.settings.stopShortcut !== 'string' || c.settings.stopShortcut.length > 64) c.settings.stopShortcut = defaults().settings.stopShortcut;
   if (typeof c.settings.sort !== 'string' || !SORTS.some(([v]) => v === c.settings.sort)) c.settings.sort = 'added-desc';
@@ -218,6 +231,9 @@ function normalizeCfg(saved) {
   // controle) pour les deux champs. isUsablePath = source unique SFUtils.
   if (st.storageDir != null && (typeof st.storageDir !== 'string' || (st.storageDir !== '' && !window.SFUtils.isUsablePath(st.storageDir)))) st.storageDir = '';
   if (st.lastDestDir != null && (typeof st.lastDestDir !== 'string' || (st.lastDestDir !== '' && !window.SFUtils.isUsablePath(st.lastDestDir)))) delete st.lastDestDir;
+  // crashReport : 'yes'/'no' explicites seulement — toute autre valeur
+  // (absent, 'true', bidon) = jamais demande -> la demande reapparait.
+  if (st.crashReport !== 'yes' && st.crashReport !== 'no') delete st.crashReport;
   const hasCat = (id) => c.categories.some((x) => x.id === id);
   if (!['all', 'none', 'fav'].includes(c.ui.cat) && !hasCat(c.ui.cat)) c.ui.cat = 'all';
   return c;
@@ -293,8 +309,8 @@ function askText(title, label, initial, okLabel) {
     // resolve AVANT close : la valeur explicite prime sur resolveValue (null).
     const done = (close, v) => { resolve(v); close(); };
     const close = modal(title, [field(label, input)], [
-      { label: 'Annuler', onclick: (c) => done(c, null) },
-      { label: okLabel || 'OK', kind: 'primary', onclick: (c) => done(c, input.value.trim() || null) },
+      { label: t('Annuler'), onclick: (c) => done(c, null) },
+      { label: okLabel || t('OK'), kind: 'primary', onclick: (c) => done(c, input.value.trim() || null) },
     ], { resolve, resolveValue: null });
     input.addEventListener('keydown', (e) => { if (e.key === 'Enter') done(close, input.value.trim() || null); });
     setTimeout(() => { input.focus(); input.select(); }, 30);
@@ -304,8 +320,8 @@ function askText(title, label, initial, okLabel) {
 function confirmBox(title, msg, okLabel) {
   return new Promise((resolve) => {
     modal(title, [el('div', { text: msg })], [
-      { label: 'Annuler', onclick: (c) => { resolve(false); c(); } },
-      { label: okLabel || 'Confirmer', kind: 'primary', onclick: (c) => { resolve(true); c(); } },
+      { label: t('Annuler'), onclick: (c) => { resolve(false); c(); } },
+      { label: okLabel || t('Confirmer'), kind: 'primary', onclick: (c) => { resolve(true); c(); } },
     ], { resolve, resolveValue: false });
   });
 }
@@ -344,7 +360,7 @@ function acquireDecode(bytes) {
   if (decodeQueue.length >= DECODE_QUEUE_MAX || decodeQueuedBytes + bytes > DECODE_QUEUE_MAX_BYTES) {
     // noFileErr : erreur transitoire de ressource, pas un fichier absent —
     // sinon play() badge « introuvable » et le vrai message est masque.
-    const e = new Error('Trop de lectures simultanées — réessayez dans un instant.');
+    const e = new Error(t('Trop de lectures simultanées — réessayez dans un instant.'));
     e.noFileErr = true;
     return Promise.reject(e);
   }
@@ -370,7 +386,7 @@ async function getBuffer(path, allowCache) {
     // clics repetes sur fichiers corrompus different(s) accumulaient des
     // zombies jusqu'a saturation memoire du renderer — on refuse tot.
     if (decodeZombies >= MAX_DECODE_ZOMBIES) {
-      const e = new Error('Décodage audio bloqué — redémarrez l\'application.'); e.noFileErr = true; throw e;
+      const e = new Error(t('Décodage audio bloqué — redémarrez l\'application.')); e.noFileErr = true; throw e;
     }
     const data = await window.sf.readFile(path).catch((e) => {
       // Seul un vrai manquant (ENOENT) doit badge « introuvable » : un
@@ -386,7 +402,7 @@ async function getBuffer(path, allowCache) {
     // tres lourd on refuse AVANT decodeAudioData (crash renderer connu).
     // noFileErr : le fichier EXISTE mais ne peut pas etre joue — ne doit pas
     // etre badge « introuvable » (fileErr = vrai manquant seulement).
-    if (data.byteLength > 150 * 1024 * 1024) { const e = new Error('Fichier trop volumineux pour être joué (' + Math.round(data.byteLength / 1048576) + ' Mo).'); e.noFileErr = true; throw e; }
+    if (data.byteLength > 150 * 1024 * 1024) { const e = new Error(t('Fichier trop volumineux pour être joué ({n} Mo).', { n: Math.round(data.byteLength / 1048576) })); e.noFileErr = true; throw e; }
     const ab = data instanceof ArrayBuffer ? data
       : data && data.buffer ? data.buffer.slice(data.byteOffset || 0, (data.byteOffset || 0) + data.byteLength)
       : new Uint8Array(data).buffer; // robustness : ArrayBuffer pur ou Uint8Array
@@ -406,7 +422,7 @@ async function getBuffer(path, allowCache) {
       decP,
       new Promise((_, rej) => setTimeout(() => {
         if (decSettled) return; // decP a deja gagne : timer sans objet
-        const e = new Error('Décodage trop long — fichier peut-être corrompu.'); e.noFileErr = true;
+        const e = new Error(t('Décodage trop long — fichier peut-être corrompu.')); e.noFileErr = true;
         decodeZombies++;
         decP.then(() => decodeZombies--, () => decodeZombies--);
         rej(e);
@@ -424,17 +440,17 @@ async function getBuffer(path, allowCache) {
   // Plafond dur : au-dela de 512 Mo de PCM (≈23 min stereo), le renderer
   // etait expose au crash OOM documente (-1/143) — on refuse la lecture.
   if (bytes > 512 * 1024 * 1024) {
-    const e = new Error('Fichier trop long pour être joué (' + Math.round(buf.duration / 60) + ' min).');
+    const e = new Error(t('Fichier trop long pour être joué ({n} min).', { n: Math.round(buf.duration / 60) }));
     e.noFileErr = true; throw e;
   }
   if (bytes > BUF_CACHE_MAX) {
-    toast('Fichier très lourd : joué sans cache pour économiser la mémoire.', 'warn');
+    toast(t('Fichier très lourd : joué sans cache pour économiser la mémoire.'), 'warn');
     return buf;
   }
   // Fichier tres long : un buffer decode tient ~22 Mo/min stereo — on previent une fois.
   if (buf.duration > 600 && !longWarned.has(path)) {
     longWarned.add(path);
-    toast('Fichier long (> 10 min) : il occupera beaucoup de mémoire une fois joué.', 'warn');
+    toast(t('Fichier long (> 10 min) : il occupera beaucoup de mémoire une fois joué.'), 'warn');
   }
   // Orphelin de cache : si le son a ete retire/relocalise pendant le
   // decodeAudioData, ne pas mettre en cache un buffer pour un path qui
@@ -498,8 +514,8 @@ async function makeOutput(deviceId) {
       uiLog('sortie audio ' + ctx.state + ' (device=' + (deviceId || 'defaut') + ')');
       const stillActive = audio.cable && audio.cable.ctx === ctx || audio.mon && audio.mon.ctx === ctx;
       if (!stillActive) return; // fermeture volontaire (teardown/applyAudio)
-      if (ctx.state === 'interrupted') toast('Sortie audio interrompue — réessaie de jouer un son.', 'warn');
-      else toast('Sortie audio fermée par le système — reconstruction en cours…', 'warn');
+      if (ctx.state === 'interrupted') toast(t('Sortie audio interrompue — réessaie de jouer un son.'), 'warn');
+      else toast(t('Sortie audio fermée par le système — reconstruction en cours…'), 'warn');
       // Reconstruction bornee : applyAudio recree les sorties. Ferme =
       // device probablement en re-init (reveil) -> delai plus long, plus
       // de tentatives que 'interrupted'. 'closed' a son propre compteur
@@ -514,7 +530,7 @@ async function makeOutput(deviceId) {
           closedRetries++;
           setTimeout(() => { applyAudio().catch((e) => logErr('applyAudio retry', e)); }, Math.min(2500 * closedRetries, 20000));
         } else {
-          toast('Sortie audio toujours instable — reconstruction automatique suspendue jusqu\'au prochain changement de périphérique.', 'warn');
+          toast(t('Sortie audio toujours instable — reconstruction automatique suspendue jusqu\'au prochain changement de périphérique.'), 'warn');
         }
       } else if (deadRetries < 5) {
         deadRetries++;
@@ -562,7 +578,7 @@ async function applyAudioInner() {
   try {
     if (s.cableId) audio.cable = await makeOutput(s.cableId);
   } catch (e) {
-    warns.push('Sortie Discord : ' + e.message);
+    warns.push(t('Sortie Discord : {err}', { err: e.message }));
   }
   // Meme peripherique pour cable et ecoute : PARTAGER le contexte au lieu
   // d'en creer un second — chaque AudioContext est une surface d'exposition
@@ -573,7 +589,7 @@ async function applyAudioInner() {
   try {
     if (s.monId) audio.mon = sameOut ? audio.cable : await makeOutput(s.monId);
   } catch (e) {
-    warns.push('Écoute locale : ' + e.message);
+    warns.push(t('Écoute locale : {err}', { err: e.message }));
   }
   // Mixage micro requis des que la bascule auto est active : sinon Discord n'entend que les
   // sons, jamais la voix. micMix reste un interrupteur manuel complementaire.
@@ -581,9 +597,9 @@ async function applyAudioInner() {
   if (micMixOn) {
     let micPendingStream = null; // getUserMedia reussi mais graphe en echec : a stopper
     try {
-      if (!audio.cable) warns.push('Mixage micro : choisis d\'abord une sortie Discord.');
-      else if (!VIRTUAL_RE.test(s.cableLabel)) warns.push('Mixage micro désactivé : la sortie Discord n\'est pas un câble virtuel (tu t\'entendrais dans ton casque).');
-      else if (s.cableId === s.monId) warns.push('Mixage micro désactivé : sortie Discord et écoute locale identiques.');
+      if (!audio.cable) warns.push(t('Mixage micro : choisis d\'abord une sortie Discord.'));
+      else if (!VIRTUAL_RE.test(s.cableLabel)) warns.push(t('Mixage micro désactivé : la sortie Discord n\'est pas un câble virtuel (tu t\'entendrais dans ton casque).'));
+      else if (s.cableId === s.monId) warns.push(t('Mixage micro désactivé : sortie Discord et écoute locale identiques.'));
       else {
         // « default » pointerait sur CABLE Output depuis la bascule micro auto : on prend un vrai peripherique non virtuel
         let micDev = s.micId && s.micId !== 'default' ? s.micId : null;
@@ -599,7 +615,7 @@ async function applyAudioInner() {
         // le peripherique par defaut Windows est CABLE Output — ouvrir le
         // micro dessus enregistrerait la sortie Discord = larsen.
         if (!micDev) {
-          warns.push('Mixage micro : aucun micro réel détecté (débranché ?).');
+          warns.push(t('Mixage micro : aucun micro réel détecté (débranché ?).'));
         } else {
         // Traitement vocal sur la voix uniquement : echo cancellation et
         // noise suppression sont des contraintes getUserMedia (actives
@@ -613,9 +629,9 @@ async function applyAudioInner() {
         const stream = micPendingStream;
         // Micro perdu sans devicechange (debranchement, BT qui coupe) : le
         // track meurt -> Discord n'entend plus la voix, sans aucun signal.
-        stream.getTracks().forEach((t) => {
-          t.addEventListener('ended', () => { if (audio.micStream === stream) { toast('Micro perdu — voix coupée sur le câble.', 'warn'); audio.micStream = null; applyAudio().catch((e) => logErr('applyAudio', e)); } });
-          t.addEventListener('mute', () => { if (audio.micStream === stream && Date.now() - muteWarnAt > 10000) { muteWarnAt = Date.now(); toast('Micro muet par le système — voix coupée.', 'warn'); } });
+        stream.getTracks().forEach((tr) => {
+          tr.addEventListener('ended', () => { if (audio.micStream === stream) { toast(t('Micro perdu — voix coupée sur le câble.'), 'warn'); audio.micStream = null; applyAudio().catch((e) => logErr('applyAudio', e)); } });
+          tr.addEventListener('mute', () => { if (audio.micStream === stream && Date.now() - muteWarnAt > 10000) { muteWarnAt = Date.now(); toast(t('Micro muet par le système — voix coupée.'), 'warn'); } });
         });
         const src = audio.cable.ctx.createMediaStreamSource(stream);
         // Voice gate DSP (highpass ~80 Hz + noise gate) sur la voix
@@ -674,7 +690,7 @@ async function applyAudioInner() {
         // Si le graphe a jete apres getUserMedia, stopper le stream tout de
         // suite : sinon le micro reste allume (LED) sans etre connecte.
         try { if (micPendingStream) micPendingStream.getTracks().forEach((t) => t.stop()); } catch {}
-        warns.push('Micro inaccessible : ' + e.message);
+        warns.push(t('Micro inaccessible : {err}', { err: e.message }));
       }
   }
   updateRoutes();
@@ -691,7 +707,7 @@ async function applyAudioInner() {
 let permWarnShown = false;
 const warnPermOnce = (msg) => {
   logErr('refreshDevices', new Error(msg));
-  if (!permWarnShown) { permWarnShown = true; toast('Accès audio refusé ou indisponible — la liste des périphériques peut être incomplète. Vérifie l\'autorisation micro.', 'warn'); }
+  if (!permWarnShown) { permWarnShown = true; toast(t('Accès audio refusé ou indisponible — la liste des périphériques peut être incomplète. Vérifie l\'autorisation micro.'), 'warn'); }
 };
 
 async function refreshDevices(askPermission) {
@@ -762,16 +778,16 @@ async function runAutoSetup() {
   try {
     const r = await window.sf.audioAutoSetup({ enabled: cfg.settings.autoSwitchMic, cableLabel: cfg.settings.cableLabel });
     if (!r) return;
-    if (r.changed) toast('Entrée micro basculée sur ' + r.device + ' (restaurée à la fermeture).');
+    if (r.changed) toast(t('Entrée micro basculée sur {dev} (restaurée à la fermeture).', { dev: r.device }));
     else if (r.stuckCable) {
       uiLog('entrees deja sur le cable sans marqueur — proposition de reparation');
-      if (await confirmBox('Entrée micro coincée sur CABLE Output',
-        'Windows envoie déjà le micro sur « CABLE Output » sans bascule SoundFart (crash ou ancienne session). Discord risque de ne recevoir aucun micro.\n\nRéparer = rebascule l\'entrée Windows sur ton micro (Logitech G930).',
-        'Réparer')) {
+      if (await confirmBox(t('Entrée micro coincée sur CABLE Output'),
+        t('Windows envoie déjà le micro sur « CABLE Output » sans bascule SoundFart (crash ou ancienne session). Discord risque de ne recevoir aucun micro.\n\nRéparer = rebascule l\'entrée Windows sur ton micro (Logitech G930).'),
+        t('Réparer'))) {
         window.sf.restoreMic(true);
-        toast('Entrée micro Windows : restauration demandée…');
+        toast(t('Entrée micro Windows : restauration demandée…'));
       }
-    } else if (!r.ok) toast('Bascule micro auto impossible : ' + r.err, 'warn');
+    } else if (!r.ok) toast(t('Bascule micro auto impossible : {err}', { err: r.err }), 'warn');
   } catch (e) { logErr('audioAutoSetup', e); }
 }
 
@@ -780,7 +796,7 @@ let cableScreenEl = null;
 
 function cableScreen() {
   if (cableScreenEl) return cableScreenEl;
-  const verify = el('button', { class: 'ghost', text: 'J\'ai installé, vérifier', onclick: async (e) => {
+  const verify = el('button', { class: 'ghost', text: t('J\'ai installé, vérifier'), onclick: async (e) => {
     e.target.disabled = true;
     try {
       await refreshDevices(false); resolveDevices(); updateCableUi();
@@ -792,22 +808,22 @@ function cableScreen() {
     if (cablePresent()) {
       runAutoSetup();
     } else {
-      toast('Toujours absent — si tu viens d\'installer VB-CABLE, redémarre Windows : les périphériques n\'apparaissent qu\'après.', 'warn');
+      toast(t('Toujours absent — si tu viens d\'installer VB-CABLE, redémarre Windows : les périphériques n\'apparaissent qu\'après.'), 'warn');
     }
   } });
   cableScreenEl = el('div', { class: 'cable-screen', id: 'cable-screen' },
     el('div', { class: 'cable-card' },
-      el('h2', { text: 'VB-CABLE requis' }),
-      el('p', { text: 'SoundFart envoie le son dans un câble audio virtuel : c\'est lui qui permet à Discord de recevoir tes sons comme s\'ils venaient de ton micro. Sans lui, la diffusion vers Discord est désactivée.' }),
-      el('button', { class: 'primary big', text: 'Télécharger VB-CABLE (page officielle)', onclick: () => window.sf.cableDownload() }),
+      el('h2', { text: t('VB-CABLE requis') }),
+      el('p', { text: t('SoundFart envoie le son dans un câble audio virtuel : c\'est lui qui permet à Discord de recevoir tes sons comme s\'ils venaient de ton micro. Sans lui, la diffusion vers Discord est désactivée.') }),
+      el('button', { class: 'primary big', text: t('Télécharger VB-CABLE (page officielle)'), onclick: () => window.sf.cableDownload() }),
       el('div', { class: 'hint center', text: 'vb-audio.com/Cable' }),
       el('ol', { class: 'cable-steps' },
-        el('li', { text: 'Dézippe l\'archive téléchargée.' }),
-        el('li', { text: 'Clic droit sur VBCABLE_Setup_x64.exe → « Exécuter en tant qu\'administrateur ».' }),
-        el('li', { text: 'Clique « Install », puis redémarre Windows.' })),
+        el('li', { text: t('Dézippe l\'archive téléchargée.') }),
+        el('li', { text: t('Clic droit sur VBCABLE_Setup_x64.exe → « Exécuter en tant qu\'administrateur ».') }),
+        el('li', { text: t('Clique « Install », puis redémarre Windows.') })),
       el('div', { class: 'row center' }, verify,
-        el('button', { class: 'ghost', text: 'Plus tard', onclick: () => { cableScreenEl.remove(); cableScreenEl = null; } })),
-      el('p', { class: 'hint', text: 'VB-CABLE est gratuit — si tu l\'utilises, pense à soutenir VB-Audio sur sa page.' })));
+        el('button', { class: 'ghost', text: t('Plus tard'), onclick: () => { cableScreenEl.remove(); cableScreenEl = null; } })),
+      el('p', { class: 'hint', text: t('VB-CABLE est gratuit — si tu l\'utilises, pense à soutenir VB-Audio sur sa page.') })));
   document.body.append(cableScreenEl);
   window.sf.uiLog && window.sf.uiLog('ecran VB-CABLE requis affiche');
   return cableScreenEl;
@@ -840,7 +856,7 @@ function setPlaying(id, delta) {
   const c = cardEls.get(id);
   if (c) c.classList.toggle('playing', n > 0);
   const names = [...playingCount.keys()].map((i) => playingNames.get(i) || cfg.sounds.find((x) => x.id === i)?.name).filter(Boolean);
-  $('#nowplaying').textContent = names.length ? '▶ ' + names.join(' + ') : 'Prêt';
+  $('#nowplaying').textContent = names.length ? '▶ ' + names.join(' + ') : t('Prêt');
 }
 
 function endVoice(v) {
@@ -853,12 +869,12 @@ function play(sound, opts = {}) {
   // Plafond de voix simultanees : chaque voix = 2 sources + gains + timers
   // par sortie — des clics en rafale/allers-retours creeaient des centaines
   // de nodes audio sans limite.
-  if (voices.size >= 32) { toast('Trop de lectures simultanées.', 'warn'); return Promise.resolve(null); }
+  if (voices.size >= 32) { toast(t('Trop de lectures simultanées.'), 'warn'); return Promise.resolve(null); }
   const gen = playGen; // si stopAll/teardownAudio passe pendant le await getBuffer, on abandonne
   const active = (opts.monitorOnly ? [audio.mon] : [audio.cable, audio.mon]).filter(Boolean);
   if (!active.length) {
-    toast(opts.monitorOnly ? 'Choisis une « écoute locale » dans les réglages pour pré-écouter sans que tes potes entendent.'
-      : 'Aucune sortie audio active : ouvre les réglages audio.', 'warn');
+    toast(opts.monitorOnly ? t('Choisis une « écoute locale » dans les réglages pour pré-écouter sans que tes potes entendent.')
+      : t('Aucune sortie audio active : ouvre les réglages audio.'), 'warn');
     return Promise.resolve(null);
   }
   let fileErr = false;
@@ -881,7 +897,7 @@ function play(sound, opts = {}) {
     // Le plafond de 32 voix est revérifié ICI : des clics pendant le
     // decodeAudioData passaient tous le check synchrone de l'entree —
     // le pic de nodes n'etait alors borne que par le nombre de clics.
-    if (voices.size >= 32) { toast('Trop de lectures simultanées.', 'warn'); return null; }
+    if (voices.size >= 32) { toast(t('Trop de lectures simultanées.'), 'warn'); return null; }
     // opts.norm : l'editeur passe la normalisation EN COURS non enregistree
     // pour que l'apercu corresponde a ce que « Enregistrer » stockera —
     // sans lui, play() lisait s.norm (ancienne valeur sauvee) et
@@ -898,7 +914,7 @@ function play(sound, opts = {}) {
       endEff = offset + maxDur;
       if (!opts.preview && !truncWarned.has(sound.path)) {
         truncWarned.add(sound.path);
-        toast('Son plus long que la limite (' + maxDur + ' s) : seuls les ' + maxDur + ' premières secondes sont jouées.', 'warn');
+        toast(t('Son plus long que la limite ({n} s) : seuls les {n} premières secondes sont jouées.', { n: maxDur }), 'warn');
       }
     }
     if (endEff <= offset + 0.01) return null; // trim vide/invalide : ne rien jouer
@@ -940,7 +956,7 @@ function play(sound, opts = {}) {
       if (!voices.has(voice)) return;
       for (const n of voice.nodes) { try { n.src.stop(); } catch {} try { n.g.disconnect(); } catch {} }
       endVoice(voice);
-      toast('Lecture interrompue : la sortie audio était suspendue.', 'warn');
+      toast(t('Lecture interrompue : la sortie audio était suspendue.'), 'warn');
     }, (dur + 15) * 1000);
     playingNames.set(sound.id, sound.name || 'son');
     setPlaying(sound.id, +1);
@@ -960,13 +976,13 @@ function play(sound, opts = {}) {
     // Seules les erreurs de lecture du FICHIER marquent le son « introuvable » ;
     // une erreur Web Audio transitoire ne doit pas afficher un faux badge missing.
     if (fileErr) {
-      toast(`Impossible de lire « ${sound.name} » : fichier introuvable ou illisible.`, 'warn');
+      toast(t('Impossible de lire « {name} » : fichier introuvable ou illisible.', { name: sound.name }), 'warn');
       missing.add(sound.id);
     } else {
       // Nom nettoye : un titre YouTube avec emojis/symboles rendait le
       // toast illisible (« caracteres non necessaires » rapportes terrain).
-      const nm = String(sound.name || '').replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60) || 'son';
-      toast(`Erreur de lecture de « ${nm} » : ${e && e.message || 'audio indisponible'}`, 'warn');
+      const nm = String(sound.name || '').replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60) || t('son');
+      toast(t('Erreur de lecture de « {name} » : {err}', { name: nm, err: (e && e.message) || t('audio indisponible') }), 'warn');
     }
     renderGrid();
     return null;
@@ -1004,9 +1020,9 @@ function stopAll(instant) {
 function updateRoutes() {
   const s = cfg.settings;
   const parts = [];
-  parts.push('Discord : ' + (audio.cable ? s.cableLabel : 'non configuré'));
-  parts.push('Casque : ' + (audio.mon ? s.monLabel : 'aucun'));
-  if (audio.micStream) parts.push('Micro mixé');
+  parts.push(t('Discord : ') + (audio.cable ? s.cableLabel : t('non configuré')));
+  parts.push(t('Casque : ') + (audio.mon ? s.monLabel : t('aucun')));
+  if (audio.micStream) parts.push(t('Micro mixé'));
   $('#routes').textContent = parts.join('  ·  ');
   $('#routes').title = parts.join('\n');
 }
@@ -1064,10 +1080,10 @@ function normAccel(a) {
 function findShortcutOwner(acc, excludeSoundId) {
   const a = normAccel(acc);
   if (!a) return null;
-  if (normAccel(cfg.settings.stopShortcut) === a) return 'le raccourci STOP';
+  if (normAccel(cfg.settings.stopShortcut) === a) return t('le raccourci STOP');
   // Accelerateurs du menu applicatif (fenetre focus) : un raccourci de son
   // identique produirait une double action (jouer + ouvrir la dialog).
-  if (RESERVED_SC.has(a)) return 'un raccourci réservé du système';
+  if (RESERVED_SC.has(a)) return t('un raccourci réservé du système');
   const s = cfg.sounds.find((x) => x.id !== excludeSoundId && normAccel(x.shortcut) === a);
   return s ? '« ' + s.name + ' »' : null;
 }
@@ -1081,7 +1097,7 @@ async function applyShortcuts() {
   for (const s of cfg.sounds) if (s.shortcut) entries.push({ key: s.id, accel: s.shortcut });
   try {
     const failed = await window.sf.applyShortcuts(entries);
-    if (failed && failed.length) toast('Raccourcis refusés par Windows : ' + failed.map(fmtAccel).join(', '), 'warn');
+    if (failed && failed.length) toast(t('Raccourcis refusés par Windows : {list}', { list: failed.map(fmtAccel).join(', ') }), 'warn');
   } catch (e) {
     logErr('shortcuts', e);
   }
@@ -1101,7 +1117,7 @@ const { fmtTime, parseTs } = window.SFUtils;
 // Plafond unique pour tous les ajouts runtime (enregistrement, YouTube,
 // seed) : au-dela file:check refuse le batch et config:save depasse 5 Mo.
 function pushSound(s) {
-  if (cfg.sounds.length >= 5000) { toast('Limite de 5000 sons atteinte.', 'warn'); return false; }
+  if (cfg.sounds.length >= 5000) { toast(t('Limite de 5000 sons atteinte.'), 'warn'); return false; }
   cfg.sounds.push(s); return true;
 }
 
@@ -1111,30 +1127,30 @@ function pushSound(s) {
 // annuler l'action, jamais de dossier implicite.
 async function ensureStorageDir() {
   if (cfg.settings.storageDir) return true;
-  if (!(await confirmBox('Choisis ton dossier de sons',
-    'SoundFart y range les fichiers qu\'il crée : sons ajoutés (copiés), imports YouTube, enregistrements et extraits MP3.\n\nExemples : Documents\\SoundFart, E:\\Soundfart, une partition dédiée.',
-    'Choisir un dossier'))) {
-    toast('Action annulée : aucun dossier de sons choisi.', 'warn'); return false;
+  if (!(await confirmBox(t('Choisis ton dossier de sons'),
+    t('SoundFart y range les fichiers qu\'il crée : sons ajoutés (copiés), imports YouTube, enregistrements et extraits MP3.\n\nExemples : Documents\\SoundFart, E:\\Soundfart, une partition dédiée.'),
+    t('Choisir un dossier')))) {
+    toast(t('Action annulée : aucun dossier de sons choisi.'), 'warn'); return false;
   }
   try {
     const d = await window.sf.pickDir();
-    if (!d) { toast('Action annulée : aucun dossier choisi.', 'warn'); return false; }
+    if (!d) { toast(t('Action annulée : aucun dossier choisi.'), 'warn'); return false; }
     cfg.settings.storageDir = d; save(); updateStorageUi();
-    toast('Dossier de sons : ' + d);
+    toast(t('Dossier de sons : {dir}', { dir: d }));
     return true;
   } catch (e) { logErr('pickDir', e); return false; }
 }
 
 async function addPaths(rawPaths) {
   const paths = await window.sf.expandPaths(rawPaths);
-  if (!paths.length) { toast('Aucun fichier audio reconnu (mp3, wav, ogg, flac, m4a, aac, opus).', 'warn'); return; }
+  if (!paths.length) { toast(t('Aucun fichier audio reconnu (mp3, wav, ogg, flac, m4a, aac, opus).'), 'warn'); return; }
   if (!(await ensureStorageDir())) return;
   let imported;
   try { imported = await window.sf.importFiles(paths, cfg.settings.storageDir); }
-  catch (e) { logErr('importFiles', e); toast('Import impossible : ' + (e && e.message || e), 'warn'); return; }
+  catch (e) { logErr('importFiles', e); toast(t('Import impossible : {err}', { err: (e && e.message || e) }), 'warn'); return; }
   const ok = imported.filter((r) => r.path && !r.error);
   const failed = imported.length - ok.length;
-  if (!ok.length) { toast(failed ? 'Copie des sons impossible — voir le journal.' : 'Aucun fichier audio reconnu.', 'warn'); return; }
+  if (!ok.length) { toast(failed ? t('Copie des sons impossible — voir le journal.') : t('Aucun fichier audio reconnu.'), 'warn'); return; }
   const known = new Set(cfg.sounds.map((s) => s.path.toLowerCase()));
   const catId = catById(cfg.ui.cat) ? cfg.ui.cat : null;
   const now = Date.now();
@@ -1155,12 +1171,12 @@ async function addPaths(rawPaths) {
     n++;
   }
   if (n) { save(); renderAll(); }
-  const extra = [truncated ? ' (limite de 5000 sons atteinte)' : '', failed ? ` ${failed} fichier(s) non copié(s).` : ''].join('');
-  toast(n ? `${n} son(s) ajouté(s).${extra}` : (known.size ? 'Ces sons sont déjà dans la liste.' : 'Aucun son ajouté.') + extra);
+  const extra = [truncated ? t(' (limite de 5000 sons atteinte)') : '', failed ? t(' {n} fichier(s) non copié(s).', { n: failed }) : ''].join('');
+  toast(n ? t('{n} son(s) ajouté(s).', { n }) + extra : (known.size ? t('Ces sons sont déjà dans la liste.') : t('Aucun son ajouté.')) + extra);
 }
 
 async function removeSound(s) {
-  if (!(await confirmBox('Retirer ce son ?', `« ${s.name} » sera retiré de SoundFart. Le fichier audio d'origine n'est pas supprimé.`, 'Retirer'))) return;
+  if (!(await confirmBox(t('Retirer ce son ?'), t('« {name} » sera retiré de SoundFart. Le fichier audio d\'origine n\'est pas supprimé.', { name: s.name }), t('Retirer')))) return;
   cfg.sounds = cfg.sounds.filter((x) => x.id !== s.id);
   // Arreter les voix du son retire : sinon il continuait de jouer apres la
   // suppression de sa carte (jusqu'a la fin du fichier).
@@ -1178,11 +1194,11 @@ function moveSoundTo(id, catId) {
   if (!s) return;
   s.categoryId = catId;
   save(); renderAll();
-  toast(`« ${s.name} » déplacé.`);
+  toast(t('« {name} » déplacé.', { name: s.name }));
 }
 
 async function newCategory() {
-  const name = await askText('Nouvelle catégorie', 'Nom de la catégorie', '', 'Créer');
+  const name = await askText(t('Nouvelle catégorie'), t('Nom de la catégorie'), '', t('Créer'));
   if (!name) return;
   const c = { id: uid(), name, color: PALETTE[cfg.categories.length % PALETTE.length] };
   cfg.categories.push(c);
@@ -1219,7 +1235,7 @@ function moveCategory(c, dir) {
 }
 
 async function renameCategory(c) {
-  const name = await askText('Renommer la catégorie', 'Nouveau nom', c.name, 'Renommer');
+  const name = await askText(t('Renommer la catégorie'), t('Nouveau nom'), c.name, t('Renommer'));
   if (!name) return;
   c.name = name;
   save(); renderAll();
@@ -1234,13 +1250,13 @@ function colorCategory(c) {
     b.addEventListener('click', () => { c.color = col; save(); renderAll(); closeFn(); });
     return b;
   }));
-  closeFn = modal('Couleur de « ' + c.name + ' »', [holder], [{ label: 'Fermer', onclick: (cl) => cl() }]);
+  closeFn = modal(t('Couleur de « {name} »', { name: c.name }), [holder], [{ label: t('Fermer'), onclick: (cl) => cl() }]);
 }
 
 async function deleteCategory(c) {
   const n = cfg.sounds.filter((s) => s.categoryId === c.id).length;
-  const msg = n ? `Les ${n} son(s) de « ${c.name} » ne seront pas supprimés : ils passeront dans « Sans catégorie ».` : `Supprimer la catégorie « ${c.name} » ?`;
-  if (!(await confirmBox('Supprimer la catégorie ?', msg, 'Supprimer'))) return;
+  const msg = n ? t('Les {n} son(s) de « {cat} » ne seront pas supprimés : ils passeront dans « Sans catégorie ».', { n, cat: c.name }) : t('Supprimer la catégorie « {cat} » ?', { cat: c.name });
+  if (!(await confirmBox(t('Supprimer la catégorie ?'), msg, t('Supprimer')))) return;
   cfg.sounds.forEach((s) => { if (s.categoryId === c.id) s.categoryId = null; });
   cfg.categories = cfg.categories.filter((x) => x.id !== c.id);
   if (cfg.ui.cat === c.id) cfg.ui.cat = 'all';
@@ -1288,11 +1304,11 @@ function renderSidebar() {
       const stop = (fn) => (e) => { e.stopPropagation(); fn(); };
       const manual = cfg.settings.catSort === 'manual';
       row.append(el('span', { class: 'tools' },
-        manual ? el('button', { class: 'icon', title: 'Monter', text: '▲', onclick: stop(() => moveCategory(cat, -1)) }) : null,
-        manual ? el('button', { class: 'icon', title: 'Descendre', text: '▼', onclick: stop(() => moveCategory(cat, +1)) }) : null,
-        el('button', { class: 'icon', title: 'Couleur', text: '🎨', onclick: stop(() => colorCategory(cat)) }),
-        el('button', { class: 'icon', title: 'Renommer', text: '✎', onclick: stop(() => renameCategory(cat)) }),
-        el('button', { class: 'icon', title: 'Supprimer', text: '🗑', onclick: stop(() => deleteCategory(cat)) })));
+        manual ? el('button', { class: 'icon', title: t('Monter'), text: '▲', onclick: stop(() => moveCategory(cat, -1)) }) : null,
+        manual ? el('button', { class: 'icon', title: t('Descendre'), text: '▼', onclick: stop(() => moveCategory(cat, +1)) }) : null,
+        el('button', { class: 'icon', title: t('Couleur'), text: '🎨', onclick: stop(() => colorCategory(cat)) }),
+        el('button', { class: 'icon', title: t('Renommer'), text: '✎', onclick: stop(() => renameCategory(cat)) }),
+        el('button', { class: 'icon', title: t('Supprimer'), text: '🗑', onclick: stop(() => deleteCategory(cat)) })));
     }
     nav.append(row);
   };
@@ -1305,9 +1321,9 @@ function renderSidebar() {
     if (!soundHasCat(s)) noneN++;
     if (s.categoryId) catCounts.set(s.categoryId, (catCounts.get(s.categoryId) || 0) + 1);
   }
-  item('all', 'Tous les sons', cfg.sounds.length, null);
-  item('fav', '★ Favoris', favN, null);
-  item('none', 'Sans catégorie', noneN, null);
+  item('all', t('Tous les sons'), cfg.sounds.length, null);
+  item('fav', '★ ' + t('Favoris'), favN, null);
+  item('none', t('Sans catégorie'), noneN, null);
   for (const c of sortedCategories()) item(c.id, c.name, catCounts.get(c.id) || 0, c);
 }
 
@@ -1317,13 +1333,13 @@ function renderGrid() {
   grid.replaceChildren();
   cardEls.clear();
   const list = visibleSounds();
-  $('#viewTitle').textContent = cfg.ui.cat === 'all' ? 'Tous les sons' : cfg.ui.cat === 'fav' ? '★ Favoris' : cfg.ui.cat === 'none' ? 'Sans catégorie' : (catById(cfg.ui.cat)?.name || 'Tous les sons');
-  $('#viewCount').textContent = list.length + ' son' + (list.length > 1 ? 's' : '');
+  $('#viewTitle').textContent = cfg.ui.cat === 'all' ? t('Tous les sons') : cfg.ui.cat === 'fav' ? '★ ' + t('Favoris') : cfg.ui.cat === 'none' ? t('Sans catégorie') : (catById(cfg.ui.cat)?.name || t('Tous les sons'));
+  $('#viewCount').textContent = t(plural(list.length, '{n} son', '{n} sons'), { n: list.length });
   if (!list.length) {
     grid.append(el('div', { class: 'empty' },
-      cfg.sounds.length ? 'Aucun son à afficher ici.' : 'Glisse des fichiers audio (ou un dossier) dans la fenêtre,',
+      cfg.sounds.length ? t('Aucun son à afficher ici.') : t('Glisse des fichiers audio (ou un dossier) dans la fenêtre,'),
       el('br'),
-      cfg.sounds.length ? '' : 'ou clique sur « Ajouter des sons ».'));
+      cfg.sounds.length ? '' : t('ou clique sur « Ajouter des sons ».')));
     return;
   }
   const appendCard = (s) => {
@@ -1341,21 +1357,21 @@ function renderGrid() {
       el('div', { class: 'thumb', style: { '--h': th.hue }, title: s.name }, el('span', { text: th.emoji })),
       el('button', {
         class: 'favstar' + (s.favorite ? ' on' : ''),
-        title: s.favorite ? 'Retirer des favoris' : 'Ajouter aux favoris',
+        title: s.favorite ? t('Retirer des favoris') : t('Ajouter aux favoris'),
         text: s.favorite ? '★' : '☆',
         onclick: stop(() => { s.favorite = !s.favorite; save(); renderAll(); }),
       }),
       el('div', { class: 'card-actions' },
-        el('button', { class: 'icon', title: 'Modifier', text: '✎', onclick: stop(() => editSound(s)) }),
-        el('button', { class: 'icon', title: 'Retirer de la liste', text: '✕', onclick: stop(() => removeSound(s)) })),
+        el('button', { class: 'icon', title: t('Modifier'), text: '✎', onclick: stop(() => editSound(s)) }),
+        el('button', { class: 'icon', title: t('Retirer de la liste'), text: '✕', onclick: stop(() => removeSound(s)) })),
       el('div', { class: 'name', text: s.name }),
       el('div', { class: 'meta' },
-        missing.has(s.id) ? el('button', { class: 'badge warn link', title: 'Cliquer pour retrouver le fichier', text: 'Fichier introuvable — retrouver…', onclick: stop(() => relocateSound(s)) }) : null,
+        missing.has(s.id) ? el('button', { class: 'badge warn link', title: t('Cliquer pour retrouver le fichier'), text: t('Fichier introuvable — retrouver…'), onclick: stop(() => relocateSound(s)) }) : null,
         cat ? el('span', { class: 'chip', text: cat.name }) : null,
-        s.shortcut ? el('span', { class: 'sc', title: 'Raccourci : ' + fmtAccel(s.shortcut), text: '⌨ ' + fmtAccel(s.shortcut) }) : null,
+        s.shortcut ? el('span', { class: 'sc', title: t('Raccourci : {acc}', { acc: fmtAccel(s.shortcut) }), text: '⌨ ' + fmtAccel(s.shortcut) }) : null,
         s.volume !== 100 ? el('span', { class: 'badge', text: '🔊 ' + s.volume + '%' }) : null,
         (s.norm ?? 1) !== 1 ? el('span', { class: 'badge', text: '⚖ ×' + s.norm }) : null,
-        (s.trimStart > 0 || s.trimEnd != null) ? el('span', { class: 'badge', text: '✂ coupé' }) : null),
+        (s.trimStart > 0 || s.trimEnd != null) ? el('span', { class: 'badge', text: t('✂ coupé') }) : null),
       el('div', { class: 'eq' }, el('i'), el('i'), el('i'), el('i')));
     card.style.setProperty('--c', cat ? cat.color : PALETTE[0]);
     cardEls.set(s.id, card);
@@ -1376,7 +1392,7 @@ function renderGrid() {
     for (const [cat, items] of ordered) {
       grid.append(el('div', { class: 'group-head' },
         cat ? el('span', { class: 'dot', style: { '--c': cat.color } }) : null,
-        el('span', { class: 'gname', text: cat ? cat.name : 'Sans catégorie' }),
+        el('span', { class: 'gname', text: cat ? cat.name : t('Sans catégorie') }),
         el('span', { class: 'cnt', text: String(items.length) })));
       items.forEach(appendCard);
     }
@@ -1413,11 +1429,11 @@ function showCtx(e, s) {
   const item = (label, fn, cls) => el('button', { class: cls || '', text: label, onclick: fn });
   const m = $('#ctxmenu');
   m.replaceChildren(
-    item('Modifier (nom, volume, catégorie, raccourci)…', () => editSound(s)),
-    item(s.favorite ? '★ Retirer des favoris' : '☆ Ajouter aux favoris', () => { s.favorite = !s.favorite; save(); renderAll(); }),
-    item('Ouvrir l\'emplacement du fichier', () => window.sf.reveal(s.path).catch((e) => logErr('reveal', e))),
-    item('Retrouver le fichier…', () => relocateSound(s)),
-    item('Retirer de la liste', () => removeSound(s), 'danger'));
+    item(t('Modifier (nom, volume, catégorie, raccourci)…'), () => editSound(s)),
+    item(s.favorite ? '★ ' + t('Retirer des favoris') : '☆ ' + t('Ajouter aux favoris'), () => { s.favorite = !s.favorite; save(); renderAll(); }),
+    item(t('Ouvrir l\'emplacement du fichier'), () => window.sf.reveal(s.path).catch((e) => logErr('reveal', e))),
+    item(t('Retrouver le fichier…'), () => relocateSound(s)),
+    item(t('Retirer de la liste'), () => removeSound(s), 'danger'));
   m.style.left = Math.min(e.clientX, innerWidth - 240) + 'px';
   m.style.top = Math.min(e.clientY, innerHeight - 140) + 'px';
   m.classList.add('on');
@@ -1431,12 +1447,12 @@ async function relocateSound(s) {
   // Le filtre du dialogue est indicatif : valider l'extension ici sinon
   // file:check dirait « present » mais file:read refuserait au play.
   if (!window.SFUtils.AUDIO_EXT.includes(p.slice(p.lastIndexOf('.')).toLowerCase())) {
-    toast("Ce fichier n'est pas un format audio supporté.", 'warn'); return;
+    toast(t('Ce fichier n\'est pas un format audio supporté.'), 'warn'); return;
   }
   // Un chemin deja pris par un autre son serait deduplique au prochain
   // chargement -> perte silencieuse d'un des deux sons.
   if (cfg.sounds.some((x) => x !== s && x.path.toLowerCase() === p.toLowerCase())) {
-    toast('Ce chemin est déjà utilisé par un autre son.', 'warn'); return;
+    toast(t('Ce chemin est déjà utilisé par un autre son.'), 'warn'); return;
   }
   const oldPath = s.path;
   // Arreter les voix qui jouent l'ancien chemin : sinon le son continue
@@ -1449,7 +1465,7 @@ async function relocateSound(s) {
   longWarned.delete(oldPath); truncWarned.delete(oldPath);
   missing.delete(s.id);
   save(); renderAll();
-  toast('Fichier retrouvé : ' + p);
+  toast(t('Fichier retrouvé : {path}', { path: p }));
 }
 
 let checkSeq = 0; // jeton de generation : des scans concurrents (focus,
@@ -1490,6 +1506,75 @@ async function checkMissing() {
   if (changed) renderGrid();
 }
 
+// ================================================================ rapports d'erreurs (opt-in)
+// Le renderer ne fait que RELAYER les erreurs JS au main : c'est le main
+// (confiance elevee) qui decide si un rapport est collecte/envoye, selon
+// settings.crashReport. Aucun consentement = les evenements sont ignores.
+let rendErrWindow = 0, rendErrCount = 0;
+function reportRendererError(type, err) {
+  try {
+    if (!window.sf.reportError) return;
+    const now = Date.now();
+    if (now - rendErrWindow > 60000) { rendErrWindow = now; rendErrCount = 0; }
+    if (++rendErrCount > 20) return; // anti-spam : une erreur en boucle ne doit pas spammer
+    const e = err instanceof Error ? err : null;
+    window.sf.reportError({
+      type,
+      message: String((e && e.message) || (err && err.message) || err || '').slice(0, 1000),
+      stack: e && e.stack ? String(e.stack).slice(0, 8000) : '',
+    });
+  } catch {}
+}
+window.addEventListener('error', (e) => {
+  // Les erreurs de ressources (img/media) ne bouillonnent pas jusqu'a
+  // window sans capture : ici ne passent que les erreurs de script.
+  if (e.error || e.message) reportRendererError('error', e.error || e.message);
+});
+window.addEventListener('unhandledrejection', (e) => reportRendererError('unhandledrejection', e.reason));
+
+// Choix du consentement : 'yes'/'no' persistes dans cfg.settings.crashReport
+// puis signales au main (qui purge la file locale si != 'yes').
+function setCrashConsent(v, close) {
+  if (cfg) { cfg.settings.crashReport = v; save(); }
+  try { window.sf.reportConsent(v); } catch {}
+  if (close) close();
+  toast(v === 'yes'
+    ? t('Rapports d\'erreurs activés : les plantages anonymisés aident à corriger les bugs.')
+    : t('Rapports d\'erreurs désactivés : rien n\'est collecté ni envoyé.'), 'info');
+}
+
+// Demande de consentement au premier lancement — AUCUNE preslection :
+// seuls « Accepter » et « Refuser » enregistrent un choix. Echap ou clic
+// sur le fond = « plus tard » : rien n'est ecrit, la demande revient au
+// prochain lancement (crashReport reste absent).
+function crashConsentModal() {
+  modal(t('Rapports d\'erreurs anonymisés'), [
+    el('p', { text: t('Quand SoundFart plante (erreur JS, crash du moteur audio, fenêtre gelée), il peut envoyer un petit rapport de diagnostic pour m\'aider à corriger les bugs.') }),
+    el('ul', {}, [
+      el('li', { text: t('Envoyé : version de SoundFart et de Windows, type d\'erreur, message, stack trace, code de sortie.') }),
+      el('li', { text: t('Jamais envoyé : tes sons, tes fichiers audio, tes chemins, ta configuration, ton nom d\'utilisateur — les chemins sont remplacés par des placeholders avant tout envoi.') }),
+      el('li', { text: t('Utilisation : correction de bugs uniquement. Destination : serveur de collecte privé en HTTPS.') }),
+      el('li', { text: t('Facultatif : tu peux refuser ou changer d\'avis à tout moment dans Paramètres → Général. En cas de refus, rien n\'est collecté ni conservé pour envoi.') }),
+    ]),
+  ], [
+    { label: t('Refuser'), onclick: (c) => setCrashConsent('no', c) },
+    { label: t('Accepter'), kind: 'primary', onclick: (c) => setCrashConsent('yes', c) },
+  ]);
+}
+
+// La modale n'est pas bloquante pour l'initialisation, mais on attend
+// qu'aucune autre modale ne soit ouverte : sinon elle la remplacerait et
+// le « plus tard » passerait inapercu (premier lancement = reglages audio).
+function askCrashConsentWhenFree(tries) {
+  tries = tries || 0;
+  if (!cfg || cfg.settings.crashReport === 'yes' || cfg.settings.crashReport === 'no') return;
+  if (modalClose) {
+    if (tries < 120) setTimeout(() => askCrashConsentWhenFree(tries + 1), 500); // ~60 s max d'attente
+    return;
+  }
+  crashConsentModal();
+}
+
 // ================================================================ demarrage
 async function init() {
   // Telemetrie memoire periodique : performance.memory (Chromium) permet de
@@ -1505,11 +1590,23 @@ async function init() {
   const saved = await window.sf.loadConfig();
   cfg = normalizeCfg(saved);
 
+  // Langue : jamais choisie (settings.lang undefined, y compris pour les
+  // configs d'avant la feature) -> ecran de choix AVANT le rendu de l'UI.
+  // Le choix est persiste immediatement pour ne pas re-demander au prochain
+  // lancement, meme si l'utilisateur quitte avant le 1er save().
+  if (cfg.settings.lang === undefined) {
+    const code = await chooseLanguage();
+    cfg.settings.lang = code;
+    applyLanguage(code, { persistNow: true });
+  } else {
+    applyLanguage(cfg.settings.lang, { persistNow: false });
+  }
+
   // barre du haut & bas
+  // Options deja construites (et traduites) par applyLanguage ci-dessus —
+  // ne pas re-ajouter ici (doublons).
   const sortSel = $('#sort');
-  SORTS.forEach(([v, l]) => sortSel.append(el('option', { value: v, text: l, selected: v === cfg.settings.sort })));
   const catSortSel = $('#catSort');
-  CAT_SORTS.forEach(([v, l]) => catSortSel.append(el('option', { value: v, text: l, selected: v === cfg.settings.catSort })));
   catSortSel.addEventListener('change', () => { cfg.settings.catSort = catSortSel.value; save(); renderAll(); });
   sortSel.addEventListener('change', () => { cfg.settings.sort = sortSel.value; save(); renderGrid(); });
   const groupCat = $('#groupCat');
@@ -1521,7 +1618,7 @@ async function init() {
   $('#search').addEventListener('input', () => { clearTimeout(searchT); searchT = setTimeout(renderGrid, 120); });
   $('#addBtn').addEventListener('click', async () => { try { const p = await window.sf.pickFiles(); if (p.length) await addPaths(p); } catch (e) { logErr('pickFiles', e); } });
   $('#ytBtn').addEventListener('click', youtubeModal);
-  $('#recBtn').addEventListener('click', () => recorderModal().catch((e) => toast('Enregistreur : ' + e.message, 'warn')));
+  $('#recBtn').addEventListener('click', () => recorderModal().catch((e) => toast(t('Enregistreur : {err}', { err: e.message }), 'warn')));
   $('#addCat').addEventListener('click', newCategory);
   // refreshDevices en echec ne doit pas empecher l'ouverture du panneau.
   $('#openSettings').addEventListener('click', async () => { try { await refreshDevices(false); } catch (e) { logErr('refreshDevices', e); } settingsModal(); });
@@ -1548,16 +1645,16 @@ async function init() {
             el('div', { class: 'about-logo', text: '🎷' }),
             el('div', {}, [
               el('div', { class: 'about-name', text: 'SoundFart' }),
-              el('div', { class: 'about-ver', text: 'Version ' + v }),
+              el('div', { class: 'about-ver', text: t('Version {v}', { v }) }),
             ]),
           ]),
-          el('p', { class: 'about-desc', text: 'Soundboard pour Discord — joue tes sons dans tes appels vocaux via VB-CABLE.' }),
-          el('p', { class: 'about-credit', text: 'Développé par Benoit Prudent' }),
-          el('p', { class: 'about-copy', text: '© ' + year + ' Benoit Prudent — Tous droits réservés' }),
-          el('p', { class: 'hint', text: 'Propulsé par Electron · VB-CABLE par VB-Audio · yt-dlp & ffmpeg (outils libres)' }),
-        ], [{ label: 'Fermer', onclick: (c) => c() }]);
+          el('p', { class: 'about-desc', text: t('Soundboard pour Discord — joue tes sons dans tes appels vocaux via VB-CABLE.') }),
+          el('p', { class: 'about-credit', text: t('Développé par Benoit Prudent') }),
+          el('p', { class: 'about-copy', text: t('© {year} Benoit Prudent — Tous droits réservés', { year }) }),
+          el('p', { class: 'hint', text: t('Propulsé par Electron · VB-CABLE par VB-Audio · yt-dlp & ffmpeg (outils libres)') }),
+        ], [{ label: t('Fermer'), onclick: (c) => c() }]);
       }
-    } catch (e) { toast('Menu : ' + e.message, 'warn'); }
+    } catch (e) { toast(t('Menu : {err}', { err: e.message }), 'warn'); }
   });
   const master = $('#master');
   master.value = cfg.settings.master;
@@ -1582,7 +1679,7 @@ async function init() {
   $('#storageBannerBtn').addEventListener('click', async () => {
     try {
       const d = await window.sf.pickDir();
-      if (d) { cfg.settings.storageDir = d; save(); updateStorageUi(); toast('Dossier de sons : ' + d); }
+      if (d) { cfg.settings.storageDir = d; save(); updateStorageUi(); toast(t('Dossier de sons : {dir}', { dir: d })); }
     } catch (e) { logErr('pickDir', e); }
   });
   // devicechange peut spammer (casque, bluetooth...) : debounce puis re-resolution des peripheriques
@@ -1691,7 +1788,7 @@ async function init() {
   updateStorageUi();
   if (cablePresent()) runAutoSetup();
   window.sf.onMicWatchOff && window.sf.onMicWatchOff(() => {
-    toast('Entrée micro modifiée pendant la session — surveillance auto suspendue (réglages → surveillance micro).', 'warn');
+    toast(t('Entrée micro modifiée pendant la session — surveillance auto suspendue (réglages → surveillance micro).'), 'warn');
   });
   window.sf.onPowerResume && window.sf.onPowerResume(() => {
     // Reveil systeme : peripheriques re-enumeres sans devicechange fiable.
@@ -1710,14 +1807,76 @@ async function init() {
     if (s) play(s);
   });
   if (!cfg.settings.cableId) {
-    toast('Choisis ta sortie Discord (CABLE Input) dans les réglages audio.', 'warn');
+    toast(t('Choisis ta sortie Discord (CABLE Input) dans les réglages audio.'), 'warn');
     settingsModal();
   } else if (ok) {
     updateRoutes();
   }
+  // Consentement rapports d'erreurs : en DERNIER, et seulement quand plus
+  // aucune modale n'est ouverte (askCrashConsentWhenFree patiente sinon).
+  askCrashConsentWhenFree();
 }
 
 init().catch((e) => {
   logErr('init', e);
-  try { toast('Initialisation incomplète : ' + (e && e.message), 'warn'); } catch {}
+  try { toast(t('Initialisation incomplète : {err}', { err: (e && e.message) }), 'warn'); } catch {}
 });
+
+// ================================================================ i18n : choix de langue + application
+// Textes statiques de index.html : attributs data-i18n / data-i18n-ph /
+// data-i18n-title remplis par t(). Les textes dynamiques passent par t()
+// directement dans les fonctions de rendu — renderAll() les retraduit.
+function applyStaticI18n() {
+  document.documentElement.lang = SFI18n.lang();
+  document.querySelectorAll('[data-i18n]').forEach((e) => { e.textContent = t(e.dataset.i18n); });
+  document.querySelectorAll('[data-i18n-ph]').forEach((e) => { e.placeholder = t(e.dataset.i18nPh); });
+  document.querySelectorAll('[data-i18n-title]').forEach((e) => { e.title = t(e.dataset.i18nTitle); });
+}
+
+// Applique une langue sans recharger : SFI18n.setLang + textes statiques +
+// re-render complet (grille, sidebar, menu etat). Les modales sont construites
+// a l'ouverture -> elles prennent la nouvelle langue automatiquement ; une
+// modale DEJA ouverte garde ses textes d'origine jusqu'a sa reouverture.
+// Les selects du haut sont reconstruits (leurs libelles sont traduits) en
+// conservant la valeur courante.
+function applyLanguage(code, opts = {}) {
+  SFI18n.setLang(code);
+  cfg.settings.lang = code;
+  applyStaticI18n();
+  const fill = (sel, list, cur) => {
+    sel.replaceChildren(...list.map(([v, l]) => el('option', { value: v, text: t(l), selected: v === cur })));
+  };
+  fill($('#sort'), SORTS, cfg.settings.sort);
+  fill($('#catSort'), CAT_SORTS, cfg.settings.catSort);
+  renderAll();
+  if (opts.persistNow) {
+    // Premier choix : persistance immediate (debounce de save() = 250 ms —
+    // un kill dans cette fenetre reperdrait le choix et re-demanderait).
+    clearTimeout(saveTimer);
+    window.sf.saveConfig(cfg).catch((e) => logErr('saveConfig', e));
+  } else {
+    save();
+  }
+}
+
+// Ecran de choix de langue au premier lancement : les noms de langues sont
+// natifs (universellement reconnus) ; un sous-titre assemble les 4 langues
+// pour couvrir les utilisateurs qui ne lisent aucune des 4. navigator.language
+// place la langue du systeme en premier (indice, pas une decision).
+const LANG_NAMES = { fr: 'Français', en: 'English', de: 'Deutsch', es: 'Español' };
+function chooseLanguage() {
+  return new Promise((resolve) => {
+    const nav = String((navigator.language || '')).slice(0, 2).toLowerCase();
+    const ordered = SFI18n.langs().slice().sort((a, b) => (a === nav ? -1 : b === nav ? 1 : 0));
+    const box = el('div', { class: 'modal' },
+      el('h2', { text: 'SoundFart' }),
+      el('div', { class: 'hint', text: t('Choisis ta langue — Choose your language — Wähle deine Sprache — Elige tu idioma') }),
+      el('div', { class: 'row', style: { 'flex-direction': 'column', gap: '10px', 'margin-top': '16px' } },
+        ordered.map((code) => el('button', {
+          class: 'ghost wide', text: LANG_NAMES[code] || code,
+          onclick: () => { overlay.remove(); resolve(code); },
+        }))));
+    const overlay = el('div', { class: 'backdrop' }, box);
+    document.body.append(overlay);
+  });
+}

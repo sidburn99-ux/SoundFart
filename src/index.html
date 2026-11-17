@@ -10,35 +10,35 @@
 <div id="app">
   <aside class="sidebar">
     <div class="brand"><div class="logo">💨</div><div class="brand-name">Sound<span>Fart</span><span id="appVersion" class="ver">v…</span></div></div>
-    <div class="side-title">Catégories</div>
-    <select id="catSort" class="catsort" title="Trier les catégories"></select>
+    <div class="side-title" data-i18n="Catégories">Catégories</div>
+    <select id="catSort" class="catsort" data-i18n-title="Trier les catégories" title="Trier les catégories"></select>
     <nav id="cats"></nav>
-    <button id="addCat" class="ghost wide">＋ Nouvelle catégorie</button>
+    <button id="addCat" class="ghost wide" data-i18n="＋ Nouvelle catégorie">＋ Nouvelle catégorie</button>
     <div class="spacer"></div>
-    <button id="recBtn" class="ghost wide">🎙 Enregistreur</button>
-    <button id="openSettings" class="ghost wide">⚙ Paramètres</button>
+    <button id="recBtn" class="ghost wide" data-i18n="🎙 Enregistreur">🎙 Enregistreur</button>
+    <button id="openSettings" class="ghost wide" data-i18n="⚙ Paramètres">⚙ Paramètres</button>
   </aside>
 
   <main>
     <div id="cable-banner" class="cable-banner" hidden>
-      <span>Discord désactivé : VB-CABLE manquant — installe-le pour envoyer tes sons dans tes appels.</span>
-      <button id="cableBannerBtn" class="ghost" type="button">Installer</button>
+      <span data-i18n="Discord désactivé : VB-CABLE manquant — installe-le pour envoyer tes sons dans tes appels.">Discord désactivé : VB-CABLE manquant — installe-le pour envoyer tes sons dans tes appels.</span>
+      <button id="cableBannerBtn" class="ghost" type="button" data-i18n="Installer">Installer</button>
     </div>
     <div id="storage-banner" class="cable-banner" hidden>
-      <span>Choisis ton dossier de sons — c'est là que SoundFart rangera les fichiers que tu ajoutes (copiés), tes imports YouTube et tes enregistrements.</span>
-      <button id="storageBannerBtn" class="ghost" type="button">Choisir…</button>
+      <span data-i18n="Choisis ton dossier de sons — c'est là que SoundFart rangera les fichiers que tu ajoutes (copiés), tes imports YouTube et tes enregistrements.">Choisis ton dossier de sons — c'est là que SoundFart rangera les fichiers que tu ajoutes (copiés), tes imports YouTube et tes enregistrements.</span>
+      <button id="storageBannerBtn" class="ghost" type="button" data-i18n="Choisir…">Choisir…</button>
     </div>
     <header class="topbar">
-      <div class="search"><input id="search" type="search" placeholder="Rechercher un son…"></div>
-      <label class="sort"><span>Trier</span><select id="sort"></select></label>
-      <label class="sort group-toggle" title="Regrouper les sons par catégorie"><input type="checkbox" id="groupCat"><span>Par catégorie</span></label>
-      <button id="ytBtn" class="ghost">📺 YouTube</button>
-      <button id="addBtn" class="primary">＋ Ajouter des sons</button>
+      <div class="search"><input id="search" type="search" data-i18n-ph="Rechercher un son…" placeholder="Rechercher un son…"></div>
+      <label class="sort"><span data-i18n="Trier">Trier</span><select id="sort"></select></label>
+      <label class="sort group-toggle" data-i18n-title="Regrouper les sons par catégorie" title="Regrouper les sons par catégorie"><input type="checkbox" id="groupCat"><span data-i18n="Par catégorie">Par catégorie</span></label>
+      <button id="ytBtn" class="ghost" data-i18n="📺 YouTube">📺 YouTube</button>
+      <button id="addBtn" class="primary" data-i18n="＋ Ajouter des sons">＋ Ajouter des sons</button>
     </header>
-    <div class="section-head"><h1 id="viewTitle">Tous les sons</h1><span id="viewCount"></span></div>
+    <div class="section-head"><h1 id="viewTitle" data-i18n="Tous les sons">Tous les sons</h1><span id="viewCount"></span></div>
     <section id="grid"></section>
     <footer class="player">
-      <div id="nowplaying" class="np">Prêt</div>
+      <div id="nowplaying" class="np" data-i18n="Prêt">Prêt</div>
       <div id="routes" class="routes"></div>
       <label class="master"><span>🔊</span><input id="master" type="range" min="0" max="100"><span id="masterVal"></span></label>
       <button id="stopBtn" class="stop">■ STOP</button>
@@ -46,10 +46,11 @@
   </main>
 </div>
 
-<div id="drop-overlay"><div>Dépose tes fichiers ou dossiers audio ici</div></div>
+<div id="drop-overlay"><div data-i18n="Dépose tes fichiers ou dossiers audio ici">Dépose tes fichiers ou dossiers audio ici</div></div>
 <div id="modal-root"></div>
 <div id="ctxmenu"></div>
 <div id="toast"></div>
+<script src="../lib/i18n.js"></script>
 <script src="../lib/audio-utils.js"></script>
 <script src="normalize.js"></script>
 <script src="edit-sound.js"></script>
