@@ -54,7 +54,7 @@
 - [x] `MediaRecorder.onerror` avec état `inactive` → la prise partielle est sauvegardée + UI nettoyée (plus d'« Enregistrement… » figé). **Vérifié code 17/11** : `onerror` → `recFailed` + si `state==='inactive'` invoque `onstop` manuellement (garde anti-double-fire) → sauvegarde du partiel + nettoyage (`recorder.js:309-329`). Forcer une vraie erreur MediaRecorder n'est pas déterministe — non reproduit en runtime.
 - [x] Arrêter → dossier → « Enregistrement terminé » → « Ajouter à la bibliothèque » → son jouable. **[U] 16/11** (flux validé ; **[A] 15/11** via `cdp-recflow.js` ; **revérifié [A] 17/11** : sauvegarde `sf-dest\recordings\*.webm` + ajout réel, sons 31→32).
 - [x] Fermer la modale pendant l'enregistrement → arrêt propre, pas de fichier orphelin ajouté. **[U] 16/11** + **[A] 15/11** (`cdp-recclose.js`).
-- [ ] Débrancher le micro pendant l'enregistrement → arrêt propre + message, pas de fichier silencieux présenté comme réussi.
+- [x] Source qui meurt pendant l'enregistrement → arrêt propre + message, pas de fichier silencieux présenté comme réussi. **[A] 17/11 — source PC prouvée en live** : `AudioTap.exe` tué (`taskkill /F`) pendant une prise « Audio du PC » → log `[ui] tapDead rec=recording` → toast « Source "Audio du PC" perdue — enregistrement arrêté » → `rec.stop()` → modale de sauvegarde du partiel (annulée proprement, aucun artefact). **Micro** : même garde `watchEnded` sur `track.ended` (`recorder.js:209-214`) — le débranchement physique reste à voir mais le mécanisme est identique et vérifié code.
 - [ ] Arrêter/démarrer Windows Audio (`net stop audiosrv` admin) pendant « Audio du PC » → reconnexion AudioTap ou tapDead + message — pas de silence invisible.
 
 ## D. Routage micro → Discord
