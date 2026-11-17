@@ -15,11 +15,18 @@ function createLinuxCable(deps) {
   const pactl = (args, timeout) =>
     execFileTracked('pactl', args, { timeout: timeout || 10000 });
 
-  // ENOENT = pactl absent ; code de sortie != 0 = serveur injoignable.
-  const pactlErr = (e) =>
-    (e && e.code === 'ENOENT')
-      ? 'pactl introuvable — installez pulseaudio-utils ou pipewire-pulse'
-      : 'serveur audio injoignable (PulseAudio/PipeWire)';
+  // ENOENT = pactl absent ; sinon on propage l'extrait stderr de pactl
+  // (exit N : ...) pour ne pas déguiser un load-module en « serveur KO ».
+  const pactlErr = (e) => {
+    if (e && e.code === 'ENOENT') {
+      return 'pactl introuvable — installez pulseaudio-utils ou pipewire-pulse';
+    }
+    const base = 'serveur audio injoignable (PulseAudio/PipeWire)';
+    const detail = e && e.message
+      ? String(e.message).replace(/^exit \d+ :\s*/, '').replace(/\s+/g, ' ').trim().slice(0, 160)
+      : '';
+    return detail ? base + ' — ' + detail : base;
+  };
 
   // Noms de sinks/sources : 'pactl list short X' -> lignes "idx\tname\t…".
   async function names(kind) {

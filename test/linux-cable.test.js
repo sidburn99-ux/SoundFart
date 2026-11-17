@@ -106,13 +106,13 @@ test('linux : status() pactl absent -> ENOENT message + retour anticipé', async
   assert.ok(logs.some((m) => m.includes(ERR_PACTL)));
 });
 
-test('linux : status() serveur injoignable -> erreur générique', async () => {
+test('linux : status() serveur injoignable -> erreur générique + détail', async () => {
   const exec = makeExec({ 'info': new Error('Connection refused'), });
   const { cable } = makeCable(exec, 'linux');
   const st = await cable.status();
   assert.equal(st.pactl, false);
   assert.equal(st.server, false);
-  assert.equal(st.error, ERR_SERVER);
+  assert.equal(st.error, ERR_SERVER + ' — Connection refused');
 });
 
 test('linux : ensure() crée le null-sink quand absent', async () => {
