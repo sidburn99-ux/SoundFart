@@ -319,6 +319,7 @@ const truncWarned = new Set(); // chemin -> deja prevu : un toast par fichier
 const voices = new Set();
 let playGen = 0; // generation audio : stopAll/teardownAudio l'incrementent pour avorter les play() en vol
 let deadRetries = 0; // retry borne sur 'interrupted'/'closed' (reset sur 'running')
+let muteWarnAt = 0; // throttle toast « micro muet » : un BT peut couper/remettre le mute en rafale
 let bufCacheBytes = 0;
 
 const bufInflight = new Map(); // path -> Promise<buf> : evite le double decodage concurrent
@@ -346,7 +347,7 @@ function releaseDecode() {
   if (next) { decodeQueuedBytes -= next.bytes; next.res(); } // slot transfere au waiter
   else decodeActive--;
 }
-async function getBuffer(path) {
+async function getBuffer(path, allowCache) {
   if (bufCache.has(path)) {
     const e = bufCache.get(path);
     bufCache.delete(path);
@@ -375,7 +376,18 @@ async function getBuffer(path) {
       : new Uint8Array(data).buffer; // robustness : ArrayBuffer pur ou Uint8Array
   await acquireDecode(data.byteLength);
   let buf;
-  try { buf = await decoder.decodeAudioData(ab); }
+  try {
+    // decodeAudioData peut pendre indefiniment sur un fichier pathologique
+    // : sans timeout les 2 slots du semaphore n'etaient jamais relaches et
+    // TOUTES les lectures suivantes restaient muettes (promesse pendante,
+    // aucun toast). Le decode continue en arriere-plan, resultat ignore.
+    buf = await Promise.race([
+      decoder.decodeAudioData(ab),
+      new Promise((_, rej) => setTimeout(() => {
+        const e = new Error('Décodage trop long — fichier peut-être corrompu.'); e.noFileErr = true; rej(e);
+      }, 30000)),
+    ]);
+  }
   catch (de) { de.noFileErr = true; throw de; } // codec/format : fichier present mais indecodable
   finally { releaseDecode(); }
   const bytes = bufBytes(buf);
@@ -402,7 +414,10 @@ async function getBuffer(path) {
   // Orphelin de cache : si le son a ete retire/relocalise pendant le
   // decodeAudioData, ne pas mettre en cache un buffer pour un path qui
   // n'est plus reference (jusqu'a 256 Mo de residue).
-  if (cfg.sounds.some((x) => x.path === path)) {
+  // allowCache : les apercus (preview YouTube, editeur) pointent des
+  // fichiers hors cfg.sounds — sans ca chaque « Ecouter » relisait et
+  // redecodait jusqu'a 150 Mo. Le cache LRU reste borne (256 Mo).
+  if (allowCache || cfg.sounds.some((x) => x.path === path)) {
     bufCache.set(path, { buf, bytes });
     bufCacheBytes += bytes;
     while (bufCacheBytes > BUF_CACHE_MAX && bufCache.size > 1) {
@@ -414,7 +429,10 @@ async function getBuffer(path) {
     return buf;
   })();
   bufInflight.set(path, p);
-  try { return await p; } finally { bufInflight.delete(path); }
+  // Garde d'identite : importConfig fait bufInflight.clear() pendant qu'un
+  // decode est en vol — le finally d'AVANT ne doit pas supprimer l'entree
+  // d'un decode POSTERIEUR enregistre apres le clear (double decodage).
+  try { return await p; } finally { if (bufInflight.get(path) === p) bufInflight.delete(path); }
 }
 
 // Supprime une entree du cache EN coherance avec le compteur d'octets :
@@ -556,7 +574,7 @@ async function applyAudioInner() {
         // track meurt -> Discord n'entend plus la voix, sans aucun signal.
         stream.getTracks().forEach((t) => {
           t.addEventListener('ended', () => { if (audio.micStream === stream) { toast('Micro perdu — voix coupée sur le câble.', 'warn'); audio.micStream = null; applyAudio().catch((e) => logErr('applyAudio', e)); } });
-          t.addEventListener('mute', () => { if (audio.micStream === stream) toast('Micro muet par le système — voix coupée.', 'warn'); });
+          t.addEventListener('mute', () => { if (audio.micStream === stream && Date.now() - muteWarnAt > 10000) { muteWarnAt = Date.now(); toast('Micro muet par le système — voix coupée.', 'warn'); } });
         });
         const src = audio.cable.ctx.createMediaStreamSource(stream);
         // Voice gate DSP (highpass ~80 Hz + noise gate) sur la voix
@@ -795,13 +813,17 @@ function play(sound, opts = {}) {
   // jouer deux fois sur le meme device = +6 dB et echos possibles.
   const seenDev = new Set();
   const uniq = active.filter((o) => !seenDev.has(o.deviceId || o.ctx.destination) && seenDev.add(o.deviceId || o.ctx.destination));
-  return getBuffer(sound.path)
+  return getBuffer(sound.path, opts.preview === true)
     .catch((e) => { fileErr = !(e && e.noFileErr); throw e; })
     .then((buf) => {
     if (gen !== playGen) return null; // lecture percutee par un stop : ne pas demarrer la voix
     // Supprime/relocalise pendant le decode async : ne pas jouer un fantome
     // (ancien fichier) ni un son qui n'existe plus.
     if (!opts.preview && !cfg.sounds.some((x) => x.id === sound.id && x.path === sound.path)) return null;
+    // Le plafond de 32 voix est revérifié ICI : des clics pendant le
+    // decodeAudioData passaient tous le check synchrone de l'entree —
+    // le pic de nodes n'etait alors borne que par le nombre de clics.
+    if (voices.size >= 32) { toast('Trop de lectures simultanées.', 'warn'); return null; }
     // opts.norm : l'editeur passe la normalisation EN COURS non enregistree
     // pour que l'apercu corresponde a ce que « Enregistrer » stockera —
     // sans lui, play() lisait s.norm (ancienne valeur sauvee) et
@@ -906,7 +928,14 @@ function stopVoice(v, instant) {
   // Repli : si onended ne se declenche jamais (contexte suspendu, noeud
   // fige), la voix resterait zombie jusqu'au killTimer (duree+15 s).
   if (v.stopFallback) clearTimeout(v.stopFallback);
-  v.stopFallback = setTimeout(() => { v.stopFallback = null; if (voices.has(v)) endVoice(v); }, 1500);
+  v.stopFallback = setTimeout(() => {
+    v.stopFallback = null;
+    if (!voices.has(v)) return;
+    // onended n'a jamais tire (ctx suspendu) : sans ca le gain restait
+    // connecte au bus et plus AUCUN watchdog ne surveillait la voix.
+    for (const n of v.nodes) { try { n.src.stop(); } catch {} try { n.g.disconnect(); } catch {} }
+    endVoice(v);
+  }, 1500);
 }
 
 function stopAll(instant) {
