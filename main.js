@@ -31,8 +31,11 @@ function execFileTracked(file, args, opts = {}) {
     if (opts.rec) opts.rec.p = p;
     let out = '', err = '', done = false;
     const timer = opts.timeout ? setTimeout(() => { if (!done) { done = true; try { killTree(p.pid); } catch {} try { p.kill(); } catch {} reject(new Error('délai dépassé')); } }, opts.timeout) : null;
-    if (p.stdout) p.stdout.on('data', (d) => { if (out.length < 4 * 1024 * 1024) out += d; });
-    if (p.stderr) p.stderr.on('data', (d) => { if (err.length < 65536) err += d; });
+    // Caps « derniers N octets » (slice(-N)) : un cap frontal conservait le
+    // DEBUT du flux — sur un long ffmpeg/csc, err.slice(-500) renvoyait des
+    // lignes de progression anciennes au lieu de l'erreur finale.
+    if (p.stdout) p.stdout.on('data', (d) => { const t = out + d; out = t.length > 4 * 1024 * 1024 ? t.slice(-4 * 1024 * 1024) : t; });
+    if (p.stderr) p.stderr.on('data', (d) => { const t = err + d; err = t.length > 65536 ? t.slice(-65536) : t; });
     p.on('error', (e) => { if (!done) { done = true; if (timer) clearTimeout(timer); reject(e); } });
     p.on('close', (code) => {
       if (done) return;
@@ -343,8 +346,16 @@ H('config:save', (_e, cfg) => {
   const body = JSON.stringify(cfg, null, 2);
   if (body.length > 5 * 1024 * 1024) throw new Error('configuration trop volumineuse');
   fs.mkdirSync(path.dirname(f), { recursive: true });
-  // sauvegarde .bak avant ecrasement : une ecriture cassee reste recuperable
-  try { if (fs.existsSync(f)) fs.copyFileSync(f, f + '.bak'); } catch {}
+  // sauvegarde .bak avant ecrasement : une ecriture cassee reste recuperable.
+  // Copie via .tmp + rename : un copyFileSync interrompu (crash, disque
+  // plein) laissait un .bak TRONQUE — le fallback relirait un JSON invalide.
+  try {
+    if (fs.existsSync(f)) {
+      const bakTmp = f + '.bak.tmp';
+      fs.copyFileSync(f, bakTmp);
+      fs.renameSync(bakTmp, f + '.bak');
+    }
+  } catch (e) { log('[config] sauvegarde .bak : ' + (e && e.message), 'warn'); }
   fs.writeFileSync(tmp, body, 'utf-8');
   fs.renameSync(tmp, f);
   return true;
@@ -396,10 +407,12 @@ H('files:pickDir', async () => {
 // echantillons+SHA-256 : un fichier deja present est reutilise, jamais
 // recopie ni substitue. Copie .part+rename, serialisee par dossier.
 // Implementation dans lib/import.js (testable via node:test).
-const { importAudioFiles, enqueueImport } = require('./lib/import');
+const { importAudioFiles, enqueueImport, sweepStaleTemps } = require('./lib/import');
 
 H('files:import', (_e, paths, dir) => {
-  if (!Array.isArray(paths) || !paths.length || paths.length > 2000 || paths.some((p) => typeof p !== 'string')) throw new Error('chemins invalides');
+  // Chemins absolus exiges (comme file:read) : un relatif serait resolu
+  // contre le CWD du process main — import involontaire hors dossier voulu.
+  if (!Array.isArray(paths) || !paths.length || paths.length > 2000 || paths.some((p) => typeof p !== 'string' || !path.isAbsolute(p))) throw new Error('chemins invalides');
   const root = storageRoot(dir);
   if (!isUsablePath(root)) throw new Error('dossier de stockage invalide');
   return enqueueImport(root, () => importAudioFiles(paths, root, log));
@@ -511,6 +524,10 @@ H('rec:save', async (_e, opts) => {
   if (data == null) throw new Error('données audio manquantes');
   const rdir = path.join(storageRoot(dir), 'recordings');
   await fs.promises.mkdir(rdir, { recursive: true }); // async : UNC ne gele pas le main (SF-REL-0602)
+  // Menage des .part orphelins (>1 h) : un kill entre writeFile(tmp) et
+  // link laissait un partiel definitif — le sweep de lib/import.js ne
+  // couvrait que sons/.
+  await sweepStaleTemps(rdir, log);
   // string : data.length = unites UTF-16, Buffer.from encode en UTF-8
   // (jusqu'a ~3x pour le CJK) — un texte de ~200 M caracteres passait le
   // cap 512 Mo puis allouait ~600 Mo. byteLength mesure le vrai cout.
@@ -560,7 +577,14 @@ function spawnMicGuard(tool) {
     for (const pid of micGuardPids) { try { process.kill(pid); } catch {} }
     micGuardPids.clear();
     const g = spawn(tool, ['guard', String(process.pid), restoreFile()], { detached: true, stdio: 'ignore', windowsHide: true });
-    if (g.pid) micGuardPids.add(g.pid);
+    if (g.pid) {
+      micGuardPids.add(g.pid);
+      // Purge a la mort : sans ca, le pid d'un guard sorti restait dans le
+      // Set et le prochain spawnMicGuard faisait process.kill() sur un PID
+      // potentiellement REUTILISE par un processus innocent.
+      g.on('exit', () => micGuardPids.delete(g.pid));
+      g.on('error', () => micGuardPids.delete(g.pid));
+    }
     // 'error' async (exe disparu entre ensureAudioTool et le spawn) sans
     // listener = uncaughtException -> crash de l'app.
     g.on('error', (e) => log('[mic-guard] ' + (e && e.message), 'warn'));

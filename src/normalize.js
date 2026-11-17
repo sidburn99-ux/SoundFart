@@ -69,7 +69,11 @@ async function normalizeAll(host) {
     prog.textContent = `${++done} / ${targets.length}`;
     await new Promise((r) => setTimeout(r, 0));
   }
-  const msg = `Normalisation terminée : ${done - failed} son(s) ajusté(s)` + (failed ? `, ${failed} ignoré(s)` : '') + (cancelled ? ' (annulée)' : '') + '.';
+  // interrupted : le panneau peut etre ferme sans clic « Annuler » —
+  // le partiel est sauvegarde (comportement voulu) mais le message doit
+  // le dire, pas annoncer une « normalisation terminee » complete.
+  const interrupted = cancelled || (host && !host.isConnected && done < targets.length);
+  const msg = (interrupted && !cancelled ? 'Normalisation interrompue (panneau fermé) : ' : 'Normalisation terminée : ') + `${done - failed} son(s) ajusté(s)` + (failed ? `, ${failed} ignoré(s)` : '') + (cancelled ? ' (annulée)' : '') + '.';
   save(); closeP();
   if (host) host.replaceChildren(el('div', { class: 'hint', text: msg }));
   renderAll();

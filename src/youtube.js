@@ -290,5 +290,8 @@ const previewSound = () => {
       save(); renderAll(); c();
       toast('Son YouTube ajouté : ' + dl.path);
     } },
-  ], { onClose: () => { ytGone = true; if (offProg) { offProg(); offProg = null; } } });
+  // Fermeture pendant un download : sans yt:cancel le process tournait
+  // jusqu'a 2 min (voire ~15 min si une maj d'outil etait en vol) sans
+  // aucun moyen de l'arreter — la modale etait le seul bouton Annuler.
+  ], { onClose: () => { ytGone = true; if (offProg) { offProg(); offProg = null; } if (busy) window.sf.ytCancel().catch((e) => logErr('ytCancel', e)); } });
 }

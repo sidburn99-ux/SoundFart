@@ -158,3 +158,11 @@ test('extensions non audio ignorées silencieusement', async () => {
   const out = await importAudioFiles([txt], root);
   assert.equal(out.length, 0);
 });
+
+test('fichier vide refusé à l\'import (évite une entrée bibliothèque morte)', async () => {
+  const { root, src } = dirs();
+  const empty = mkSrc(src, 'vide.mp3', '');
+  const out = await importAudioFiles([empty], root);
+  assert.equal(out[0].error, 'fichier vide');
+  assert.ok(!fs.existsSync(path.join(root, 'sons', 'vide.mp3')));
+});
