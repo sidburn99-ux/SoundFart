@@ -7,7 +7,7 @@
 
 ## Prérequis
 
-- `dist\SoundFart.exe` buildé depuis la branche testée (portable ; réglages/outils dans `%APPDATA%\SoundFart`, sons créés dans le dossier choisi).
+- `dist\SoundFart.exe` buildé depuis la branche testée (portable ; réglages/outils dans `%APPDATA%\SoundFart`, sons créés dans le dossier choisi). Le build de validation est identifié par `dist\BUILD-INFO.txt` (version + hash du commit + date UTC) généré à côté de l'exe.
 - VB-CABLE installé manuellement depuis https://vb-audio.com/Cable/ (SoundFart ne l'installe jamais).
 - Discord configuré : entrée = « Défaut / OS default », sortie = casque ou CABLE Input selon le test.
 - Micro physique (USB ou analogique), casque USB, ideally un 2e PC ou un pair Discord pour vérifier le signal reçu.
