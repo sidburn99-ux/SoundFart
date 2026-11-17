@@ -25,9 +25,9 @@
 - [x] Fichier > 150 Mo → refus propre avec message, pas de crash. **[A] 15/11** : WAV 172,8 Mo refusé proprement. **[U] 16/11** : message « fichier trop long » affiché (toast corrigé ensuite pour les noms à emojis).
 - [ ] **Limite de durée** `maxSoundDur` (défaut 45 s, 0 = illimité) → lecture bornée + toast une fois. **[U] 16/11 : reporté — non testé.** *(non coché : reporté par l'utilisateur)*
 - [ ] Champ « Durée max » vidé puis Appliquer → la valeur affichée revient à la cible (plus de `0` silencieux = illimité). **[A] 17/11** : garde `''`→NaN ajoutée.
-- [ ] Champ « Cible loudness (LUFS) » vidé puis « Normaliser toute la bibliothèque » → la normalisation utilise l'ancienne cible, **pas** 0 LUFS. **[A] 17/11** : `+''===0` corrigé (`lufsField`).
+- [x] Champ « Cible loudness (LUFS) » vidé puis « Normaliser toute la bibliothèque » → la normalisation utilise l'ancienne cible, **pas** 0 LUFS. **[A] 17/11** : `+''===0` corrigé (`lufsField`) **+ vérifié runtime CDP** : champ vidé → `normLufs` reste -18, affichage restauré.
 - [ ] Remplacer un fichier audio à **chemin constant** (ré-export/écrasement dans `sons/`) → `checkMissing` détecte le changement `size:mtime` et le prochain clic joue la **nouvelle** version. **[A] 17/11** : `file:check` retourne `sigs`, cache invalidé.
-- [ ] >32 clics rapides sur des sons non cachés → le plafond de voix tient après décodage (plus de pic >32). **[A] 17/11** : re-check post-`await`.
+- [x] >32 clics rapides sur des sons non cachés → le plafond de voix tient après décodage (plus de pic >32). **[A] 17/11** : re-check post-`await` **+ vérifié runtime CDP** : 45 `play()` concurrents → pic exactement 32 voix, 0 après STOP.
 - [ ] Fichier audio corrompu/pathologique → `decodeAudioData` timeout 30 s → toast « Décodage trop long », lectures suivantes OK. **[A] 17/11** : `Promise.race` ajouté — **non reproduit**.
 - [ ] Aperçu YouTube « Écouter » cliqué 3× sur le même fichier → 2ᵉ/3ᵉ clic quasi instantané (cache aperçu). **[A] 17/11** : `allowCache` pour `preview`.
 
@@ -86,6 +86,7 @@
 
 - [x] Fermer pendant un téléchargement yt-dlp → plus de processus orphelins (taskkill /T synchrone à will-quit depuis le 16/11). **[A] 15/11** : 0 processus résiduel après kill brutal.
 - [x] Importer 200 sons d'un coup → UI fluide. **[A] 15/11** : 29→229 sons, heap stable.
+- [x] **Runtime CDP complet** (`cdp-drive.js`, 17/11, `--test-profile`) : 12/12 PASS — contexte page, AudioContexts running, `file:check` contrat `{missing,sigs}`, `rec:save` + rejet contrat, lecture réelle + stopAll, `yt:info` erreur, config roundtrip, `applyAudio` re-run, teardown/rebuild complet. + sonde ad-hoc : plafond voix 32 prouvé, panneau réglages OK, champ LUFS vide rejeté, bannière storageDir OK.
 - [ ] Session 2-4 h : sons en boucle + enregistrements → heap stable dans soundfart.log, pas de croissance continue.
 - [x] Corrompre `config.json` → `.broken-*` créé, `.bak` chargé. **[A] 15/11**.
 - [x] Copier un `config.json` > 16 Mo → refus propre. **[A] 15/11**.
@@ -111,7 +112,7 @@
 
 ## H. Stockage & premier lancement (feature 17/11 — NON testée terrain)
 
-- [ ] Premier lancement sans `storageDir` → bannière « Choisis ton dossier de sons » visible, skippable.
+- [ ] Premier lancement sans `storageDir` → bannière « Choisis ton dossier de sons » visible, skippable. **[A] 17/11 partiel** : profil test sans storageDir → bannière visible (`hidden=false`) ; `updateStorageUi` bascule correctement dans les 2 sens (vérifié CDP). Reste : parcours complet choisir→persister→restart.
 - [ ] Glisser-déposer un MP3 → **copié** dans `<dossier>/sons/` (copie atomique), carte pointe sur la copie.
 - [ ] Réimporter le même fichier → réutilise la copie existante (nom+taille+échantillons), **pas de doublon** disque.
 - [ ] Importer sans dossier choisi → blocage + proposition de choisir (bannière/re-modale), pas d'écriture dans AppData.
