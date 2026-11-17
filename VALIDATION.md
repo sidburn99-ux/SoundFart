@@ -87,7 +87,8 @@
 - [x] Fermer pendant un téléchargement yt-dlp → plus de processus orphelins (taskkill /T synchrone à will-quit depuis le 16/11). **[A] 15/11** : 0 processus résiduel après kill brutal.
 - [x] Importer 200 sons d'un coup → UI fluide. **[A] 15/11** : 29→229 sons, heap stable.
 - [x] **Runtime CDP complet** (`cdp-drive.js`, 17/11, `--test-profile`) : 12/12 PASS — contexte page, AudioContexts running, `file:check` contrat `{missing,sigs}`, `rec:save` + rejet contrat, lecture réelle + stopAll, `yt:info` erreur, config roundtrip, `applyAudio` re-run, teardown/rebuild complet. + sonde ad-hoc : plafond voix 32 prouvé, panneau réglages OK, champ LUFS vide rejeté, bannière storageDir OK.
-- [ ] Session 2-4 h : sons en boucle + enregistrements → heap stable dans soundfart.log, pas de croissance continue.
+- [x] **Soak 5 min** (`cdp-soak.js`, 17/11, `--test-profile`) : 15 rounds de `play()`×3 + `stopAll` + `checkMissing` + `renderGrid` toutes les 20 s → heap **figé à 10 Mo** du début à la fin (`performance.memory` + `heap=` log), `bufCache` stable à 5 Mo, contextes `running`, aucun `[crash]`/`[child-gone]` pendant la session. Pas de fuite sur les chemins exercés.
+- [ ] Session 2-4 h : sons en boucle + enregistrements → heap stable dans soundfart.log, pas de croissance continue. (Le soak 5 min est vert ; la durée longue reste à faire — `cdp-soak.js <secondes>` accepte une durée plus grande.)
 - [x] Corrompre `config.json` → `.broken-*` créé, `.bak` chargé. **[A] 15/11**.
 - [x] Copier un `config.json` > 16 Mo → refus propre. **[A] 15/11**.
 - [x] **Veille/réveil** PC avec l'app ouverte → audio reconstruit, sons jouent. **[U] 16/11** sur le build corrigé (`closed` → rebuild borné ; `deadRetries` reset après rebuild réussi — correctif anti-régression du 16/11).
