@@ -49,7 +49,7 @@ async function recorderModal() {
     window.sf.uiLog('tapDead rec=' + (rec ? rec.state : 'null') + ' dead=' + dead);
     tapLost = true; // le tap est mort : ni enregistrement silencieux ni faux succes
     if (dead || !rec || rec.state === 'inactive') return;
-    toast('Source « Audio du PC » perdue — enregistrement arrêté.', 'warn');
+    toast(t('Source « Audio du PC » perdue — enregistrement arrêté.'), 'warn');
     try { rec.stop(); } catch (e) { window.sf.uiLog('recorder rec.stop (tapDead): ' + (e && e.message)); }
   }) : null;
   const offTapPcm = window.sf.onTapPcm ? window.sf.onTapPcm((ab) => {
@@ -94,22 +94,22 @@ async function recorderModal() {
     const firstReal = devs.find((d) => !VIRTUAL_RE.test(d.label || '')) || devs[0];
     micSel.value = firstReal.deviceId;
   }
-  const micOn = el('input', { type: 'checkbox', checked: true, title: 'Enregistre la voix via ton micro (avec réduction d\'écho et de bruit).' });
-  const pcOn = el('input', { type: 'checkbox', checked: false, title: 'Enregistre tout ce que tu entends sur le PC (vidéo, jeu, musique) — capturé directement à la sortie, sans repasser par le câble.' });
-  const cableOn = el('input', { type: 'checkbox', checked: false, title: 'Enregistre ce que SoundFart envoie vers Discord (les sons de la soundboard).' });
-  const status = el('div', { class: 'hint', text: 'Choisis les sources, puis lance l\'enregistrement.' });
+  const micOn = el('input', { type: 'checkbox', checked: true, title: t('Enregistre la voix via ton micro (avec réduction d\'écho et de bruit).') });
+  const pcOn = el('input', { type: 'checkbox', checked: false, title: t('Enregistre tout ce que tu entends sur le PC (vidéo, jeu, musique) — capturé directement à la sortie, sans repasser par le câble.') });
+  const cableOn = el('input', { type: 'checkbox', checked: false, title: t('Enregistre ce que SoundFart envoie vers Discord (les sons de la soundboard).') });
+  const status = el('div', { class: 'hint', text: t('Choisis les sources, puis lance l\'enregistrement.') });
   // Jauge de niveau en direct : une barre de « progression » n'a pas de sens
   // (duree libre) — ce qui manque a l'utilisateur c'est de VOIR que le son
   // est capte. AnalyserNode sur le mix -> pic RMS par frame.
   const meterBar = el('div', { class: 'rec-meter' }, el('i'));
   meterBar.style.display = 'none';
   const meterFill = meterBar.firstChild;
-  const nameIn = el('input', { type: 'text', value: 'Enregistrement ' + new Date().toLocaleString('fr-FR'), maxlength: 80 });
+  const nameIn = el('input', { type: 'text', value: t('Enregistrement {date}', { date: new Date().toLocaleString(SFI18n.lang() === 'fr' ? 'fr-FR' : SFI18n.lang()) }), maxlength: 80 });
   const catSel = el('select', {},
-    el('option', { value: '', text: 'Sans catégorie' }),
+    el('option', { value: '', text: t('Sans catégorie') }),
     sortedCategories().map((c) => el('option', { value: c.id, text: c.name })));
-  const startBtn = el('button', { text: '● Enregistrer', class: 'primary' });
-  const stopBtn = el('button', { text: '■ Arrêter', disabled: true });
+  const startBtn = el('button', { text: t('● Enregistrer'), class: 'primary' });
+  const stopBtn = el('button', { text: t('■ Arrêter'), disabled: true });
 
   const extFor = (mime) => (mime && mime.includes('mp4') ? '.m4a' : mime && mime.includes('ogg') ? '.ogg' : '.webm');
   const mimePick = () => ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg'].find((t) => MediaRecorder.isTypeSupported(t)) || '';
@@ -164,7 +164,7 @@ async function recorderModal() {
     const tracks = stream.getAudioTracks();
     if (!tracks.length || tracks.some((t) => t.readyState !== 'live')) {
       stream.getTracks().forEach((t) => t.stop());
-      throw new Error('piste audio système interrompue (loopback indisponible)');
+      throw new Error(t('piste audio système interrompue (loopback indisponible)'));
     }
     return stream;
   };
@@ -192,7 +192,7 @@ async function recorderModal() {
         window.sf.uiLog('systemStream: ' + (e && e.name) + ' ' + (e && e.message));
       }
     }
-    throw lastErr || new Error('audio systeme indisponible');
+    throw lastErr || new Error(t('audio systeme indisponible'));
   };
 
   // Peripherique d'entree qui correspond au cable virtuel (ex. « CABLE Output »)
@@ -200,7 +200,7 @@ async function recorderModal() {
     const inp = (audio.devices.inp || []).filter((d) => d.deviceId !== 'default');
     const d = inp.find((x) => /output/i.test(x.label) && VIRTUAL_RE.test(x.label))
       || inp.find((x) => /cable/i.test(x.label));
-    if (!d) throw new Error('peripherique « CABLE Output » introuvable');
+    if (!d) throw new Error(t('périphérique « CABLE Output » introuvable'));
     return navigator.mediaDevices.getUserMedia({
       audio: { deviceId: { exact: d.deviceId }, echoCancellation: false, noiseSuppression: false, autoGainControl: false },
     });
@@ -211,7 +211,7 @@ async function recorderModal() {
   // systemStream l'oubliait (piste jamais surveillee).
   const watchEnded = (st) => st.getTracks().forEach((t) => t.addEventListener('ended', () => {
     if (!dead && rec && rec.state === 'recording') {
-      toast('Une source audio est morte — enregistrement arrêté.', 'warn');
+      toast(t('Une source audio est morte — enregistrement arrêté.'), 'warn');
       try { rec.stop(); } catch {}
     }
   }));
@@ -240,22 +240,22 @@ async function recorderModal() {
       // sur le peripherique par defaut Windows — qui peut etre CABLE Output
       // (la soundboard elle-meme) : on refuse la source micro plutot que
       // d'enregistrer autre chose que la voix.
-      if (micOn.checked && !micSel.value) status.textContent = 'Aucun micro détecté — source micro ignorée.';
+      if (micOn.checked && !micSel.value) status.textContent = t('Aucun micro détecté — source micro ignorée.');
       if (micOn.checked && micSel.value) want.push(['micro', () => navigator.mediaDevices.getUserMedia({
         audio: { deviceId: { exact: micSel.value }, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       })]);
-      if (pcOn.checked && !tapOn) want.push(['audio du PC', systemStream]);
-      if (cableOn.checked) want.push(['câble SoundFart', cableStream]);
+      if (pcOn.checked && !tapOn) want.push([t('audio du PC'), systemStream]);
+      if (cableOn.checked) want.push([t('câble SoundFart'), cableStream]);
       // tapOn = source « audio du PC » active via PCM/worklet (pas de getUserMedia) :
       // elle compte comme une source meme si want est vide.
-      if (!want.length && !(pcOn.checked && tapOn)) throw new Error('coche au moins une source');
+      if (!want.length && !(pcOn.checked && tapOn)) throw new Error(t('coche au moins une source'));
       for (const [label, fn] of want) {
         try {
           const st = await fn();
           if (dead) { deadCleanup(st); return; }
           watchEnded(st);
           streams.push(st);
-          if (label === 'audio du PC') pcConnected = true;
+          if (label === t('audio du PC')) pcConnected = true;
         }
         catch (e) { window.sf.uiLog('recorder src ' + label + ': ' + (e && e.name) + ' ' + (e && e.message)); streams.forEach((st) => st.getTracks().forEach((t) => t.stop())); streams = []; throw new Error(label + ' : ' + e.message); }
       }
@@ -271,7 +271,7 @@ async function recorderModal() {
         // Un MediaRecorder sur un contexte suspendu produit un fichier
         // silencieux SANS erreur — l'utilisateur doit le savoir, pas
         // seulement le log.
-        toast('Enregistrement : contexte audio suspendu — le fichier pourrait être silencieux.', 'warn');
+        toast(t('Enregistrement : contexte audio suspendu — le fichier pourrait être silencieux.'), 'warn');
       }
       const dest = actx.createMediaStreamDestination();
       const comp = actx.createDynamicsCompressor(); // evite l'ecrêtage quand plusieurs sources sont mixees
@@ -371,8 +371,8 @@ async function recorderModal() {
               // stopperait une voix morte au lieu de relancer l'apercu.
               if (previewVoice && voices.has(previewVoice)) { stopVoice(previewVoice, true); previewVoice = null; return; }
               previewVoice = null;
-              if (!audio.mon) { toast('Choisis une « écoute locale » dans les réglages pour pré-écouter.', 'warn'); return; }
-              if (ab.byteLength > 150 * 1024 * 1024) { toast('Enregistrement trop lourd pour l\'aperçu — sauvegarde d\'abord.', 'warn'); return; }
+              if (!audio.mon) { toast(t('Choisis une « écoute locale » dans les réglages pour pré-écouter.'), 'warn'); return; }
+              if (ab.byteLength > 150 * 1024 * 1024) { toast(t('Enregistrement trop lourd pour l\'aperçu — sauvegarde d\'abord.'), 'warn'); return; }
               const buf = await decoder.decodeAudioData(ab.slice(0));
               const out = audio.mon;
               const src = out.ctx.createBufferSource();
@@ -393,9 +393,9 @@ async function recorderModal() {
                 try { g.disconnect(); } catch {}
                 endVoice(v);
                 if (previewVoice === v) previewVoice = null;
-                toast('Aperçu interrompu : la sortie audio était suspendue.', 'warn');
+                toast(t('Aperçu interrompu : la sortie audio était suspendue.'), 'warn');
               }, Math.ceil(buf.duration * 1000) + 15000);
-            } catch (e) { logErr('previewRec', e); toast('Aperçu impossible : ' + (e && e.message), 'warn'); }
+            } catch (e) { logErr('previewRec', e); toast(t('Aperçu impossible : {err}', { err: e.message }), 'warn'); }
             finally { previewBusy = false; }
           };
           // Rogner avant sauvegarde : decode la prise et ré-encode en WAV
@@ -426,31 +426,31 @@ async function recorderModal() {
             return wa;
           };
           const trimNodes = [
-            field('Rogner (secondes)', el('div', { class: 'row' },
-              el('span', { class: 'hint', text: 'Début' }), trimStartIn,
-              el('span', { class: 'hint', text: 'Fin' }), trimEndIn),
-              'Laisse tel quel pour tout garder. Si tu rognes, le fichier est enregistré en WAV (plus lourd mais sans perte).'),
+            field(t('Rogner (secondes)'), el('div', { class: 'row' },
+              el('span', { class: 'hint', text: t('Début') }), trimStartIn,
+              el('span', { class: 'hint', text: t('Fin') }), trimEndIn),
+              t('Laisse tel quel pour tout garder. Si tu rognes, le fichier est enregistré en WAV (plus lourd mais sans perte).')),
           ];
           // Modale enregistreur fermee pendant la prise : askDestDir
           // detruirait toute modale ouverte entre-temps (slot unique) —
           // on sauvegarde directement dans le dossier connu, sans demander.
           let destDir = closedDuringRec
             ? (cfg.settings.storageDir || cfg.settings.lastDestDir || null)
-            : await askDestDir([{ label: 'Écouter', onclick: () => previewRec() }], trimNodes);
+            : await askDestDir([{ label: t('Écouter'), onclick: () => previewRec() }], trimNodes);
           if (destDir === null && cfg.settings.storageDir) {
             // « Annuler » tuait la prise en silence (des centaines de Mo
             // perdus apres un arret volontaire). Si un dossier de sons
             // principal existe, on propose d'y enregistrer plutot que de
             // jeter — un second « Annuler » confirme la perte.
-            if (await confirmBox('Enregistrement non sauvegardé',
-                'Veux-tu quand même l\'enregistrer dans ton dossier de sons ?', 'Enregistrer')) {
+            if (await confirmBox(t('Enregistrement non sauvegardé'),
+                t('Veux-tu quand même l\'enregistrer dans ton dossier de sons ?'), t('Enregistrer'))) {
               destDir = cfg.settings.storageDir;
             }
           }
           if (destDir === null) {
             // La modale a ete detruite par askDestDir : status est detache,
             // seul un toast reste visible — l'utilisateur doit etre informe.
-            toast('Enregistrement annulé (choix du dossier).', 'warn');
+            toast(t('Enregistrement annulé (choix du dossier).'), 'warn');
           } else {
           // Rogner si demande : decode -> slice -> WAV 16 bits. Toute
           // erreur de decode retombe sur le fichier complet (jamais de
@@ -464,17 +464,17 @@ async function recorderModal() {
             // — une prise de ~30+ min stereo saturait le renderer (crash
             // -1/143). Au-dela de 150 Mo on garde le fichier complet.
             if (ab.byteLength > 150 * 1024 * 1024) {
-              toast('Rognage ignoré : prise trop longue pour être retraitée en mémoire — fichier complet sauvegardé.', 'warn');
+              toast(t('Rognage ignoré : prise trop longue pour être retraitée en mémoire — fichier complet sauvegardé.'), 'warn');
             } else try {
               const buf = await decoder.decodeAudioData(ab.slice(0));
               const dur = buf.duration;
               const end = (t1 != null && t1 > 0) ? Math.min(t1, dur) : dur;
               if (end - t0 > 0.05) { saveData = encodeWav(buf, t0, end); saveExt = '.wav'; }
-              else toast('Rognage ignoré : la fenêtre demandée est vide.', 'warn');
-            } catch (e) { logErr('trimRec', e); toast('Rognage impossible — fichier complet sauvegardé.', 'warn'); }
+              else toast(t('Rognage ignoré : la fenêtre demandée est vide.'), 'warn');
+            } catch (e) { logErr('trimRec', e); toast(t('Rognage impossible — fichier complet sauvegardé.'), 'warn'); }
           }
           const path = await window.sf.saveRecording({ data: saveData, name: fname, ext: saveExt, dir: destDir || cfg.settings.storageDir || '' });
-          if (typeof path !== 'string' || !path) throw new Error('réponse rec:save invalide');
+          if (typeof path !== 'string' || !path) throw new Error(t('réponse rec:save invalide'));
           recordedSound = {
             id: uid(), name: fname, path, volume: 100, plays: 0, addedAt: Date.now(),
             categoryId: null, favorite: false, norm: 1, shortcut: null,
@@ -487,19 +487,19 @@ async function recorderModal() {
           // (phases trim+save sans modale : l'utilisateur a pu ouvrir
           // l'editeur) — modal() la detruirait (slot unique).
           if (closedDuringRec || modalClose) {
-            toast('Enregistrement sauvegardé : ' + path + ' (ajoute-le via « + » si besoin).', 'info');
+            toast(t('Enregistrement sauvegardé : {path} (ajoute-le via « + » si besoin).', { path }), 'info');
           } else {
           // askDestDir a remplace la modale enregistreur (slot unique) : sans
           // modale de resultat, recordedSound mourait dans une closure et le
           // fichier restait orphelin dans recordings/ — plus jamais ajoutable.
-          modal('Enregistrement terminé', [
-            el('div', { class: 'hint', text: 'Durée ' + fmtTime((Date.now() - recStart) / 1000) + ' — ' + path + (recFailed ? ' — ENREGISTREMENT INTERROMPU PAR UNE ERREUR (fichier partiel)' : '') }),
-            field('Nom', nameIn),
-            field('Catégorie', catSel),
+          modal(t('Enregistrement terminé'), [
+            el('div', { class: 'hint', text: t('Durée {d} — {path}{warn}', { d: fmtTime((Date.now() - recStart) / 1000), path, warn: recFailed ? t(' — ENREGISTREMENT INTERROMPU PAR UNE ERREUR (fichier partiel)') : '' }) }),
+            field(t('Nom'), nameIn),
+            field(t('Catégorie'), catSel),
           ], [
-            { label: 'Fermer', onclick: (c) => c() },
-            { label: 'Écouter', onclick: () => { if (recordedSound) play(recordedSound, { monitorOnly: true, preview: true }); } },
-            { label: 'Ajouter à la bibliothèque', kind: 'primary', onclick: (c) => {
+            { label: t('Fermer'), onclick: (c) => c() },
+            { label: t('Écouter'), onclick: () => { if (recordedSound) play(recordedSound, { monitorOnly: true, preview: true }); } },
+            { label: t('Ajouter à la bibliothèque'), kind: 'primary', onclick: (c) => {
               if (!recordedSound) return;
               recordedSound.name = nameIn.value.trim() || recordedSound.name;
               recordedSound.categoryId = catSel.value || null;
@@ -507,7 +507,7 @@ async function recorderModal() {
               recordedSound = null;
               if (!pushSound(added)) { c(); return; }
               save(); renderAll(); c();
-              toast('Son ajouté à la bibliothèque.');
+              toast(t('Son ajouté à la bibliothèque.'));
               setTimeout(() => editSound(added), 60);
             } },
           ]);
@@ -526,7 +526,7 @@ async function recorderModal() {
           // Modale potentiellement detruite par askDestDir : toast, pas
           // status — sinon l'echec de sauvegarde etait invisible et la
           // prise (des centaines de Mo) perdue sans trace.
-          toast('Sauvegarde impossible : ' + e.message, 'warn');
+          toast(t('Sauvegarde impossible : {err}', { err: e.message }), 'warn');
           window.sf.uiLog('rec:save: ' + (e && e.message));
         }
       };
@@ -536,25 +536,25 @@ async function recorderModal() {
       // fichier silencieux — on refuse avec un message clair. Uniquement si le
       // worklet PCM est la source retenue : si le repli systemStream a pris le
       // relais, tapLost est sans objet.
-      if (tapNode && tapLost) throw new Error('audio du PC : flux AudioTap interrompu avant le démarrage');
+      if (tapNode && tapLost) throw new Error(t('audio du PC : flux AudioTap interrompu avant le démarrage'));
       if (tapNode && !pcmSeen) {
         // audioTapStart a repondu ok mais aucun chunk PCM n'est arrive :
         // demarrer enregistrerait du silence indetectable. Attente bornee
         // (~2 s) des premiers frames — le loopback emet toujours des frames.
         for (let i = 0; i < 40 && !pcmSeen; i++) await new Promise((r) => setTimeout(r, 50));
-        if (!pcmSeen) throw new Error('audio du PC : aucun flux PCM reçu d\'AudioTap');
+        if (!pcmSeen) throw new Error(t('audio du PC : aucun flux PCM reçu d\'AudioTap'));
       }
       // L'attente PCM a pu chevaucher une fermeture de modale.
       if (dead) { deadCleanup(); if (actx) { actx.close().catch(() => {}); actx = null; } return; }
       // « Audio du PC » coche mais ni worklet PCM ni repli systeme n'ont
       // abouti : demarrer produirait un fichier silencieux indetectable.
-      if (pcOn.checked && !pcConnected) throw new Error('audio du PC : aucune source disponible (capture et repli système en échec)');
+      if (pcOn.checked && !pcConnected) throw new Error(t('audio du PC : aucune source disponible (capture et repli système en échec)'));
       // Source acquise puis morte PENDANT la preparation (micro debranche
       // entre getUserMedia et rec.start — watchEnded ne couvre que
       // l'etat 'recording') : demarrer produirait un fichier partiellement
       // silencieux sans aucune alerte.
       const deadSrc = streams.some((st) => st.getAudioTracks().some((t) => t.readyState !== 'live'));
-      if (deadSrc) throw new Error('une source audio est morte avant le démarrage');
+      if (deadSrc) throw new Error(t('une source audio est morte avant le démarrage'));
       if (tapNode) {
         // Flush du ring buffer : le PCM arrive des l'audioTapStart, avant les
         // getUserMedia -> sans ca le debut du fichier contiendrait de l'audio
@@ -565,14 +565,14 @@ async function recorderModal() {
       rec.start(250);
       recStart = Date.now();
       startMeter();
-      recTimer = setInterval(() => { status.textContent = '● Enregistrement… ' + fmtTime((Date.now() - recStart) / 1000); }, 250);
-      status.textContent = '● Enregistrement…';
+      recTimer = setInterval(() => { status.textContent = t('● Enregistrement… {t}', { t: fmtTime((Date.now() - recStart) / 1000) }); }, 250);
+      status.textContent = t('● Enregistrement…');
       startBtn.disabled = true; stopBtn.disabled = false;
       micSel.disabled = micOn.disabled = pcOn.disabled = cableOn.disabled = true;
     } catch (e) {
       window.sf.uiLog('recorder start: ' + (e && e.name) + ' ' + (e && e.message));
       stopMeter();
-      status.textContent = 'Source inaccessible : ' + e.message;
+      status.textContent = t('Source inaccessible : {err}', { err: e.message });
       // meme liberation que rec.onstop : pas de micro/tap/contexte leaving trainer
       streams.forEach((st) => st.getTracks().forEach((t) => t.stop()));
       stopLoose();
@@ -588,34 +588,34 @@ async function recorderModal() {
   const cableDevLabel = () => {
     const d = (audio.devices.inp || []).find((x) => /output/i.test(x.label) && VIRTUAL_RE.test(x.label))
       || (audio.devices.inp || []).find((x) => /cable/i.test(x.label));
-    return d ? d.label : 'CABLE Output (introuvable)';
+    return d ? d.label : t('CABLE Output (introuvable)');
   };
-  const micLabel = () => { const o = micSel.selectedOptions[0]; return o ? (o.dataset.label || o.textContent) : 'aucun micro'; };
+  const micLabel = () => { const o = micSel.selectedOptions[0]; return o ? (o.dataset.label || o.textContent) : t('aucun micro'); };
   const srcNames = el('div', { class: 'hint' });
-  const syncSrcNames = () => { srcNames.textContent = 'Sources : micro = ' + micLabel() + ' · audio du PC = sortie système · câble = ' + cableDevLabel(); };
+  const syncSrcNames = () => { srcNames.textContent = t('Sources : micro = {mic} · audio du PC = sortie système · câble = {cable}', { mic: micLabel(), cable: cableDevLabel() }); };
   micSel.addEventListener('change', syncSrcNames);
   syncSrcNames();
 
-  modal('Enregistreur', [
-    field('Micro', el('div', { class: 'row' }, micOn, micSel), 'Voix via le périphérique d\'entrée choisi.'),
+  modal(t('Enregistreur'), [
+    field(t('Micro'), el('div', { class: 'row' }, micOn, micSel), t('Voix via le périphérique d\'entrée choisi.')),
     srcNames,
-    field('Audio du PC', pcOn, 'Coche pour mixer ce que tu entends (musique, voix Discord, jeu) directement dans l\'enregistrement — le flux passe par SoundFart sans repasser par le câble, donc sans écho pour tes amis.'),
-    field('Câble SoundFart', cableOn, 'Coche pour ajouter ce qui passe dans le câble virtuel (sons de la soundboard + micro mixé).'),
-    el('div', { class: 'hint', text: 'Tu peux combiner plusieurs sources : elles sont mixées avec un limiteur anti-saturation. Le son est enregistré en qualité numérique, sans passer par les haut-parleurs.' }),
+    field(t('Audio du PC'), pcOn, t('Coche pour mixer ce que tu entends (musique, voix Discord, jeu) directement dans l\'enregistrement — le flux passe par SoundFart sans repasser par le câble, donc sans écho pour tes amis.')),
+    field(t('Câble SoundFart'), cableOn, t('Coche pour ajouter ce qui passe dans le câble virtuel (sons de la soundboard + micro mixé).')),
+    el('div', { class: 'hint', text: t('Tu peux combiner plusieurs sources : elles sont mixées avec un limiteur anti-saturation. Le son est enregistré en qualité numérique, sans passer par les haut-parleurs.') }),
     el('div', { class: 'row' }, startBtn, stopBtn),
     meterBar,
     status,
-    field('Nom', nameIn),
-    field('Catégorie', catSel),
+    field(t('Nom'), nameIn),
+    field(t('Catégorie'), catSel),
   ], [
-    { label: 'Fermer', onclick: (c) => c() },
-    { label: 'Ajouter à la bibliothèque', kind: 'primary', onclick: (c) => {
-      if (!recordedSound) { toast('Enregistre d\'abord un son.', 'warn'); return; }
+    { label: t('Fermer'), onclick: (c) => c() },
+    { label: t('Ajouter à la bibliothèque'), kind: 'primary', onclick: (c) => {
+      if (!recordedSound) { toast(t('Enregistre d\'abord un son.'), 'warn'); return; }
       recordedSound.name = nameIn.value.trim() || recordedSound.name;
       recordedSound.categoryId = catSel.value || null;
       if (!pushSound(recordedSound)) { c(); return; }
       save(); renderAll(); c();
-      toast('Son ajouté à la bibliothèque.');
+      toast(t('Son ajouté à la bibliothèque.'));
       setTimeout(() => editSound(recordedSound), 60);
     } },
   ], { onClose: cleanup });
