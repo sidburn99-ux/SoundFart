@@ -7,7 +7,7 @@
 >
 > Règle : ne jamais marquer une fonctionnalité « testée » sans l'avoir réellement testée.
 
-## État actuel : v1.4 + branche `hardening/v2`
+## État actuel : v1.5.0 (i18n FR/EN/DE/ES + crash reporting opt-in Cloudflare)
 
 ### Changements récents sur `hardening/v2` (15-16/11/2026)
 

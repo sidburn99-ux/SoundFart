@@ -1,7 +1,7 @@
 {
   "name": "soundfart",
   "productName": "SoundFart",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "SoundFart - soundboard pour Discord",
   "author": "Benoit Prudent",
   "main": "main.js",

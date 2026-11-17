@@ -1,8 +1,8 @@
 # SoundFart — Spécification fonctionnelle (pour évaluation par IA)
 
-> Rôle : spécification technique de référence (architecture, flux, IPC, formats). Statut : **actuel** (v1.4.0). À consulter : pour comprendre ou modifier le code ; ne jamais aligner la spec sur le code sans vérification.
+> Rôle : spécification technique de référence (architecture, flux, IPC, formats). Statut : **actuel** (v1.5.0). À consulter : pour comprendre ou modifier le code ; ne jamais aligner la spec sur le code sans vérification.
 
-> Document de référence décrivant **fidèlement** ce que fait le programme tel qu'implémenté (v1.4.0). Utilisable tel quel comme prompt d'évaluation.
+> Document de référence décrivant **fidèlement** ce que fait le programme tel qu'implémenté (v1.5.0). Utilisable tel quel comme prompt d'évaluation.
 
 ---
 
@@ -143,7 +143,7 @@ Sécurité : CSP stricte (`default-src 'self'`), `contextIsolation`, `sandbox`, 
 - Édition : Rechercher (Ctrl+F). Audio : Stopper tous les sons (raccourci STOP), Réglages.
 - Affichage : vue courante (radio, catégories synchronisées) + « Regrouper par catégorie ».
 - Aide : Outils de dev (F12), À propos (version).
-- Version affichée à côté du nom en haut à gauche (lue depuis les métadonnées de l'app — actuellement `v1.4.0`).
+- Version affichée à côté du nom en haut à gauche (lue depuis les métadonnées de l'app — actuellement `v1.5.0`).
 
 ### 14. Divers
 - Instance unique (2e lancement → focus fenêtre), icône/thème sombre, design compact (1180×760, min 900×600).
