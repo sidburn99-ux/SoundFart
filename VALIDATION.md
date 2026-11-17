@@ -1,17 +1,17 @@
 # VALIDATION.md — Procédure de validation matérielle SoundFart
 
 > Rôle : checklist de validation réelle (audio, Discord, VB-CABLE, Windows).
-> Statut : **en cours** — mise à jour après la campagne terrain du 16/11/2026.
+> Statut : **en cours** — mise à jour après la campagne du 17/11/2026 (feature dossier de sons + audits settings/app.js/worklets).
 > Légende : **[U]** = validé par l'utilisateur sur matériel réel · **[A]** = validé par l'agent (CDP/logs, pas d'oreille) · case vide = non testé.
 > Quand consulter : avant toute bêta ou release.
 
 ## Prérequis
 
-- `dist\SoundFart.exe` buildé depuis la branche testée (portable, `SoundFart-data` à côté).
+- `dist\SoundFart.exe` buildé depuis la branche testée (portable ; réglages/outils dans `%APPDATA%\SoundFart`, sons créés dans le dossier choisi).
 - VB-CABLE installé manuellement depuis https://vb-audio.com/Cable/ (SoundFart ne l'installe jamais).
 - Discord configuré : entrée = « Défaut / OS default », sortie = casque ou CABLE Input selon le test.
 - Micro physique (USB ou analogique), casque USB, ideally un 2e PC ou un pair Discord pour vérifier le signal reçu.
-- `soundfart.log` visible dans `SoundFart-data\` pendant les tests.
+- `soundfart.log` visible dans `%APPDATA%\SoundFart\` pendant les tests.
 
 ## A. Lecture et moteur audio
 
@@ -24,6 +24,12 @@
 - [ ] Importer un WAV 5 min puis un MP3 3 min → lecture OK, heap log stable (`heap=` dans soundfart.log). **[A] 15/11 partiel** : WAV 5 min décodé + joué, heap stable ; MP3 3 min non testé (même chemin).
 - [x] Fichier > 150 Mo → refus propre avec message, pas de crash. **[A] 15/11** : WAV 172,8 Mo refusé proprement. **[U] 16/11** : message « fichier trop long » affiché (toast corrigé ensuite pour les noms à emojis).
 - [ ] **Limite de durée** `maxSoundDur` (défaut 45 s, 0 = illimité) → lecture bornée + toast une fois. **[U] 16/11 : reporté — non testé.** *(non coché : reporté par l'utilisateur)*
+- [ ] Champ « Durée max » vidé puis Appliquer → la valeur affichée revient à la cible (plus de `0` silencieux = illimité). **[A] 17/11** : garde `''`→NaN ajoutée.
+- [ ] Champ « Cible loudness (LUFS) » vidé puis « Normaliser toute la bibliothèque » → la normalisation utilise l'ancienne cible, **pas** 0 LUFS. **[A] 17/11** : `+''===0` corrigé (`lufsField`).
+- [ ] Remplacer un fichier audio à **chemin constant** (ré-export/écrasement dans `sons/`) → `checkMissing` détecte le changement `size:mtime` et le prochain clic joue la **nouvelle** version. **[A] 17/11** : `file:check` retourne `sigs`, cache invalidé.
+- [ ] >32 clics rapides sur des sons non cachés → le plafond de voix tient après décodage (plus de pic >32). **[A] 17/11** : re-check post-`await`.
+- [ ] Fichier audio corrompu/pathologique → `decodeAudioData` timeout 30 s → toast « Décodage trop long », lectures suivantes OK. **[A] 17/11** : `Promise.race` ajouté — **non reproduit**.
+- [ ] Aperçu YouTube « Écouter » cliqué 3× sur le même fichier → 2ᵉ/3ᵉ clic quasi instantané (cache aperçu). **[A] 17/11** : `allowCache` pour `preview`.
 
 ## B. Périphériques
 
@@ -31,6 +37,8 @@
 - [ ] Débrancher/rebrancher le casque USB pendant une lecture → `devicechange` → applyAudio → lecture reprend ou toast clair, pas de crash.
 - [x] Connecter/déconnecter une sortie (casque/BT) pendant la lecture → l'app continue. **[U] 16/11** : « le son s'arrête quand le micro est débranché (rebuild normal), l'app continue à fonctionner » — la coupure des voix à la reconstruction micro est connue (amélioration possible : refresh micro sans teardown complet).
 - [ ] Désactiver/réactiver VB-CABLE dans le Gestionnaire de périphériques → détection + toast, pas de boucle.
+- [ ] Brancher VB-CABLE **à chaud** pendant que des sons jouent → un seul rebuild audio (plus de double `applyAudio`), pas de toast micro parasite. **[A] 17/11** : flag `rebuilt`.
+- [ ] Perte micro (BT déco/USB) pendant une lecture → sons stoppés (voulu, documenté GUIDE) puis micro reconnecté → voix repart sans restart. **[U] 16/11 partiel** (coupure sons confirmée) ; reconnexion micro **à retester**.
 - [ ] Changer le périphérique de sortie par défaut Windows → sortie Discord suit ou message clair.
 - [ ] BT : connecter/couper un casque Bluetooth → flap contenu, pas de tempête de toasts.
 
@@ -43,6 +51,7 @@
 - [x] **Jauge de niveau** visible et active pendant la prise. **[U] 16/11** (bug `startMeter`/`stopMeter` corrigé en route).
 - [x] **Écouter avant sauvegarde** : bouton « Écouter » dans le choix du dossier → joue la prise en mémoire sur l'écoute locale. **[U] 16/11**.
 - [ ] **Rogner avant sauvegarde** (champs Début/Fin → WAV 16 bits). **Implémenté 16/11 — non testé.**
+- [ ] `MediaRecorder.onerror` avec état `inactive` → la prise partielle est sauvegardée + UI nettoyée (plus d'« Enregistrement… » figé). **[A] 17/11** : `onstop` manuel — **non reproduit**.
 - [x] Arrêter → dossier → « Enregistrement terminé » → « Ajouter à la bibliothèque » → son jouable. **[U] 16/11** (flux validé ; **[A] 15/11** via `cdp-recflow.js`).
 - [x] Fermer la modale pendant l'enregistrement → arrêt propre, pas de fichier orphelin ajouté. **[U] 16/11** + **[A] 15/11** (`cdp-recclose.js`).
 - [ ] Débrancher le micro pendant l'enregistrement → arrêt propre + message, pas de fichier silencieux présenté comme réussi.
@@ -56,6 +65,8 @@
 - [ ] Relancer SoundFart < 500 ms après le kill → pas de micro coincé sur CABLE (test TOCTOU).
 - [ ] Changer l'entrée micro manuellement pendant la bascule → watchdog suspend la surveillance (log « surveillance suspendue »), pas de re-bascule forcée.
 - [x] **Voix indépendante du master soundboard** : micro → limiteur direct, master 0 % + parole = voix OK sur Discord. **[U] 16/11** (décision produit explicite).
+- [ ] **Micro coincé sur CABLE Output sans marqueur** (état historique 16/11 soir) → modale « Réparer » au lancement + bouton « Restaurer mon micro » fonctionnel (`force`). **[A] 17/11** : code en place — **reproduire l'état réel non fait**.
+- [ ] **Qualité voix stéréo** : `voice-gate` gain synchronisé sur les 2 canaux (commit `[AUDIO] 28232d3`) → pas de décalage/click aux transitions du gate, voix toujours centrée. **À valider à l'oreille — non testé.**
 - [x] Le micro physique arrive bien à Discord. **[U] 16/11** (validé en appel réel).
 
 ## E. Import YouTube / ffmpeg
@@ -67,6 +78,9 @@
 - [x] Couper un extrait (`media:cut`) → MP3 créé, **original intact**. **[U] 16/11**.
 - [ ] Sans timeline → audio complet + trim dans l'éditeur (partiellement couvert par les imports OK).
 - [ ] Débrancher le réseau pendant le téléchargement → erreur propre, pas de `.part` géant.
+- [ ] **Imports YouTube concurrents** : deux téléchargages lancés ensemble → `.part` uniques, pas de fichier mixte. **[A] 17/11** : noms `pid+seq` — **non reproduit**.
+- [ ] **Modale YouTube/éditeur fermée pendant le download/export** → pas de modale résultat rouverte sans demande (toast à la place). **[A] 17/11** — **non reproduit**.
+- [ ] `yt-dlp` auto-update (hash vérifié) → version bump réel loggé, pas de downgrade.
 
 ## F. Robustesse / résilience
 
@@ -94,6 +108,28 @@
 | Windows 10 (si supporté) | non testé |
 | Sortie 44,1 kHz / 48 kHz / 96 kHz | non testé |
 | Micro analogique (jack) | non testé |
+
+## H. Stockage & premier lancement (feature 17/11 — NON testée terrain)
+
+- [ ] Premier lancement sans `storageDir` → bannière « Choisis ton dossier de sons » visible, skippable.
+- [ ] Glisser-déposer un MP3 → **copié** dans `<dossier>/sons/` (copie atomique), carte pointe sur la copie.
+- [ ] Réimporter le même fichier → réutilise la copie existante (nom+taille+échantillons), **pas de doublon** disque.
+- [ ] Importer sans dossier choisi → blocage + proposition de choisir (bannière/re-modale), pas d'écriture dans AppData.
+- [ ] YouTube → `imports/`, enregistreur → `recordings/`, extrait MP3 → `cuts/` sous le dossier choisi.
+- [ ] Retirer un son de la bibliothèque → le fichier copié **reste** dans `sons/`.
+- [ ] Paramètres → « Choisir… »/« Réinitialiser » le dossier → **persisté immédiatement** (visible après restart), bannière mise à jour.
+- [ ] Export/import `config.json` → bannière storageDir reflète la config importée ; « Annuler » l'import depuis les réglages **rouvre le panneau**.
+- [ ] Champ LUFS/durée max invalides dans la config importée → `normalizeCfg` retombe sur les défauts (pas de NaN).
+- [ ] Migration `SoundFart-data` → `%APPDATA%` : déjà vérifiée en réel le 17/11 (config 36 sons reprise, backups créés) — **retester sur profil vierge** si possible.
+
+## I. Réglages & cycles de vie (audits 17/11 — NON testés terrain)
+
+- [ ] Import config pendant un décodage en vol → pas de double décodage (`bufInflight` garde d'identité).
+- [ ] `stopFallback` sur contexte suspendu → nodes déconnectés après 1,5 s (plus de gain zombie).
+- [ ] Toast « micro muet » en rafale BT → un seul toast / 10 s.
+- [ ] `devicechange` avec cable + deviceId changés ensemble → un seul `applyAudio` (log `[devicechange]` unique).
+- [ ] `init()` avec `applyAudio` en échec → raccourcis quand même enregistrés (log `[shortcuts]`).
+- [ ] « Restaurer mon micro » avec marqueur absent → no-op propre ; avec état coincé → `force` rebasculé vers non-virtuel.
 
 ## Crash renderer (-1/143) — protocole forensique
 
