@@ -51,7 +51,7 @@
 - [x] **Jauge de niveau** visible et active pendant la prise. **[U] 16/11** (bug `startMeter`/`stopMeter` corrigé en route).
 - [x] **Écouter avant sauvegarde** : bouton « Écouter » dans le choix du dossier → joue la prise en mémoire sur l'écoute locale. **[U] 16/11**.
 - [x] **Rogner avant sauvegarde** (champs Début/Fin → WAV 16 bits). **[A] 17/11** : prise câble rogée Début=1/Fin=4 → `*.wav` RIFF stéréo 16 bits 48 kHz, durée **exactement 3,0 s**, taille cohérente (576 044 o). Pic 0 sur l'extrait = segment pré-lecture silencieux (les sons jouaient après 5 s) — cohérent, pas un défaut.
-- [ ] `MediaRecorder.onerror` avec état `inactive` → la prise partielle est sauvegardée + UI nettoyée (plus d'« Enregistrement… » figé). **[A] 17/11** : `onstop` manuel — **non reproduit**.
+- [x] `MediaRecorder.onerror` avec état `inactive` → la prise partielle est sauvegardée + UI nettoyée (plus d'« Enregistrement… » figé). **Vérifié code 17/11** : `onerror` → `recFailed` + si `state==='inactive'` invoque `onstop` manuellement (garde anti-double-fire) → sauvegarde du partiel + nettoyage (`recorder.js:309-329`). Forcer une vraie erreur MediaRecorder n'est pas déterministe — non reproduit en runtime.
 - [x] Arrêter → dossier → « Enregistrement terminé » → « Ajouter à la bibliothèque » → son jouable. **[U] 16/11** (flux validé ; **[A] 15/11** via `cdp-recflow.js` ; **revérifié [A] 17/11** : sauvegarde `sf-dest\recordings\*.webm` + ajout réel, sons 31→32).
 - [x] Fermer la modale pendant l'enregistrement → arrêt propre, pas de fichier orphelin ajouté. **[U] 16/11** + **[A] 15/11** (`cdp-recclose.js`).
 - [ ] Débrancher le micro pendant l'enregistrement → arrêt propre + message, pas de fichier silencieux présenté comme réussi.
@@ -80,7 +80,7 @@
 - [ ] Débrancher le réseau pendant le téléchargement → erreur propre, pas de `.part` géant.
 - [x] **Imports YouTube concurrents** : deux téléchargages lancés ensemble → `.part` uniques, pas de fichier mixte. **[A] 17/11** : single-flight `ytDownloadBusy` prouvé — 1er `yt:download` OK (`imports\sf-*.webm`), 2ᵉ rejeté proprement « Un import YouTube est déjà en cours ». La concurrence au niveau `.part` est de fait impossible via l'API.
 - [x] **Modale YouTube/éditeur fermée pendant le download/export** → pas de modale résultat rouverte sans demande (toast à la place). **[A] 17/11** : modale YouTube fermée (« Fermer ») ~0,4 s après « Télécharger » → **webm 252 Ko bien arrivé dans `sf-dest\imports\`** (2 tentatives, 2 fichiers) et **aucune modale résultat rouverte** (`modal: none` après fin). Toast non capturé (expiré avant relevé) mais chemin `ytGone → toast` vérifié code (`youtube.js:198-203`).
-- [ ] `yt-dlp` auto-update (hash vérifié) → version bump réel loggé, pas de downgrade.
+- [x] `yt-dlp` auto-update (hash vérifié) → version bump réel loggé, pas de downgrade. **[A] 17/11 — vrai bump testé** : binaire downgrading à 2026.10.21 + meta `{version,at}` vieillis → `ytEnsure` → logs `[yt] mise a jour yt-dlp 2026.10.21 -> 2026.10.26` + `installe (SHA-256 verifie)`, binaire redevenu 2026.10.26, meta réécrite atomiquement. Garde anti-downgrade `latest <= current` vérifiée code (`media-tools.js:382`) — `current` vient de `meta.version`/`--version`, pas de la requête.
 
 ## F. Robustesse / résilience
 
