@@ -38,7 +38,9 @@ class VoiceGateProcessor extends AudioWorkletProcessor {
     const output = outputs[0];
     if (!input || !input.length || !output || !output.length) return true;
     const nCh = Math.min(input.length, output.length);
+    if (nCh < 1) return true;
     const n = input[0].length;
+    // Passe 1 : filtrage par canal -> out[c][i] = echantillon filtre.
     for (let c = 0; c < nCh; c++) {
       const inp = input[c], out = output[c];
       if (this.xPrev.length <= c) { this.xPrev.push(0); this.yPrev.push(0); this.lpPrev.push(0); }
@@ -50,17 +52,28 @@ class VoiceGateProcessor extends AudioWorkletProcessor {
         xp = x; yp = y;
         // lowpass one-pole (bande passante voix) si actif
         if (this.lpA > 0) { lp += this.lpA * (y - lp); y = lp; }
-        // enveloppe pic (canal 0 pour la detection — mono compatible)
-        if (c === 0) {
-          const a = Math.abs(y);
-          this.env = a > this.env ? a : this.env * this.relC;
-          const target = this.env > this.thr ? 1 : this.floor;
-          const coef = target > this.g ? this.atkC : this.relC;
-          this.g += (target - this.g) * (1 - coef);
-        }
-        out[i] = y * this.g;
+        // NaN/Inf ne traverse pas vers le limiteur (hygiene tap-processor).
+        out[i] = Number.isFinite(y) ? y : 0;
       }
       this.xPrev[c] = xp; this.yPrev[c] = yp; this.lpPrev[c] = lp;
+    }
+    // Passe 2 : enveloppe + gain UNE fois par echantillon, applique a
+    // tous les canaux. Avant, les canaux >0 recevaient le gain fige a la
+    // fin du bloc du canal 0 (~2,7 ms de decalage sur chaque transition
+    // du gate — stereo decalé en attaque/release).
+    const out0 = output[0];
+    for (let i = 0; i < n; i++) {
+      // enveloppe pic sur le canal 0 (mono compatible)
+      const a = Math.abs(out0[i]);
+      this.env = a > this.env ? a : this.env * this.relC;
+      const target = this.env > this.thr ? 1 : this.floor;
+      const coef = target > this.g ? this.atkC : this.relC;
+      this.g += (target - this.g) * (1 - coef);
+      // Flush denormal : la decay exponentielle vers 0 ne l'atteint
+      // jamais — apres ~30 s de silence env/g tombaient en sous-normaux.
+      if (this.env < 1e-20) this.env = 0;
+      if (this.g < 1e-20) this.g = target;
+      for (let c = 0; c < nCh; c++) output[c][i] *= this.g;
     }
     return true;
   }
