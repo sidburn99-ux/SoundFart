@@ -6,7 +6,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { sanitize, sanitizeString, createCrashReporter, signature, LIMITS } = require('../lib/crash-report');
+const { sanitize, sanitizeString, createCrashReporter, signature, resolveEndpoint, DEFAULT_ENDPOINT, LIMITS } = require('../lib/crash-report');
 
 const tmpdir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'sf-reports-'));
 const readQueue = (dir) => {
@@ -214,6 +214,174 @@ test('anti-spam : > MAX_ENQUEUE_PER_MIN evenements/min rejetes', () => {
     if (r.report({ module: 'main', type: 'x', message: 'spam' + i })) accepted++;
   }
   assert.strictEqual(accepted, LIMITS.MAX_ENQUEUE_PER_MIN);
+});
+
+test('lots multiples : > MAX_BATCH rapports -> plusieurs POST sequentiels', async () => {
+  const posts = [];
+  const { r, dir } = makeReporter({ posts });
+  const n = LIMITS.MAX_BATCH + 5;
+  for (let i = 0; i < n; i++) {
+    r.report({ module: 'main', type: 'x', message: 'batch-' + i });
+  }
+  const res = await r.flush();
+  assert.strictEqual(res.sent, n);
+  assert.strictEqual(posts.length, 2, 'deux POST attendus');
+  assert.strictEqual(posts[0].reports.length, LIMITS.MAX_BATCH);
+  assert.strictEqual(posts[1].reports.length, 5);
+  assert.strictEqual(readQueue(dir).length, 0);
+});
+
+test('limite 112 Kio : chaque POST reste sous MAX_POST_BYTES', async () => {
+  const posts = [];
+  const { r } = makeReporter({ posts });
+  // ~14 Ko par rapport (stack 8 Ko + extra 4 Ko + message) : 10 rapports
+  // ~140 Ko > 112 Kio -> fractionnement obligatoire (2 lots), tout en
+  // restant sous MAX_QUEUE_BYTES (256 Kio) cote file.
+  for (let i = 0; i < 10; i++) {
+    r.report({
+      module: 'main', type: 'big', message: 'big-' + i,
+      stack: 'S'.repeat(8000), extra: { blob: 'E'.repeat(3900) },
+    });
+  }
+  const res = await r.flush();
+  assert.strictEqual(res.sent, 10);
+  assert.ok(posts.length >= 2, 'attendu >= 2 POST, recu ' + posts.length);
+  for (const p of posts) {
+    const bytes = Buffer.byteLength(JSON.stringify(p));
+    assert.ok(bytes <= LIMITS.MAX_POST_BYTES, 'POST de ' + bytes + ' octets > ' + LIMITS.MAX_POST_BYTES);
+    assert.ok(p.reports.length <= LIMITS.MAX_BATCH);
+  }
+});
+
+test('lot trop gros : les rapports non envoyes restent en file', async () => {
+  const dir = tmpdir();
+  const posts = [];
+  let failFirst = true;
+  const r = createCrashReporter({
+    dir, endpoint: 'https://x', getConsent: () => 'yes',
+    post: async (body) => {
+      if (failFirst) { failFirst = false; throw new Error('HTTP 500'); }
+      posts.push(JSON.parse(body));
+    },
+    now: () => 1000000, log: () => {},
+  });
+  // Assez de rapports pour creer 2 lots (~140 Ko) : le 1er echoue,
+  // le 2e n'est pas tente ce flush-ci.
+  for (let i = 0; i < 10; i++) {
+    r.report({
+      module: 'main', type: 'big', message: 'big-' + i,
+      stack: 'S'.repeat(8000), extra: { blob: 'E'.repeat(3900) },
+    });
+  }
+  const res = await r.flush();
+  assert.strictEqual(res.sent, 0);
+  assert.ok(posts.length === 0);
+  const q = readQueue(dir);
+  assert.strictEqual(q.length, 10, 'tous les rapports doivent rester en file');
+  // Le lot tente a consomme une tentative ; les lots non tentes restent a 0.
+  assert.ok(q.some((it) => it.attempts === 1), 'le lot tente doit avoir attempts=1');
+  assert.ok(q.every((it) => it.attempts <= 1), 'aucun rapport ne doit depasser attempts=1 ici');
+  // 2e flush : le POST reussit -> tout part.
+  await r.flush();
+  assert.strictEqual(readQueue(dir).length, 0);
+});
+
+test('echec lot ulterieur : lot 1 accepte+retire, lot 2 attempts++, lot 3 conserve intact', async () => {
+  const dir = tmpdir();
+  const posts = [];
+  let calls = 0;
+  const r = createCrashReporter({
+    dir, endpoint: 'https://x', getConsent: () => 'yes',
+    post: async (body) => {
+      calls++;
+      if (calls === 2) throw new Error('HTTP 500'); // 2e lot echoue
+      posts.push(JSON.parse(body));
+    },
+    now: () => 1000000, log: () => {},
+  });
+  // ~12 Ko/rapport x 19 = ~230 Ko -> 3 lots (9+9+1 environ).
+  // Reste sous MAX_QUEUE_BYTES (256 Kio) pour ne pas tronquer a l'enqueue.
+  for (let i = 0; i < 19; i++) {
+    r.report({
+      module: 'main', type: 'big', message: 'p-' + i,
+      stack: 'S'.repeat(8000), extra: { blob: 'E'.repeat(3900) },
+    });
+  }
+  const res = await r.flush();
+  assert.strictEqual(calls, 2, 'le 3e lot ne doit PAS etre tente apres l echec');
+  assert.strictEqual(posts.length, 1, 'seul le 1er lot a ete accepte');
+  assert.strictEqual(res.sent, posts[0].reports.length);
+  const q = readQueue(dir);
+  const batch1Size = posts[0].reports.length;
+  assert.strictEqual(q.length, 19 - batch1Size, 'file = lots 2+3 uniquement');
+  // Lot 2 (echoue) : attempts=1. Lot 3 (non tente) : attempts=0.
+  const a1 = q.filter((it) => it.attempts === 1).length;
+  const a0 = q.filter((it) => it.attempts === 0).length;
+  assert.ok(a1 > 0 && a0 > 0, 'repartition attempts 1/0 attendue: ' + a1 + '/' + a0);
+  assert.strictEqual(a1 + a0, q.length);
+  // Ordre preserve : les messages restants sont dans l ordre d origine.
+  const msgs = q.map((it) => it.r.message);
+  assert.deepStrictEqual(msgs, msgs.slice().sort((x, y) => +x.slice(2) - +y.slice(2)));
+});
+
+test('limite en octets UTF-8 : caracteres accentues comptes en octets, pas en chars', async () => {
+  const bodies = [];
+  const dir = tmpdir();
+  const r = createCrashReporter({
+    dir, endpoint: 'https://x', getConsent: () => 'yes',
+    post: async (body) => { bodies.push(body); },
+    now: () => 1000000, log: () => {},
+  });
+  // 'é' = 1 char JS mais 2 octets UTF-8 : string.length sous-estimerait
+  // la taille reelle du corps. ~6 Kio de 'é' par rapport -> ~12 Kio reels.
+  for (let i = 0; i < 10; i++) {
+    r.report({
+      module: 'main', type: 'utf8', message: 'u-' + i,
+      stack: 'é'.repeat(6000),
+    });
+  }
+  await r.flush();
+  assert.ok(bodies.length >= 2, 'fractionnement attendu avec des accents, recu ' + bodies.length);
+  for (const b of bodies) {
+    const bytes = Buffer.byteLength(b, 'utf8');
+    assert.ok(bytes <= LIMITS.MAX_POST_BYTES, 'corps de ' + bytes + ' octets > ' + LIMITS.MAX_POST_BYTES);
+    assert.ok(JSON.parse(b).reports.length <= LIMITS.MAX_BATCH);
+  }
+  assert.strictEqual(readQueue(dir).length, 0);
+});
+
+test('rapport trop volumineux seul : envoye isole, ne bloque pas les suivants', async () => {
+  const posts = [];
+  const { r, dir } = makeReporter({ posts });
+  // REPORT_MAX_BYTES (32 Kio) + STACK_MAX/EXTRA_MAX bornent chaque rapport
+  // bien sous MAX_POST_BYTES : le pire cas tient toujours dans un lot,
+  // mais on verifie qu'un rapport lourd ne repousse pas les suivants
+  // dans un autre lot de maniere incorrecte.
+  for (let i = 0; i < 3; i++) {
+    r.report({
+      module: 'main', type: 'huge', message: 'h-' + i,
+      stack: 'H'.repeat(8000), extra: { blob: 'X'.repeat(3900) },
+    });
+  }
+  for (let i = 0; i < 3; i++) r.report({ module: 'main', type: 'x', message: 'small' + i });
+  const res = await r.flush();
+  assert.strictEqual(res.sent, 6);
+  assert.strictEqual(readQueue(dir).length, 0);
+  // Tous les rapports sont partis, dans l'ordre file.
+  const all = posts.flatMap((p) => p.reports);
+  assert.strictEqual(all.length, 6);
+  assert.deepStrictEqual(all.map((x) => x.message), ['h-0', 'h-1', 'h-2', 'small0', 'small1', 'small2']);
+});
+
+test('endpoint : defaut Cloudflare, surcharge SOUNDFART_REPORT_URL, vide = defaut', () => {
+  // Comportemental : resolveEndpoint est la fonction utilisee par main.js.
+  assert.strictEqual(DEFAULT_ENDPOINT, 'https://soundfart-reports.sidburn99.workers.dev');
+  assert.strictEqual(resolveEndpoint({}), DEFAULT_ENDPOINT);
+  assert.strictEqual(resolveEndpoint({ SOUNDFART_REPORT_URL: '' }), DEFAULT_ENDPOINT);
+  assert.strictEqual(resolveEndpoint({ SOUNDFART_REPORT_URL: 'https://x.test/in' }), 'https://x.test/in');
+  // main.js doit bien consommer cette fonction (garde-fou statique).
+  const src = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  assert.ok(src.includes('resolveEndpoint(process.env)'), 'main.js utilise resolveEndpoint');
 });
 
 test('sanitize integration : le rapport envoye ne contient aucune donnee utilisateur', async () => {

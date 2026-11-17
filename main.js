@@ -49,14 +49,13 @@ const { AUDIO_EXT, VIRTUAL_RE: VIRTUAL_RE_MAIN, parseEndpoints, parseGet, findCa
 const SFI18n = require('./lib/i18n');
 // Collecte opt-in des rapports d'erreurs (erreurs/crashs uniquement,
 // jamais de telemetrie comportementale). Voir lib/crash-report.js.
-const { createCrashReporter } = require('./lib/crash-report');
+const { createCrashReporter, resolveEndpoint } = require('./lib/crash-report');
 // Endpoint du service de collecte (worker Cloudflare, voir service/README.md
-// pour le deploiement). A RENSEIGNER apres `wrangler deploy` :
-// https://soundfart-reports.<compte>.workers.dev
-// Chaine vide = les rapports restent dans la file locale
-// userData/reports/, aucun envoi, aucune erreur.
-// Surcharge possible en dev : SOUNDFART_REPORT_URL=https://... electron .
-const REPORT_ENDPOINT = process.env.SOUNDFART_REPORT_URL || '';
+// pour le deploiement). Deploye et fonctionnel : un POST reussi a ete
+// verifie le 17/11/2026 (reponse {"ok":true,"stored":1,...}).
+// resolveEndpoint : SOUNDFART_REPORT_URL (dev/tests) prime, sinon le
+// service de production — voir lib/crash-report.js.
+const REPORT_ENDPOINT = resolveEndpoint(process.env);
 let win = null;
 // Declare tot : l'instance est creee juste apres le setPath('userData')
 // du mode test, avant les handlers IPC (bloc « rapports d'erreurs » plus bas).
