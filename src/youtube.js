@@ -26,8 +26,12 @@ function ytErrFr(e) {
 // dont la modale de resultat est fermee sans « Ajouter » devient
 // introuvable — cette liste permet de les recuperer (retour terrain).
 async function orphanImportsModal() {
-  const dirs = [...new Set([cfg.settings.storageDir || '', cfg.settings.lastDestDir || ''].filter(Boolean))];
-  if (!dirs.length) dirs.push('');
+  // '' (userData/imports = destination par defaut des downloads YouTube)
+  // doit TOUJOURS etre scanne : un storageDir/lastDestDir renseigne
+  // reduisait la liste a ces seuls dossiers — les orphelins du dossier
+  // par defaut (downloads d'avant le choix du dossier, imports legacy)
+  // devenaient invisibles. Le dedup par path (seen) couvre les doublons.
+  const dirs = [...new Set(['', cfg.settings.storageDir || '', cfg.settings.lastDestDir || ''])];
   const seen = new Set(), files = [];
   for (const d of dirs) {
     try {
