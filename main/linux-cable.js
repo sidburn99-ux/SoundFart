@@ -10,7 +10,11 @@ function createLinuxCable(deps) {
   // platform injectable pour les tests (defaut : plateforme reelle).
   const IS_LINUX = (deps.platform || process.platform) === 'linux';
   const SINK_NAME = 'soundfart_cable';
-  const SINK_DESC = 'SoundFart Cable';
+  // Description SANS espace ni guillemets : les args module de pactl sont
+  // tokenises sur les espaces et les quotes sont passees litteralement au
+  // parseur de proprietes PA -> « Module initialization failed » (teste sous
+  // PulseAudio 17 / WSLg). « SoundFart-Cable » matche toujours /soundfart/i.
+  const SINK_DESC = 'SoundFart-Cable';
 
   const pactl = (args, timeout) =>
     execFileTracked('pactl', args, { timeout: timeout || 10000 });
@@ -78,7 +82,7 @@ function createLinuxCable(deps) {
       await pactl([
         'load-module', 'module-null-sink',
         'sink_name=' + SINK_NAME,
-        "sink_properties=device.description='" + SINK_DESC + "'",
+        'sink_properties=device.description=' + SINK_DESC,
       ], 20000);
       log('[linux-cable] null-sink créé : ' + SINK_NAME);
       return { ok: true, created: true };
