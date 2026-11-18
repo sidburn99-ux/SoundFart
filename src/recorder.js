@@ -97,8 +97,10 @@ async function recorderModal() {
     micSel.value = firstReal.deviceId;
   }
   const micOn = el('input', { type: 'checkbox', checked: true, title: t('Enregistre la voix via ton micro (avec réduction d\'écho et de bruit).') });
+  // Linux : la capture « audio du PC » passe par parec sur le monitor du
+  // null-sink (voir tapSpec dans main.js) — Chromium n'expose pas les
+  // sources .monitor a getUserMedia.
   const pcOn = el('input', { type: 'checkbox', checked: false, title: t('Enregistre tout ce que tu entends sur le PC (vidéo, jeu, musique) — capturé directement à la sortie, sans repasser par le câble.') });
-  if (IS_LINUX) { pcOn.disabled = true; pcOn.title = t('Capture « audio du PC » indisponible sous Linux (portage PipeWire à venir).'); }
   const cableOn = el('input', { type: 'checkbox', checked: false, title: t('Enregistre ce que SoundFart envoie vers Discord (les sons de la soundboard).') });
   const status = el('div', { class: 'hint', text: t('Choisis les sources, puis lance l\'enregistrement.') });
   // Jauge de niveau en direct : une barre de « progression » n'a pas de sens
@@ -203,7 +205,9 @@ async function recorderModal() {
     const inp = (audio.devices.inp || []).filter((d) => d.deviceId !== 'default');
     const d = inp.find((x) => /output/i.test(x.label) && VIRTUAL_RE.test(x.label))
       || inp.find((x) => /cable/i.test(x.label));
-    if (!d) throw new Error(t('périphérique « CABLE Output » introuvable'));
+    if (!d) throw new Error(IS_LINUX
+      ? t('source « câble » indisponible : la capture PulseAudio (parec) a échoué ou le câble n\'existe pas')
+      : t('périphérique « CABLE Output » introuvable'));
     return navigator.mediaDevices.getUserMedia({
       audio: { deviceId: { exact: d.deviceId }, echoCancellation: false, noiseSuppression: false, autoGainControl: false },
     });
@@ -229,7 +233,11 @@ async function recorderModal() {
       // Repli sur getDisplayMedia si le tap echoue.
       let tapOn = false, pcConnected = false;
       pcmSeen = false; tapLost = false;
-      if (pcOn.checked) {
+      // Sous Linux, « câble SoundFart » et « audio du PC » capturent le MEME
+      // monitor (soundfart_cable.monitor via parec) : une seule capture
+      // suffit, cocher les deux ne double pas le signal.
+      const wantTap = pcOn.checked || (IS_LINUX && cableOn.checked);
+      if (wantTap) {
         try {
           const r = await window.sf.audioTapStart();
           tapOn = !!(r && r.ok);
@@ -248,10 +256,10 @@ async function recorderModal() {
         audio: { deviceId: { exact: micSel.value }, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       })]);
       if (pcOn.checked && !tapOn) want.push([t('audio du PC'), systemStream]);
-      if (cableOn.checked) want.push([t('câble SoundFart'), cableStream]);
+      if (cableOn.checked && !(IS_LINUX && tapOn)) want.push([t('câble SoundFart'), cableStream]);
       // tapOn = source « audio du PC » active via PCM/worklet (pas de getUserMedia) :
       // elle compte comme une source meme si want est vide.
-      if (!want.length && !(pcOn.checked && tapOn)) throw new Error(t('coche au moins une source'));
+      if (!want.length && !(wantTap && tapOn)) throw new Error(t('coche au moins une source'));
       for (const [label, fn] of want) {
         try {
           const st = await fn();

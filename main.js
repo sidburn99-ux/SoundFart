@@ -714,7 +714,7 @@ createMediaTools({
 
 // Câble virtuel Linux (null-sink PulseAudio/PipeWire) : status/ensure
 // idempotent, jamais de déchargement. No-op hors Linux.
-createLinuxCable({ log, execFileTracked, H });
+const linuxCable = createLinuxCable({ log, execFileTracked, H });
 
 // ---------- bascule automatique de l'entree micro (CABLE Output) ----------
 // Au lancement : si active, le peripherique d'enregistrement par defaut passe sur le cable virtuel.
@@ -1144,81 +1144,121 @@ async function ensureAudioTap() {
 // AudioTap -> double injection dans le cable + processus orphelin.
 let tapStartBusy = false;
 
+// ---------- specification du processus de capture « audio du PC » ----------
+// Windows : AudioTap.exe (loopback WASAPI) en mode 'pcm'.
+// Linux   : parec (pulseaudio-utils, meme paquet que pactl) sur le monitor
+//           du null-sink soundfart_cable — Chromium n'expose PAS les sources
+//           .monitor a getUserMedia (verifie sous PulseAudio/WSLg), un
+//           processus externe est donc requis. Format identique au mode pcm
+//           Windows : float32 stereo 48 kHz = 8 octets/frame, relaie au
+//           worklet via sf:tapPcm sans autre changement.
+const LINUX_TAP_SOURCE = () => linuxCable.SINK_NAME + '.monitor';
+let parecOk = null; // sonde --version une fois (null = pas encore teste)
+async function linuxTapSpec() {
+  const st = await linuxCable.ensure();
+  if (!st.ok) return { err: st.error || 'câble Linux indisponible' };
+  if (parecOk === null) {
+    try { await execFileTracked('parec', ['--version'], { timeout: 10000 }); parecOk = true; }
+    catch (e) {
+      parecOk = false;
+      const missing = e && (e.code === 'ENOENT' || /ENOENT/.test(String(e.message)));
+      return { err: missing
+        ? 'parec introuvable — installez pulseaudio-utils (ou pipewire-pulse)'
+        : 'parec en échec : ' + (e && e.message) };
+    }
+  }
+  if (!parecOk) return { err: 'parec introuvable — installez pulseaudio-utils (ou pipewire-pulse)' };
+  return {
+    file: 'parec',
+    args: ['--device=' + LINUX_TAP_SOURCE(), '--format=float32le', '--rate=48000', '--channels=2', '--latency-msec=50'],
+  };
+}
+async function tapSpec() {
+  if (IS_LINUX) return linuxTapSpec();
+  const tool = await ensureAudioTap();
+  if (!tool) return { err: 'composant audio natif indisponible : ' + (lastToolErr || 'compilation impossible') };
+  // args[1] = pid du parent : AudioTap s'auto-termine si ce process meurt (anti-orphelin).
+  return { file: tool, args: ['CABLE Input', String(process.pid), '0', '', 'pcm'] };
+}
+
+// Cablage commun aux deux plateformes : relais PCM frame-aligne vers le
+// renderer + detection de mort (sf:tapDead) pour l'enregistreur.
+function attachTapProc(proc) {
+  audioTapProc = proc;
+  audioTapFailed = false;
+  proc.stdout.on('data', (chunk) => {
+    // Un ancien processus encore en train de mourir ne doit pas injecter
+    // son PCM dans le flux du nouveau (mixage/echo).
+    if (audioTapProc !== proc || !win || win.isDestroyed()) return;
+    // N'envoyer au renderer que des frames completes : float32 stereo = 8 octets/frame.
+    tapPcmRem = Buffer.concat([tapPcmRem, chunk]);
+    const aligned = tapPcmRem.length - (tapPcmRem.length % 8);
+    if (aligned <= 0) return;
+    try { win.webContents.send('sf:tapPcm', tapPcmRem.buffer.slice(tapPcmRem.byteOffset, tapPcmRem.byteOffset + aligned)); } catch {}
+    tapPcmRem = tapPcmRem.slice(aligned);
+  });
+  proc.stderr.on('data', (d) => {
+    // Tout le stderr est journalise : les lignes d'init revelent ou le tap
+    // en est (init loopback, hr, srcBuf — ou erreurs parec) — indispensable
+    // pour diagnostiquer un enregistrement « audio du PC » silencieux.
+    for (const line of String(d).split(/\r?\n/)) {
+      const t = line.trim();
+      if (!t) continue;
+      log('[audiotap] ' + t.slice(0, 300), /ERREUR|echoue|introuvable|error|failed/i.test(t) ? 'error' : 'info');
+    }
+  });
+  proc.on('exit', () => {
+    // Marqueur PAR PROCESS : lire le global audioTapKilling ici cree une
+    // course — un ancien tap qui meurt tardivement remet le flag a false
+    // et le VRAI process tue verrait wasKilled=false -> faux tapDead.
+    const wasKilled = proc._sfKilled === true || audioTapKilling;
+    audioTapKilling = false;
+    // Sortie d'un processus obsolete (remplace entre-temps) : ne pas toucher
+    // a la reference ni envoyer tapDead pour le NOUVEAU processus.
+    if (audioTapProc !== proc) return;
+    audioTapProc = null;
+    tapPcmRem = Buffer.alloc(0);
+    // Mort non volontaire (crash AudioTap / peripherique disparu) : on previent le renderer
+    if (!wasKilled && win && !win.isDestroyed()) { try { win.webContents.send('sf:tapDead', true); } catch (e) { log('[tap] send tapDead: ' + (e && e.message), 'warn'); } }
+  });
+  proc.on('error', () => {
+    // Le proc tué peut emettre 'error' sans 'exit' : sans ce reset,
+    // audioTapKilling restait vrai a jamais -> tapStart echouait
+    // « arret en cours » jusqu'au restart.
+    audioTapKilling = false;
+    if (audioTapProc !== proc) return;
+    audioTapFailed = true; tapPcmRem = Buffer.alloc(0);
+    // 'exit' n'est pas garanti apres 'error' : sans ca audioTapProc resterait
+    // non-null et les tapStart suivants mentiraient ok:true a jamais.
+    audioTapProc = null;
+  });
+}
+
 H('audio:tapStart', async () => {
-  // Capture « audio du PC » via AudioTap (WASAPI loopback) : Windows
-  // uniquement. Le message reste honnete — PipeWire non encore porte.
-  if (!IS_WIN) return { ok: false, err: 'capture système indisponible sur cette plateforme (portage PipeWire à venir)' };
-  if (tapStartBusy) return { ok: false, err: 'démarrage AudioTap déjà en cours' };
+  // Capture « audio du PC » : Windows = AudioTap WASAPI loopback,
+  // Linux = parec sur le monitor du null-sink (voir tapSpec).
+  if (!IS_WIN && !IS_LINUX) return { ok: false, err: 'capture système indisponible sur cette plateforme' };
+  if (tapStartBusy) return { ok: false, err: 'démarrage capture audio déjà en cours' };
   const ep = tapEpoch; // un tapStop pendant la compilation ne doit pas etre ignore
   tapStartBusy = true;
   try {
-    const tool = await ensureAudioTap();
+    const spec = await tapSpec();
     if (ep !== tapEpoch) return { ok: false, err: 'arrêt demandé pendant le démarrage' };
-    if (!tool) return { ok: false, err: 'composant audio natif indisponible : ' + (lastToolErr || 'compilation impossible') };
+    if (spec.err) return { ok: false, err: spec.err };
     if (audioTapProc && audioTapProc.exitCode === null && !audioTapFailed) return { ok: true };
     // Un tapStop vient peut-etre de tuer l'ancien processus sans que 'exit' soit encore arrive :
-    // on attend sa sortie avant d'en respawn un (sinon deux AudioTap ecriraient dans le cable).
+    // on attend sa sortie avant d'en respawn un (sinon deux flux ecriraient dans le melange).
     if (audioTapKilling) {
       const t0 = Date.now();
       while (audioTapKilling && Date.now() - t0 < 3000) await new Promise((r) => setTimeout(r, 200));
-      if (audioTapKilling) return { ok: false, err: 'arrêt de l\'ancien AudioTap en cours' };
+      if (audioTapKilling) return { ok: false, err: 'arrêt de l\'ancien processus de capture en cours' };
     }
     if (ep !== tapEpoch) return { ok: false, err: 'arrêt demandé pendant le démarrage' };
-    // args[1] = pid du parent : AudioTap s'auto-termine si ce process meurt (anti-orphelin).
-    // Mode « pcm » : PCM float32 stereo 48 kHz sur stdout -> relaie au renderer pour
-    // l'enregistreur, SANS passer par le cable (evite l'echo Discord dans le micro).
-    const proc = spawn(tool, ['CABLE Input', String(process.pid), '0', '', 'pcm'], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
-    audioTapProc = proc;
-    audioTapFailed = false;
-    proc.stdout.on('data', (chunk) => {
-      // Un ancien processus encore en train de mourir ne doit pas injecter
-      // son PCM dans le flux du nouveau (mixage/echo).
-      if (audioTapProc !== proc || !win || win.isDestroyed()) return;
-      // N'envoyer au renderer que des frames completes : float32 stereo = 8 octets/frame.
-      tapPcmRem = Buffer.concat([tapPcmRem, chunk]);
-      const aligned = tapPcmRem.length - (tapPcmRem.length % 8);
-      if (aligned <= 0) return;
-      try { win.webContents.send('sf:tapPcm', tapPcmRem.buffer.slice(tapPcmRem.byteOffset, tapPcmRem.byteOffset + aligned)); } catch {}
-      tapPcmRem = tapPcmRem.slice(aligned);
-    });
-    audioTapProc.stderr.on('data', (d) => {
-      // Tout le stderr est journalise : les lignes d'init revelent ou le tap
-      // en est (init loopback, hr, srcBuf) — indispensable pour diagnostiquer
-      // un enregistrement « audio du PC » silencieux.
-      for (const line of String(d).split(/\r?\n/)) {
-        const t = line.trim();
-        if (!t) continue;
-        log('[audiotap] ' + t.slice(0, 300), /ERREUR|echoue|introuvable/i.test(t) ? 'error' : 'info');
-      }
-    });
-    proc.on('exit', () => {
-      // Marqueur PAR PROCESS : lire le global audioTapKilling ici cree une
-      // course — un ancien tap qui meurt tardivement remet le flag a false
-      // et le VRAI process tue verrait wasKilled=false -> faux tapDead.
-      const wasKilled = proc._sfKilled === true || audioTapKilling;
-      audioTapKilling = false;
-      // Sortie d'un processus obsolete (remplace entre-temps) : ne pas toucher
-      // a la reference ni envoyer tapDead pour le NOUVEAU processus.
-      if (audioTapProc !== proc) return;
-      audioTapProc = null;
-      tapPcmRem = Buffer.alloc(0);
-      // Mort non volontaire (crash AudioTap / peripherique disparu) : on previent le renderer
-      if (!wasKilled && win && !win.isDestroyed()) { try { win.webContents.send('sf:tapDead', true); } catch (e) { log('[tap] send tapDead: ' + (e && e.message), 'warn'); } }
-    });
-    proc.on('error', () => {
-      // Le proc tué peut emettre 'error' sans 'exit' : sans ce reset,
-      // audioTapKilling restait vrai a jamais -> tapStart echouait
-      // « arret en cours » jusqu'au restart.
-      audioTapKilling = false;
-      if (audioTapProc !== proc) return;
-      audioTapFailed = true; tapPcmRem = Buffer.alloc(0);
-      // 'exit' n'est pas garanti apres 'error' : sans ca audioTapProc resterait
-      // non-null et les tapStart suivants mentiraient ok:true a jamais.
-      audioTapProc = null;
-    });
+    const proc = spawn(spec.file, spec.args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, detached: IS_LINUX });
+    attachTapProc(proc);
     await new Promise((r) => setTimeout(r, 700));
     if (!audioTapProc || audioTapProc.exitCode !== null || audioTapFailed)
-      return { ok: false, err: 'AudioTap s\'est arrêté au démarrage' };
+      return { ok: false, err: 'le processus de capture audio s\'est arrêté au démarrage' };
     return { ok: true };
   } catch (e) { return { ok: false, err: e.message }; }
   finally { tapStartBusy = false; }
