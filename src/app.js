@@ -781,18 +781,21 @@ function resolveDevices() {
 // un etat coincide (entrees deja sur CABLE Output sans marqueur) merite une
 // proposition de reparation explicite — sans ca Discord restait sans micro.
 async function runAutoSetup() {
-  if (IS_LINUX) return; // bascule micro = Windows-only (AudioEndpoint/C#)
+  // Bascule micro : Windows = AudioEndpoint (CABLE Output), Linux = pactl
+  // set-default-source sur le monitor du null-sink — même canal IPC.
   try {
     const r = await window.sf.audioAutoSetup({ enabled: cfg.settings.autoSwitchMic, cableLabel: cfg.settings.cableLabel });
     if (!r) return;
     if (r.changed) toast(t('Entrée micro basculée sur {dev} (restaurée à la fermeture).', { dev: r.device }));
     else if (r.stuckCable) {
       uiLog('entrees deja sur le cable sans marqueur — proposition de reparation');
-      if (await confirmBox(t('Entrée micro coincée sur CABLE Output'),
-        t('Windows envoie déjà le micro sur « CABLE Output » sans bascule SoundFart (crash ou ancienne session). Discord risque de ne recevoir aucun micro.\n\nRéparer = rebascule l\'entrée Windows sur ton micro (Logitech G930).'),
+      if (await confirmBox(t(IS_LINUX ? 'Entrée micro coincée sur le câble' : 'Entrée micro coincée sur CABLE Output'),
+        t(IS_LINUX
+          ? 'Linux envoie déjà le micro sur le monitor du câble SoundFart sans bascule SoundFart (crash ou ancienne session). Discord risque de ne recevoir aucun micro.\n\nRéparer = rebascule la source micro par défaut sur ton vrai micro.'
+          : 'Windows envoie déjà le micro sur « CABLE Output » sans bascule SoundFart (crash ou ancienne session). Discord risque de ne recevoir aucun micro.\n\nRéparer = rebascule l\'entrée Windows sur ton micro (Logitech G930).'),
         t('Réparer'))) {
         window.sf.restoreMic(true);
-        toast(t('Entrée micro Windows : restauration demandée…'));
+        toast(t(IS_LINUX ? 'Source micro Linux : restauration demandée…' : 'Entrée micro Windows : restauration demandée…'));
       }
     } else if (!r.ok) toast(t('Bascule micro auto impossible : {err}', { err: r.err }), 'warn');
   } catch (e) { logErr('audioAutoSetup', e); }

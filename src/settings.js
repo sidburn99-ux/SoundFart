@@ -376,7 +376,17 @@ function settingsModal() {
       field(t('Mon micro'), micSel, t('Le vrai micro est ★ ; les périphériques virtuels (CABLE Output, Voicemeeter…) sont ⚠ déconseillés ici.')),
       el('label', { class: 'check' }, mix,
         el('span', { text: t('Mixer mon micro dans la sortie Discord (sinon tes potes n\'entendent que les sons). Décoche si tu utilises « Écouter ce périphérique » de Windows.') })),
-      ...(IS_LINUX ? [] : [
+      ...(IS_LINUX ? [
+        field(t('Bascule micro automatique'), el('label', { class: 'check' }, autoMic,
+          el('span', { text: t('Au lancement, la source micro par défaut de Linux passe sur « SoundFart Cable » (monitor) et revient à ta source à la fermeture — Discord capte alors tes sons ET ta voix. Dans Discord, choisis « Défaut » comme périphérique d\'entrée.') }))),
+        field(t('Surveillance micro automatique'), el('label', { class: 'check' }, watchMic,
+          el('span', { text: t('Pendant que SoundFart tourne, revérifie que la source micro est toujours sur le câble. Si tu la changes toi-même (ou qu\'une app le fait), la surveillance se met en pause jusqu\'au prochain lancement.') }))),
+        field(t('Récupération micro'), el('button', { class: 'ghost', text: t('Restaurer ma source micro'), title: t('Force le retour de la source micro par défaut sur ton vrai micro — à utiliser si elle est restée bloquée sur le monitor du câble (crash, coupure).'), onclick: () => {
+            window.sf.restoreMic(true);
+            toast(t('Restauration de la source micro demandée — si elle était bloquée sur le câble, elle revient sur ton micro.'), 'info');
+          } }),
+          t('À utiliser si ta source Linux est restée bloquée sur le monitor du câble (coupure, crash). Ramène la source par défaut sur ton vrai micro.')),
+      ] : [
         field(t('Bascule micro automatique'), el('label', { class: 'check' }, autoMic,
           el('span', { text: t('Au lancement, SEUL le micro (entrée Windows) passe sur « CABLE Output » et revient à ton micro à la fermeture — tes sorties (Discord, écoute locale) restent sur tes périphériques habituels. Dans Discord, choisis « Défaut » comme périphérique d\'entrée pour que ça suive.') }))),
         field(t('Surveillance micro automatique'), el('label', { class: 'check' }, watchMic,

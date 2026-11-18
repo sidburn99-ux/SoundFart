@@ -714,7 +714,11 @@ createMediaTools({
 
 // Câble virtuel Linux (null-sink PulseAudio/PipeWire) : status/ensure
 // idempotent, jamais de déchargement. No-op hors Linux.
-const linuxCable = createLinuxCable({ log, execFileTracked, H });
+const linuxCable = createLinuxCable({
+  log, execFileTracked, H, spawn, execFileSync,
+  pid: process.pid,
+  markerFile: () => path.join(app.getPath('userData'), 'linux-mic-restore.json'),
+});
 
 // ---------- bascule automatique de l'entree micro (CABLE Output) ----------
 // Au lancement : si active, le peripherique d'enregistrement par defaut passe sur le cable virtuel.
@@ -966,9 +970,16 @@ H('audio:autoSetup', (e, opts) => {
   return run;
 });
 async function autoSetupImpl({ enabled, cableLabel }) {
-  // Bascule micro Windows (CABLE Output) : sans objet sous Linux —
-  // le routage PipeWire est un chantier futur. ok:true pour ne pas
-  // afficher d'erreur : il n'y a simplement rien a faire.
+  // Bascule micro : Windows = AudioEndpoint (CABLE Output), Linux =
+  // pactl set-default-source sur le monitor du null-sink (Discord suit la
+  // source par défaut PulseAudio). ok:true sans objet = rien a faire.
+  if (IS_LINUX) {
+    if (quitting) return { ok: false, err: 'quitte' };
+    micSwitching = true;
+    try { return await linuxCable.switchMic(!!enabled); }
+    catch (e) { return { ok: false, err: e.message }; }
+    finally { micSwitching = false; }
+  }
   if (!IS_WIN) return { ok: true, changed: false, unsupported: true };
   if (quitting) return { ok: false, err: 'quitte' }; // ne pas spawner AudioEndpoint pendant la sortie
   micSwitching = true;
@@ -1053,6 +1064,17 @@ ipcMain.on('audio:restore', (e, force) => {
   autoSetupChain = run.catch(() => {});
 });
 async function audioRestoreImpl(force) {
+  if (IS_LINUX) {
+    // Restauration demandée explicitement : le marqueur Linux est la
+    // seule source de vérité — sans lui on ne touche pas à la source
+    // par défaut (même règle que Windows : jamais d'écrasement d'un
+    // choix manuel).
+    try {
+      const didRestore = await linuxCable.restore();
+      if (!didRestore && force) await linuxCable.forceOffCable();
+    } catch (e) { log('[mic-restore linux] ' + (e && e.message), 'warn'); }
+    return;
+  }
   if (!IS_WIN) return; // restauration micro = specificite Windows
   if (quitting) return; // ne pas compiler/lancer AudioEndpoint pendant la sortie
   micSwitching = true;
@@ -1298,8 +1320,10 @@ async function watchdogMic() {
   // quitting : un tick dans la fenetre will-quit -> process.exit pouvait
   // lancer ensureAudioTool (compile csc 60 s) et spawn des enfants APRES
   // la boucle de kill du will-quit -> csc.exe/AudioEndpoint orphelins.
-  // !IS_WIN : le watchdog interroge AudioEndpoint (COM Windows) — inutile ailleurs.
-  if (!IS_WIN || quitting || watchdogBusy || micWatchSuspended || micSwitching) return;
+  // !IS_WIN && !IS_LINUX : le watchdog interroge AudioEndpoint (COM) sous
+  // Windows, pactl sous Linux — inutile ailleurs.
+  if ((!IS_WIN && !IS_LINUX) || quitting || watchdogBusy || micWatchSuspended || micSwitching) return;
+  if (IS_LINUX) { await watchdogMicLinux(); return; }
   watchdogBusy = true;
   try {
     if (!fs.existsSync(restoreFile()) || !fs.existsSync(configFile())) return;
@@ -1331,6 +1355,31 @@ async function watchdogMic() {
       if (win && !win.isDestroyed()) { try { win.webContents.send('sf:micWatchOff', target.name); } catch (e) { log('[mic-watchdog] send micWatchOff: ' + (e && e.message), 'warn'); } }
     }
   } catch (e) { log('[mic-watchdog] ' + e.message, 'warn'); }
+  finally { watchdogBusy = false; }
+}
+
+// Watchdog Linux : même règle que Windows — si la source par défaut n'est
+// plus le monitor du câble alors qu'une bascule est active (marqueur),
+// c'est un choix externe -> surveillance suspendue pour la session, jamais
+// de re-bascule forcée.
+async function watchdogMicLinux() {
+  if (watchdogBusy) return;
+  watchdogBusy = true;
+  try {
+    if (!linuxCable.hasMarker() || !fs.existsSync(configFile())) return;
+    try { if (fs.statSync(configFile()).size > 16 * 1024 * 1024) return; } catch { return; }
+    const cfg = JSON.parse(fs.readFileSync(configFile(), 'utf-8'));
+    const st = (cfg && cfg.settings && typeof cfg.settings === 'object' && !Array.isArray(cfg.settings)) ? cfg.settings : {};
+    if (st.autoSwitchMic !== undefined && st.autoSwitchMic !== true) return;
+    if (st.watchdogMic !== undefined && st.watchdogMic !== true) return;
+    const cur = await linuxCable.defaultSource();
+    const mon = linuxCable.MONITOR();
+    if (cur && cur !== mon && !micSwitching) {
+      micWatchSuspended = true;
+      log('[mic-watchdog linux] source modifiee hors SoundFart -> surveillance suspendue pour la session', 'warn');
+      if (win && !win.isDestroyed()) { try { win.webContents.send('sf:micWatchOff', mon); } catch (e) { log('[mic-watchdog linux] send micWatchOff: ' + (e && e.message), 'warn'); } }
+    }
+  } catch (e) { log('[mic-watchdog linux] ' + (e && e.message), 'warn'); }
   finally { watchdogBusy = false; }
 }
 
@@ -1543,6 +1592,8 @@ process.on('uncaughtException', (e) => {
     if (IS_WIN) {
       const t = audioToolPath();
       if (fs.existsSync(t) && fs.existsSync(restoreFile())) restoreMicNow(t);
+    } else if (IS_LINUX) {
+      try { linuxCable.restoreSync(); } catch {}
     }
   } catch {}
   // Continuer dans un etat potentiellement corrompu est plus risque que de
@@ -1587,7 +1638,7 @@ app.on('will-quit', () => {
   audioTapProc = null;
   try {
     // audio-restore.json ne peut exister que si une bascule Windows a eu
-    // lieu : hors Windows il n'y a rien a restaurer (et pas de csc.exe).
+    // lieu ; sous Linux le marqueur est linux-mic-restore.json (pactl).
     if (IS_WIN) {
       const tool = audioToolPath();
       if (fs.existsSync(restoreFile())) {
@@ -1597,6 +1648,10 @@ app.on('will-quit', () => {
       } else {
         log('[mic] will-quit : pas de marqueur audio-restore (bascule jamais faite ou deja restauree)');
       }
+    } else if (IS_LINUX) {
+      try {
+        if (linuxCable.restoreSync()) log('[mic] will-quit : source micro Linux restauree');
+      } catch (e) { log('[mic] restauration will-quit linux: ' + (e && e.message), 'warn'); }
     }
   } catch (e) { log('[mic] restauration will-quit: ' + (e && e.message), 'warn'); }
 });
