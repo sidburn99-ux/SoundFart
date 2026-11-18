@@ -138,6 +138,35 @@
 - [x] `init()` avec `applyAudio` en échec → raccourcis quand même enregistrés (log `[shortcuts]`). **Vérifié code 17/11** : `applyAudio().catch(→false)` n'avorte pas `init()` et `applyShortcuts()` est appelé juste après inconditionnellement (`app.js:1619-1620`).
 - [x] « Restaurer mon micro » avec marqueur absent → no-op propre ; avec état coincé → `force` rebasculé vers non-virtuel. **[A] 17/11** : état coincé reproduit → `force` a rebasculé sur G930 (vérifié `get capture`). Marqueur absent respecté (pas de fichier recréé).
 
+## J. Linux (AppImage) — état au 18/11/2026
+
+> Légende : **[WSLg]** = validé sous WSL2/WSLg (PulseAudio 17 distant, périphériques RDP virtuels — **pas une validation matérielle Linux**) · **[U-L]** = validé par l'utilisateur sur vrai Linux · case vide = non testé.
+
+### Fait et vérifié (code + tests auto)
+
+- [x] `npm test` : 181/181 — `linux-cable.test.js` (status/ensure/switchMic/restore/forceOffCable, pactl mocké), `media-tools.test.js` (chemins par plateforme, findFile, ensureYtDlp).
+- [x] Build AppImage : workflow `build-linux.yml` + `npm run dist:linux` (exige Linux pour electron-builder).
+
+### Fait et vérifié en runtime WSLg [WSLg]
+
+- [x] `pactl`/serveur PulseAudio joignable ; création idempotente du null-sink `soundfart_cable` (description `SoundFart-Cable` — les descriptions multi-mots font échouer `load-module` sous PulseAudio 17).
+- [x] `soundfart_cable.monitor` énuméré comme **sortie** Chromium ; lecture Web Audio vers le sink (signal non nul mesuré).
+- [x] **Bascule micro** : `audio:autoSetup` → `pactl get-default-source` = `soundfart_cable.monitor` ; marqueur `linux-mic-restore.json` `{source:"RDPSource"}` ; guard `sh` détaché actif ; `enabled:false` → restauration effective, marqueur consommé.
+- [x] **Capture « audio du PC »** : `parec --device=soundfart_cable.monitor --format=float32le --rate=48000 --channels=2` → `sf:tapPcm` → worklet ; ~1,8 Mo PCM reçus par le renderer pendant une lecture (débit ≈ float32 stéréo 48 kHz).
+- [x] `yt-dlp_linux`/`ffmpeg` : chemins Linux sans `.exe`, téléchargement SHA-256 + `chmod 755` implémentés — **exécution réelle NON testée** (pas de téléchargement lancé sous WSL).
+- [x] **AppImage CI (commit `616af82`)** : `platform=linux`, `ensure {ok,created:false}`, `status` tout vrai, `tapStart` OK, lecture 1,5 s vers le sink pendant le tap, `tapStop` OK, bascule micro enable/disable OK — smoke CDP complet **[WSLg]**.
+
+### NON testé — à faire sur vrai Linux
+
+- [ ] **Discord réel** : sortie « SoundFart-Cable » + entrée « Défaut » — son + voix reçus par un pair. Le mix sons+micro dans le sink est vérifié côté pactl, pas à l'oreille.
+- [ ] **Matériel réel** : micro USB + casque sur PipeWire natif (WSLg n'a que des périphériques RDP virtuels).
+- [x] **Restaurations de crash** : `kill -9` du process principal pendant la bascule → guard `sh` détaché a restauré `RDPSource` en ~6 s (vérifié par `pactl get-default-source` après mort) **[WSLg]**. Reste à refaire sur PipeWire natif.
+- [ ] **Watchdog micro Linux** (`watchdogMicLinux`, 30 s) : changement de source externe → suspension session.
+- [ ] **Enregistreur complet** : prise micro seule / audio PC (`parec`) / câble / multi-sources → fichier sauvegardé avec signal non nul.
+- [ ] **devicechange** Linux (replug micro/casque) et **raccourcis globaux sous X11** (Wayland = limitation documentée).
+- [ ] **yt-dlp/ffmpeg exécutés** pour de vrai (import YouTube, coupe MP3).
+- [ ] **AppImage hors WSL** (FUSE, `--appimage-extract-and-run`).
+
 ## Crash renderer (-1/143) — protocole forensique
 
 Instrumentation en place depuis le 16/11 : `[child-gone]` (services Chromium avec exitCode), `[devicechange]`, `[mic]`, `[shortcuts]`, `sortie audio closed/interrupted`, `decode lourd`, `heap=`.

@@ -17,7 +17,13 @@ SoundFart est une soundboard pour Discord : elle joue tes sons dans un **micro v
 
 Ta configuration est sauvegardée dans `%APPDATA%\SoundFart\config.json`. Les sons que tu ajoutes sont **copiés** dans ton dossier de sons (`sons/`) ; les autres fichiers audio ne sont jamais modifiés : SoundFart ne garde que leurs chemins d'accès.
 
-## 2. Installer le câble virtuel (VB-CABLE)
+### Linux (AppImage)
+
+1. Récupère `SoundFart-<version>-x86_64.AppImage` (build GitHub Actions `build-linux`, ou `npm run dist:linux` sous Linux) et rends-le exécutable : `chmod +x SoundFart-*.AppImage`, puis lance-le. Si ton système n'a pas FUSE : `./SoundFart-*.AppImage --appimage-extract-and-run`.
+2. **Prérequis audio** : `pactl` doit être disponible — installe `pulseaudio-utils` (Debian/Ubuntu) ou `pipewire-pulse` + `pulseaudio` (Fedora/Arch). Cible : **PipeWire avec compatibilité PulseAudio** (ou PulseAudio ≥ 15). Sans serveur PulseAudio/PipeWire, la création du câble et la bascule micro échouent avec un message explicite.
+3. Au premier lancement, choisis ton **dossier de sons** comme sous Windows ; les réglages vivent dans le dossier utilisateur standard (`~/.config/SoundFart`).
+
+## 2. Installer le câble virtuel
 
 Pour que Discord entende les sons, il faut un périphérique audio virtuel qui fait le lien entre SoundFart et Discord. **SoundFart ne l'embarque ni ne l'installe** (licence VB-Audio) : tu l'installes toi-même, une seule fois.
 
@@ -29,17 +35,27 @@ Pour que Discord entende les sons, il faut un périphérique audio virtuel qui f
 
 > Sans VB-CABLE, SoundFart reste utilisable (sons, éditeur, préécoute, enregistreur) mais **la diffusion vers Discord et la bascule micro automatique sont désactivées** — un bandeau permanent le rappelle. Tu peux aussi utiliser un équivalent (Voicemeeter…) en choisissant sa sortie dans les réglages.
 
+### Linux : le câble virtuel (null-sink PulseAudio)
+
+Pas de pilote à installer : SoundFart crée lui-même un **périphérique virtuel PulseAudio/PipeWire** (`module-null-sink`, sink `soundfart_cable`, affiché « SoundFart-Cable »). VB-CABLE n'existe que sous Windows.
+
+1. Dans SoundFart → ⚙ Paramètres → **Sortie audio**, clique **« Créer/vérifier le câble »** (⚠️ nécessite `pactl` et un serveur PulseAudio/PipeWire actif). L'état « pactl / serveur / câble » s'affiche sous le bouton.
+2. Le sink est **conservé entre les lancements** — inutile de le recréer ; le bouton vérifie juste qu'il est là.
+3. Dans Discord → Voix et vidéo : **Périphérique de sortie** = « SoundFart-Cable » (ou « SoundFart Cable »), **Périphérique d'entrée** = « Défaut » si tu utilises la bascule micro automatique (section 3).
+4. **Bascule micro automatique (Linux)** : à l'ouverture, la **source par défaut** PulseAudio passe sur `soundfart_cable.monitor` — Discord capte alors tes sons **et** ta voix (mixés dans le sink). À la fermeture ou en cas de crash, la source d'origine est restaurée (marqueur + garde externe, comme sous Windows). Réglages : ⚙ → Micro & voix → « Bascule micro automatique », « Surveillance micro automatique », bouton « Restaurer ma source micro ».
+5. **Limites** : les **raccourcis globaux** fonctionnent sous **X11** ; sous **Wayland** ils sont refusés par le système (contrainte du protocole — utilise les raccourcis dans la fenêtre ou X11/XWayland).
+
 ## 3. Configurer SoundFart
 
 Ouvre **⚙ Paramètres** (barre latérale ou menu). Le panneau est organisé comme dans Discord : une **navigation latérale** à gauche (groupes Audio / Bibliothèque / Général) et des sections détaillées à droite — `Sortie audio` (sorties Discord et écoute locale), `Micro & voix` (micro, mixage, bascule automatique, traitement vocal), `Bibliothèque` (normalisation, durée max, imports non ajoutés), `Données & stockage` (dossier des fichiers) et `Général` (raccourci STOP, sauvegarde).
 
 | Réglage | Quoi choisir |
 |---|---|
-| **Sortie vers Discord** | `CABLE Input` — c'est vers là que partent les sons. |
+| **Sortie vers Discord** | `CABLE Input` — c'est vers là que partent les sons. *(Linux : « SoundFart-Cable », créé via « Créer/vérifier le câble »)* |
 | **Écoute locale** | Ton casque/enceintes — tu entends les sons sans que ta voix soit captée. |
 | **Mon micro** | Ton vrai micro (casque, webcam…). |
 | **Mixer mon micro** | ✅ si tu veux que tes potes entendent **ta voix + les sons** sur le même micro Discord. ❌ si tu préfères gérer ta voix autrement (ex. « Écouter ce périphérique » de Discord). ⚠️ Tant que « Bascule micro automatique » est activée, le mixage est **forcé** — décoche les deux pour une voix gérée ailleurs. |
-| **Bascule micro automatique** | ✅ (recommandé) : à l'ouverture, l'entrée micro Windows passe sur **CABLE Output** ; à la fermeture, ton micro (ex. G930) est restauré automatiquement — uniquement si SoundFart a réellement basculé (ton choix manuel est toujours respecté). Un **garde externe** restaure même après un crash/kill du processus. Le bouton **« Restaurer mon micro Windows »** (section « Récupération micro ») force le retour en cas de blocage. |
+| **Bascule micro automatique** | ✅ (recommandé) : à l'ouverture, l'entrée micro Windows passe sur **CABLE Output** ; à la fermeture, ton micro (ex. G930) est restauré automatiquement — uniquement si SoundFart a réellement basculé (ton choix manuel est toujours respecté). Un **garde externe** restaure même après un crash/kill du processus. Le bouton **« Restaurer mon micro Windows »** (section « Récupération micro ») force le retour en cas de blocage. *(Linux : la source par défaut passe sur `soundfart_cable.monitor`, restauration identique ; bouton « Restaurer ma source micro ».)* |
 | **Surveillance micro automatique** | ✅ (recommandé) : vérifie périodiquement que l'entrée micro est toujours sur le câble ; si tu changes le micro toi-même (ou via une autre app), la surveillance se **met en pause pour la session** — impossible de distinguer un choix utilisateur d'un changement parasite. |
 | **Dossier de stockage** | Où SoundFart range les fichiers qu'il crée (imports YouTube, enregistrements, extraits MP3). |
 | **Niveaux audio** | **Cible loudness (LUFS)** : le volume perçu visé par la normalisation (-18 LUFS par défaut, réglable de -40 à 0). « Normaliser toute la bibliothèque » (ou « Normaliser ce son » dans l'éditeur) ramène la loudness de chaque son à cette cible **sans dépasser le plafond de pic** (-1 dBFS, avec ~1 dB de marge sous le pic interpolé réel) — les fichiers ne sont jamais modifiés. Plus haut = plus fort, plus bas = plus doux. Mesure 100 % interne en LUFS (aucun téléchargement, l'app reste portable). Le bouton **Tester** joue 1,2 s de bruit au niveau saisi sur ton écoute locale uniquement (rien n'est envoyé sur Discord). « Normaliser toute la bibliothèque » applique la cible saisie et affiche sa progression **dans le panneau**, qui reste ouvert — tu peux cliquer « Appliquer » ou ajuster d'autres réglages pendant ce temps. **« Remettre volume et normalisation à zéro »** (deux clics pour confirmer) remet chaque son à volume 100 % / ×1 — découpes, fondus, favoris, catégories et raccourcis ne sont pas touchés. |
@@ -51,8 +67,8 @@ Clique **Appliquer**. Le bandeau en bas de fenêtre affiche les routes actives (
 ## 4. Configurer Discord
 
 1. Discord → **Paramètres utilisateur** (roue dentée en bas à gauche) → **Voix et vidéo**.
-2. **Périphérique d'entrée** : choisis **« Défaut » / « Default »** si tu utilises la bascule micro automatique de SoundFart (il basculera tout seul sur CABLE Output), ou **CABLE Output** directement sinon.
-3. **Périphérique de sortie** : choisis ton casque (pas CABLE Input, sinon tu risks une boucle).
+2. **Périphérique d'entrée** : choisis **« Défaut » / « Default »** si tu utilises la bascule micro automatique de SoundFart (elle basculera tout seul sur le câble — `CABLE Output` sous Windows, `soundfart_cable.monitor` sous Linux), ou le périphérique du câble directement sinon.
+3. **Périphérique de sortie** : choisis ton casque (pas CABLE Input ni SoundFart-Cable, sinon tu risks une boucle).
 4. Monte **le volume d'entrée** à ~100–150 % si les sons sont trop faibles (CABLE Output est numérique, tu peux pousser).
 5. Dans un salon vocal, vérifie que le micro n'est **pas muet** et que « Tester le micro » capte bien le câble quand tu joues un son.
 
@@ -82,6 +98,10 @@ Clique **Appliquer**. Le bandeau en bas de fenêtre affiche les routes actives (
 | « Micro inaccessible » | Permission Windows refusée | Paramètres Windows → Confidentialité → Micro |
 | Un son en cours s'est arrêté quand le micro a décroché | Comportement voulu : la perte du micro déclenche une reconstruction complète du graphe audio, qui stoppe aussi les sons | Relance le son ; si le micro revient, tout repart normalement |
 | Erreurs techniques | — | `%APPDATA%\SoundFart\soundfart.log` + F12 pour la console |
+| Linux : « pactl introuvable » / « serveur injoignable » | `pactl` absent ou pas de serveur PulseAudio/PipeWire | Installe `pulseaudio-utils` (ou `pipewire-pulse`) et vérifie que le service audio tourne (`pactl info`) |
+| Linux : « monitor du câble absent » | Le null-sink n'existe pas (jamais créé ou déchargé) | ⚙ → Sortie audio → « Créer/vérifier le câble » |
+| Linux : raccourcis globaux inactifs | Session **Wayland** (X11 requis par `globalShortcut`) | Connecte-toi en X11, ou utilise les raccourcis dans la fenêtre ; sous XWayland ça peut fonctionner |
+| Linux : micro « coincé » sur le câble après un crash | Restauration automatique échouée | ⚙ → Micro & voix → « Restaurer ma source micro » (ou `pactl set-default-source <ta source>`) |
 
 ## 7. Note légale YouTube
 
