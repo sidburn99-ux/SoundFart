@@ -7,6 +7,9 @@ const on = (channel) => (cb) => {
 };
 
 contextBridge.exposeInMainWorld('sf', {
+  // process.platform est expose par le polyfill de preload sandboxe ;
+  // sert a desactiver les fonctions Windows-only cote UI.
+  platform: (typeof process !== 'undefined' && process.platform) || '',
   getVersion: () => ipcRenderer.invoke('app:version'),
   getDataDir: () => ipcRenderer.invoke('app:dataDir'),
   loadConfig: () => ipcRenderer.invoke('config:load'),
@@ -43,6 +46,8 @@ contextBridge.exposeInMainWorld('sf', {
   audioTapStart: () => ipcRenderer.invoke('audio:tapStart'),
   audioTapStop: () => ipcRenderer.invoke('audio:tapStop'),
   cableDownload: () => ipcRenderer.invoke('cable:openPage'),
+  linuxAudioStatus: () => ipcRenderer.invoke('linux:audioStatus'),
+  linuxAudioEnsure: () => ipcRenderer.invoke('linux:ensureCable'),
   openDir: (d) => ipcRenderer.invoke('shell:openDir', d),
   seedSounds: () => ipcRenderer.invoke('sounds:seed'),
   onTapDead: on('sf:tapDead'),

@@ -5,10 +5,17 @@ const os = require('os');
 const { spawn, execFile, execFileSync } = require('child_process');
 const crypto = require('crypto');
 const { createMediaTools } = require('./main/media-tools');
+const { createLinuxCable } = require('./main/linux-cable');
 // Processus enfants long-terme (yt-dlp, ffmpeg) : Windows ne tue PAS les
 // enfants a la sortie du parent — on les suit pour les tuer au will-quit,
 // sinon un telechargement continue sans UI ni possibilite d'arret.
 const childProcs = new Set();
+// Plateforme : les outils natifs C# (AudioEndpoint bascule micro,
+// AudioTap loopback WASAPI) et VB-CABLE sont Windows-only. Sur les
+// autres OS tout le chemin audio-systeme est desactive proprement
+// (handlers IPC repondent sans erreur fatale, jamais de spawn exe).
+const IS_WIN = process.platform === 'win32';
+const IS_LINUX = process.platform === 'linux';
 const trackChild = (p) => {
   childProcs.add(p);
   p.on('close', () => childProcs.delete(p));
@@ -21,11 +28,24 @@ const trackChild = (p) => {
   p.on('exit', () => childProcs.delete(p));
   return p;
 };
-const killTree = (pid) => { try { execFile('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true }, () => {}); } catch (e) { try { log('[killTree] ' + e.message, 'warn'); } catch {} } };
+// Windows : taskkill /T emporte l'arbre (yt-dlp -> ffmpeg petit-enfant).
+// POSIX : les enfants sont spawnes detached=true (groupe de process
+// propre, voir execFileTracked/runYt) -> kill(-pid) touche tout le
+// groupe ; repli sur le pid seul si le groupe est deja mort.
+const killTree = (pid) => {
+  if (IS_WIN) {
+    try { execFile('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true }, () => {}); } catch (e) { try { log('[killTree] ' + e.message, 'warn'); } catch {} }
+    return;
+  }
+  try { process.kill(-pid, 'SIGKILL'); } catch { try { process.kill(pid, 'SIGKILL'); } catch {} }
+};
 // execFile avec handle suivi (promisify ne donne pas le ChildProcess).
 function execFileTracked(file, args, opts = {}) {
   return new Promise((resolve, reject) => {
-    const p = trackChild(spawn(file, args, { ...opts, windowsHide: true }));
+    // detached sur Linux : nouveau groupe de process -> killTree(-pid)
+    // peut tuer l'arbre yt-dlp/ffmpeg sans toucher au groupe de l'app.
+    // Sans effet sur Windows (windowsHide y reste la norme).
+    const p = trackChild(spawn(file, args, { ...opts, windowsHide: true, detached: IS_LINUX }));
     // opts.rec : objet externe recevant le ChildProcess des le spawn —
     // permet a yt:cancel de tuer un yt:info en vol comme un runYt.
     if (opts.rec) opts.rec.p = p;
@@ -351,6 +371,10 @@ H('desktop:source', async () => {
 
 H('app:version', () => app.getVersion());
 H('app:dataDir', () => app.getPath('userData'));
+// Plateforme pour le renderer : garde les fonctions Windows-only
+// (bascule micro CABLE, AudioTap WASAPI, VB-CABLE) desactivees sous
+// Linux au lieu de proposer des actions vouees a l'echec.
+H('app:platform', () => process.platform);
 
 // ---------- rapports d'erreurs opt-in (crashs/erreurs uniquement) ----------
 // Consentement : settings.crashReport dans config.json ('yes'/'no'/absent).
@@ -688,6 +712,14 @@ createMediaTools({
   toolsDir, storageRoot, getWin: () => win,
 });
 
+// Câble virtuel Linux (null-sink PulseAudio/PipeWire) : status/ensure
+// idempotent, jamais de déchargement. No-op hors Linux.
+const linuxCable = createLinuxCable({
+  log, execFileTracked, H, spawn, execFileSync,
+  pid: process.pid,
+  markerFile: () => path.join(app.getPath('userData'), 'linux-mic-restore.json'),
+});
+
 // ---------- bascule automatique de l'entree micro (CABLE Output) ----------
 // Au lancement : si active, le peripherique d'enregistrement par defaut passe sur le cable virtuel.
 // A la fermeture (ou au prochain lancement si crash) : le peripherique d'origine est restaure.
@@ -764,6 +796,10 @@ function compileCs(csName, exeBase) {
 }
 
 async function doCompileCs(csName, exeBase) {
+  // Garde plateforme : csc.exe et les .cs (AudioEndpoint/AudioTap) sont
+  // des technologies .NET Framework / WASAPI — Windows uniquement.
+  // Sur Linux/macOS on refuse AVANT toute recherche de csc.exe.
+  if (!IS_WIN) throw new Error('outils audio natifs : Windows uniquement');
   const csInAsar = path.join(__dirname, csName + '.cs');
   const csc = CSC_CANDIDATES.find((p) => fs.existsSync(p));
   if (!csc) throw new Error('compilateur C# introuvable (csc.exe absent — installe .NET Framework 4.x)');
@@ -796,6 +832,7 @@ async function doCompileCs(csName, exeBase) {
 // (binaire produit) reinitialise immediatement.
 let audioToolFailAt = 0;
 async function ensureAudioTool() {
+  if (!IS_WIN) return null; // pas de compilation C# hors Windows
   const p = audioToolPath();
   if (toolSane(p, 4096)) { audioToolFailAt = 0; return p; }
   if (Date.now() - audioToolFailAt < 10 * 60 * 1000) return null;
@@ -933,6 +970,17 @@ H('audio:autoSetup', (e, opts) => {
   return run;
 });
 async function autoSetupImpl({ enabled, cableLabel }) {
+  // Bascule micro : Windows = AudioEndpoint (CABLE Output), Linux =
+  // pactl set-default-source sur le monitor du null-sink (Discord suit la
+  // source par défaut PulseAudio). ok:true sans objet = rien a faire.
+  if (IS_LINUX) {
+    if (quitting) return { ok: false, err: 'quitte' };
+    micSwitching = true;
+    try { return await linuxCable.switchMic(!!enabled); }
+    catch (e) { return { ok: false, err: e.message }; }
+    finally { micSwitching = false; }
+  }
+  if (!IS_WIN) return { ok: true, changed: false, unsupported: true };
   if (quitting) return { ok: false, err: 'quitte' }; // ne pas spawner AudioEndpoint pendant la sortie
   micSwitching = true;
   try {
@@ -1016,6 +1064,18 @@ ipcMain.on('audio:restore', (e, force) => {
   autoSetupChain = run.catch(() => {});
 });
 async function audioRestoreImpl(force) {
+  if (IS_LINUX) {
+    // Restauration demandée explicitement : le marqueur Linux est la
+    // seule source de vérité — sans lui on ne touche pas à la source
+    // par défaut (même règle que Windows : jamais d'écrasement d'un
+    // choix manuel).
+    try {
+      const didRestore = await linuxCable.restore();
+      if (!didRestore && force) await linuxCable.forceOffCable();
+    } catch (e) { log('[mic-restore linux] ' + (e && e.message), 'warn'); }
+    return;
+  }
+  if (!IS_WIN) return; // restauration micro = specificite Windows
   if (quitting) return; // ne pas compiler/lancer AudioEndpoint pendant la sortie
   micSwitching = true;
   try {
@@ -1092,6 +1152,7 @@ let tapPcmRem = Buffer.alloc(0); // reste PCM non aligne (stdout livre des chunk
 // relancait une compilation de 60 s a chaque tentative d'enregistrement.
 let audioTapFailAt = 0;
 async function ensureAudioTap() {
+  if (!IS_WIN) return null; // AudioTap = loopback WASAPI : Windows uniquement
   const p = audioTapPath();
   if (toolSane(p, 4096)) { audioTapFailAt = 0; return p; }
   if (Date.now() - audioTapFailAt < 10 * 60 * 1000) return null;
@@ -1105,78 +1166,121 @@ async function ensureAudioTap() {
 // AudioTap -> double injection dans le cable + processus orphelin.
 let tapStartBusy = false;
 
+// ---------- specification du processus de capture « audio du PC » ----------
+// Windows : AudioTap.exe (loopback WASAPI) en mode 'pcm'.
+// Linux   : parec (pulseaudio-utils, meme paquet que pactl) sur le monitor
+//           du null-sink soundfart_cable — Chromium n'expose PAS les sources
+//           .monitor a getUserMedia (verifie sous PulseAudio/WSLg), un
+//           processus externe est donc requis. Format identique au mode pcm
+//           Windows : float32 stereo 48 kHz = 8 octets/frame, relaie au
+//           worklet via sf:tapPcm sans autre changement.
+const LINUX_TAP_SOURCE = () => linuxCable.SINK_NAME + '.monitor';
+let parecOk = null; // sonde --version une fois (null = pas encore teste)
+async function linuxTapSpec() {
+  const st = await linuxCable.ensure();
+  if (!st.ok) return { err: st.error || 'câble Linux indisponible' };
+  if (parecOk === null) {
+    try { await execFileTracked('parec', ['--version'], { timeout: 10000 }); parecOk = true; }
+    catch (e) {
+      parecOk = false;
+      const missing = e && (e.code === 'ENOENT' || /ENOENT/.test(String(e.message)));
+      return { err: missing
+        ? 'parec introuvable — installez pulseaudio-utils (ou pipewire-pulse)'
+        : 'parec en échec : ' + (e && e.message) };
+    }
+  }
+  if (!parecOk) return { err: 'parec introuvable — installez pulseaudio-utils (ou pipewire-pulse)' };
+  return {
+    file: 'parec',
+    args: ['--device=' + LINUX_TAP_SOURCE(), '--format=float32le', '--rate=48000', '--channels=2', '--latency-msec=50'],
+  };
+}
+async function tapSpec() {
+  if (IS_LINUX) return linuxTapSpec();
+  const tool = await ensureAudioTap();
+  if (!tool) return { err: 'composant audio natif indisponible : ' + (lastToolErr || 'compilation impossible') };
+  // args[1] = pid du parent : AudioTap s'auto-termine si ce process meurt (anti-orphelin).
+  return { file: tool, args: ['CABLE Input', String(process.pid), '0', '', 'pcm'] };
+}
+
+// Cablage commun aux deux plateformes : relais PCM frame-aligne vers le
+// renderer + detection de mort (sf:tapDead) pour l'enregistreur.
+function attachTapProc(proc) {
+  audioTapProc = proc;
+  audioTapFailed = false;
+  proc.stdout.on('data', (chunk) => {
+    // Un ancien processus encore en train de mourir ne doit pas injecter
+    // son PCM dans le flux du nouveau (mixage/echo).
+    if (audioTapProc !== proc || !win || win.isDestroyed()) return;
+    // N'envoyer au renderer que des frames completes : float32 stereo = 8 octets/frame.
+    tapPcmRem = Buffer.concat([tapPcmRem, chunk]);
+    const aligned = tapPcmRem.length - (tapPcmRem.length % 8);
+    if (aligned <= 0) return;
+    try { win.webContents.send('sf:tapPcm', tapPcmRem.buffer.slice(tapPcmRem.byteOffset, tapPcmRem.byteOffset + aligned)); } catch {}
+    tapPcmRem = tapPcmRem.slice(aligned);
+  });
+  proc.stderr.on('data', (d) => {
+    // Tout le stderr est journalise : les lignes d'init revelent ou le tap
+    // en est (init loopback, hr, srcBuf — ou erreurs parec) — indispensable
+    // pour diagnostiquer un enregistrement « audio du PC » silencieux.
+    for (const line of String(d).split(/\r?\n/)) {
+      const t = line.trim();
+      if (!t) continue;
+      log('[audiotap] ' + t.slice(0, 300), /ERREUR|echoue|introuvable|error|failed/i.test(t) ? 'error' : 'info');
+    }
+  });
+  proc.on('exit', () => {
+    // Marqueur PAR PROCESS : lire le global audioTapKilling ici cree une
+    // course — un ancien tap qui meurt tardivement remet le flag a false
+    // et le VRAI process tue verrait wasKilled=false -> faux tapDead.
+    const wasKilled = proc._sfKilled === true || audioTapKilling;
+    audioTapKilling = false;
+    // Sortie d'un processus obsolete (remplace entre-temps) : ne pas toucher
+    // a la reference ni envoyer tapDead pour le NOUVEAU processus.
+    if (audioTapProc !== proc) return;
+    audioTapProc = null;
+    tapPcmRem = Buffer.alloc(0);
+    // Mort non volontaire (crash AudioTap / peripherique disparu) : on previent le renderer
+    if (!wasKilled && win && !win.isDestroyed()) { try { win.webContents.send('sf:tapDead', true); } catch (e) { log('[tap] send tapDead: ' + (e && e.message), 'warn'); } }
+  });
+  proc.on('error', () => {
+    // Le proc tué peut emettre 'error' sans 'exit' : sans ce reset,
+    // audioTapKilling restait vrai a jamais -> tapStart echouait
+    // « arret en cours » jusqu'au restart.
+    audioTapKilling = false;
+    if (audioTapProc !== proc) return;
+    audioTapFailed = true; tapPcmRem = Buffer.alloc(0);
+    // 'exit' n'est pas garanti apres 'error' : sans ca audioTapProc resterait
+    // non-null et les tapStart suivants mentiraient ok:true a jamais.
+    audioTapProc = null;
+  });
+}
+
 H('audio:tapStart', async () => {
-  if (tapStartBusy) return { ok: false, err: 'démarrage AudioTap déjà en cours' };
+  // Capture « audio du PC » : Windows = AudioTap WASAPI loopback,
+  // Linux = parec sur le monitor du null-sink (voir tapSpec).
+  if (!IS_WIN && !IS_LINUX) return { ok: false, err: 'capture système indisponible sur cette plateforme' };
+  if (tapStartBusy) return { ok: false, err: 'démarrage capture audio déjà en cours' };
   const ep = tapEpoch; // un tapStop pendant la compilation ne doit pas etre ignore
   tapStartBusy = true;
   try {
-    const tool = await ensureAudioTap();
+    const spec = await tapSpec();
     if (ep !== tapEpoch) return { ok: false, err: 'arrêt demandé pendant le démarrage' };
-    if (!tool) return { ok: false, err: 'composant audio natif indisponible : ' + (lastToolErr || 'compilation impossible') };
+    if (spec.err) return { ok: false, err: spec.err };
     if (audioTapProc && audioTapProc.exitCode === null && !audioTapFailed) return { ok: true };
     // Un tapStop vient peut-etre de tuer l'ancien processus sans que 'exit' soit encore arrive :
-    // on attend sa sortie avant d'en respawn un (sinon deux AudioTap ecriraient dans le cable).
+    // on attend sa sortie avant d'en respawn un (sinon deux flux ecriraient dans le melange).
     if (audioTapKilling) {
       const t0 = Date.now();
       while (audioTapKilling && Date.now() - t0 < 3000) await new Promise((r) => setTimeout(r, 200));
-      if (audioTapKilling) return { ok: false, err: 'arrêt de l\'ancien AudioTap en cours' };
+      if (audioTapKilling) return { ok: false, err: 'arrêt de l\'ancien processus de capture en cours' };
     }
     if (ep !== tapEpoch) return { ok: false, err: 'arrêt demandé pendant le démarrage' };
-    // args[1] = pid du parent : AudioTap s'auto-termine si ce process meurt (anti-orphelin).
-    // Mode « pcm » : PCM float32 stereo 48 kHz sur stdout -> relaie au renderer pour
-    // l'enregistreur, SANS passer par le cable (evite l'echo Discord dans le micro).
-    const proc = spawn(tool, ['CABLE Input', String(process.pid), '0', '', 'pcm'], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
-    audioTapProc = proc;
-    audioTapFailed = false;
-    proc.stdout.on('data', (chunk) => {
-      // Un ancien processus encore en train de mourir ne doit pas injecter
-      // son PCM dans le flux du nouveau (mixage/echo).
-      if (audioTapProc !== proc || !win || win.isDestroyed()) return;
-      // N'envoyer au renderer que des frames completes : float32 stereo = 8 octets/frame.
-      tapPcmRem = Buffer.concat([tapPcmRem, chunk]);
-      const aligned = tapPcmRem.length - (tapPcmRem.length % 8);
-      if (aligned <= 0) return;
-      try { win.webContents.send('sf:tapPcm', tapPcmRem.buffer.slice(tapPcmRem.byteOffset, tapPcmRem.byteOffset + aligned)); } catch {}
-      tapPcmRem = tapPcmRem.slice(aligned);
-    });
-    audioTapProc.stderr.on('data', (d) => {
-      // Tout le stderr est journalise : les lignes d'init revelent ou le tap
-      // en est (init loopback, hr, srcBuf) — indispensable pour diagnostiquer
-      // un enregistrement « audio du PC » silencieux.
-      for (const line of String(d).split(/\r?\n/)) {
-        const t = line.trim();
-        if (!t) continue;
-        log('[audiotap] ' + t.slice(0, 300), /ERREUR|echoue|introuvable/i.test(t) ? 'error' : 'info');
-      }
-    });
-    proc.on('exit', () => {
-      // Marqueur PAR PROCESS : lire le global audioTapKilling ici cree une
-      // course — un ancien tap qui meurt tardivement remet le flag a false
-      // et le VRAI process tue verrait wasKilled=false -> faux tapDead.
-      const wasKilled = proc._sfKilled === true || audioTapKilling;
-      audioTapKilling = false;
-      // Sortie d'un processus obsolete (remplace entre-temps) : ne pas toucher
-      // a la reference ni envoyer tapDead pour le NOUVEAU processus.
-      if (audioTapProc !== proc) return;
-      audioTapProc = null;
-      tapPcmRem = Buffer.alloc(0);
-      // Mort non volontaire (crash AudioTap / peripherique disparu) : on previent le renderer
-      if (!wasKilled && win && !win.isDestroyed()) { try { win.webContents.send('sf:tapDead', true); } catch (e) { log('[tap] send tapDead: ' + (e && e.message), 'warn'); } }
-    });
-    proc.on('error', () => {
-      // Le proc tué peut emettre 'error' sans 'exit' : sans ce reset,
-      // audioTapKilling restait vrai a jamais -> tapStart echouait
-      // « arret en cours » jusqu'au restart.
-      audioTapKilling = false;
-      if (audioTapProc !== proc) return;
-      audioTapFailed = true; tapPcmRem = Buffer.alloc(0);
-      // 'exit' n'est pas garanti apres 'error' : sans ca audioTapProc resterait
-      // non-null et les tapStart suivants mentiraient ok:true a jamais.
-      audioTapProc = null;
-    });
+    const proc = spawn(spec.file, spec.args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, detached: IS_LINUX });
+    attachTapProc(proc);
     await new Promise((r) => setTimeout(r, 700));
     if (!audioTapProc || audioTapProc.exitCode !== null || audioTapFailed)
-      return { ok: false, err: 'AudioTap s\'est arrêté au démarrage' };
+      return { ok: false, err: 'le processus de capture audio s\'est arrêté au démarrage' };
     return { ok: true };
   } catch (e) { return { ok: false, err: e.message }; }
   finally { tapStartBusy = false; }
@@ -1216,7 +1320,10 @@ async function watchdogMic() {
   // quitting : un tick dans la fenetre will-quit -> process.exit pouvait
   // lancer ensureAudioTool (compile csc 60 s) et spawn des enfants APRES
   // la boucle de kill du will-quit -> csc.exe/AudioEndpoint orphelins.
-  if (quitting || watchdogBusy || micWatchSuspended || micSwitching) return;
+  // !IS_WIN && !IS_LINUX : le watchdog interroge AudioEndpoint (COM) sous
+  // Windows, pactl sous Linux — inutile ailleurs.
+  if ((!IS_WIN && !IS_LINUX) || quitting || watchdogBusy || micWatchSuspended || micSwitching) return;
+  if (IS_LINUX) { await watchdogMicLinux(); return; }
   watchdogBusy = true;
   try {
     if (!fs.existsSync(restoreFile()) || !fs.existsSync(configFile())) return;
@@ -1248,6 +1355,31 @@ async function watchdogMic() {
       if (win && !win.isDestroyed()) { try { win.webContents.send('sf:micWatchOff', target.name); } catch (e) { log('[mic-watchdog] send micWatchOff: ' + (e && e.message), 'warn'); } }
     }
   } catch (e) { log('[mic-watchdog] ' + e.message, 'warn'); }
+  finally { watchdogBusy = false; }
+}
+
+// Watchdog Linux : même règle que Windows — si la source par défaut n'est
+// plus le monitor du câble alors qu'une bascule est active (marqueur),
+// c'est un choix externe -> surveillance suspendue pour la session, jamais
+// de re-bascule forcée.
+async function watchdogMicLinux() {
+  if (watchdogBusy) return;
+  watchdogBusy = true;
+  try {
+    if (!linuxCable.hasMarker() || !fs.existsSync(configFile())) return;
+    try { if (fs.statSync(configFile()).size > 16 * 1024 * 1024) return; } catch { return; }
+    const cfg = JSON.parse(fs.readFileSync(configFile(), 'utf-8'));
+    const st = (cfg && cfg.settings && typeof cfg.settings === 'object' && !Array.isArray(cfg.settings)) ? cfg.settings : {};
+    if (st.autoSwitchMic !== undefined && st.autoSwitchMic !== true) return;
+    if (st.watchdogMic !== undefined && st.watchdogMic !== true) return;
+    const cur = await linuxCable.defaultSource();
+    const mon = linuxCable.MONITOR();
+    if (cur && cur !== mon && !micSwitching) {
+      micWatchSuspended = true;
+      log('[mic-watchdog linux] source modifiee hors SoundFart -> surveillance suspendue pour la session', 'warn');
+      if (win && !win.isDestroyed()) { try { win.webContents.send('sf:micWatchOff', mon); } catch (e) { log('[mic-watchdog linux] send micWatchOff: ' + (e && e.message), 'warn'); } }
+    }
+  } catch (e) { log('[mic-watchdog linux] ' + (e && e.message), 'warn'); }
   finally { watchdogBusy = false; }
 }
 
@@ -1457,8 +1589,12 @@ process.on('uncaughtException', (e) => {
   log('[fatal] uncaughtException: ' + (e && e.stack || e), 'error');
   crashReport({ module: 'main', type: 'uncaughtException', message: e && e.message, stack: e && e.stack });
   try {
-    const t = audioToolPath();
-    if (fs.existsSync(t) && fs.existsSync(restoreFile())) restoreMicNow(t);
+    if (IS_WIN) {
+      const t = audioToolPath();
+      if (fs.existsSync(t) && fs.existsSync(restoreFile())) restoreMicNow(t);
+    } else if (IS_LINUX) {
+      try { linuxCable.restoreSync(); } catch {}
+    }
   } catch {}
   // Continuer dans un etat potentiellement corrompu est plus risque que de
   // sortir : on restaure le micro (will-quit le refera, idempotent) puis on
@@ -1489,20 +1625,33 @@ app.on('will-quit', () => {
     if (p.exitCode !== null) continue; // deja sorti : taskkill frapperait un PID reutilise
     const left = killDeadline - Date.now();
     if (left <= 0) { try { p.kill(); } catch {} break; }
-    try { execFileSync('taskkill', ['/pid', String(p.pid), '/T', '/F'], { timeout: Math.min(2000, left), windowsHide: true }); } catch {}
+    if (IS_WIN) {
+      try { execFileSync('taskkill', ['/pid', String(p.pid), '/T', '/F'], { timeout: Math.min(2000, left), windowsHide: true }); } catch {}
+    } else {
+      // POSIX : kill du groupe (enfants spawnes detached) puis du pid.
+      try { process.kill(-p.pid, 'SIGKILL'); } catch { try { p.kill('SIGKILL'); } catch {} }
+    }
     try { p.kill(); } catch {}
   }
   childProcs.clear();
   try { if (audioTapProc) audioTapProc.kill(); } catch {}
   audioTapProc = null;
   try {
-    const tool = audioToolPath();
-    if (fs.existsSync(restoreFile())) {
-      log('[mic] will-quit : marqueur present, restauration lancee');
-      if (!fs.existsSync(tool)) log('[mic] restauration impossible : AudioEndpoint.exe absent', 'warn');
-      else if (!restoreMicNow(tool)) log('[mic] restauration a la fermeture echouee — micro peut rester sur le peripherique virtuel', 'warn');
-    } else {
-      log('[mic] will-quit : pas de marqueur audio-restore (bascule jamais faite ou deja restauree)');
+    // audio-restore.json ne peut exister que si une bascule Windows a eu
+    // lieu ; sous Linux le marqueur est linux-mic-restore.json (pactl).
+    if (IS_WIN) {
+      const tool = audioToolPath();
+      if (fs.existsSync(restoreFile())) {
+        log('[mic] will-quit : marqueur present, restauration lancee');
+        if (!fs.existsSync(tool)) log('[mic] restauration impossible : AudioEndpoint.exe absent', 'warn');
+        else if (!restoreMicNow(tool)) log('[mic] restauration a la fermeture echouee — micro peut rester sur le peripherique virtuel', 'warn');
+      } else {
+        log('[mic] will-quit : pas de marqueur audio-restore (bascule jamais faite ou deja restauree)');
+      }
+    } else if (IS_LINUX) {
+      try {
+        if (linuxCable.restoreSync()) log('[mic] will-quit : source micro Linux restauree');
+      } catch (e) { log('[mic] restauration will-quit linux: ' + (e && e.message), 'warn'); }
     }
   } catch (e) { log('[mic] restauration will-quit: ' + (e && e.message), 'warn'); }
 });

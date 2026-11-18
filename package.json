@@ -8,7 +8,8 @@
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder --win",
-    "test": "node --test test/"
+    "dist:linux": "electron-builder --linux AppImage --publish never",
+    "test": "node --test test/*.test.js"
   },
   "devDependencies": {
     "electron": "^45.3.1",
@@ -38,6 +39,15 @@
     },
     "portable": {
       "artifactName": "SoundFart.exe"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "icon": "assets/icon.png",
+      "category": "Audio",
+      "synopsis": "Soundboard pour Discord : joue des sons dans tes appels, enregistre ta voix et le son du PC, importe depuis YouTube.",
+      "artifactName": "SoundFart-${version}-${arch}.AppImage"
     }
   },
   "engines": {

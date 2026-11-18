@@ -2,33 +2,50 @@
 
 > Rôle : présentation du projet (ce que c'est, fonctionnalités, installation rapide). Statut : **actuel**. À consulter : en premier, pour une vue d'ensemble ; détails dans `GUIDE.md` et `SPECIFICATION.md`.
 
-Soundboard Windows pour Discord : joue des sons dans tes appels, enregistre ta voix et le son du PC, importe depuis YouTube. **Application portable** — un seul `SoundFart.exe`, aucune installation.
+Soundboard pour Discord : joue des sons dans tes appels, enregistre ta voix et le son du PC, importe depuis YouTube. **Application portable** — un seul exécutable, aucune installation.
+
+- **Windows** : `SoundFart.exe` (actuellement la distribution la plus aboutie)
+- **Linux x86_64** : `SoundFart-<version>-x86_64.AppImage` (voir « Linux » ci-dessous)
 
 ## Fonctionnalités
 
 - **Bibliothèque de sons** : catégories, favoris, miniatures, recherche, tri, volume par son
 - **Édition non destructive** : découpe début/fin, fondus d'entrée/sortie, normalisation — l'original n'est jamais modifié
 - **Raccourcis clavier** par son + raccourci global **STOP** (interrompt tout, même fenêtre minimisée)
-- **Enregistreur intégré** : micro, audio du PC (loopback WASAPI sans repasser par le câble) et sortie SoundFart→Discord
+- **Enregistreur intégré** : micro, audio du PC et sortie SoundFart→Discord
 - **Import YouTube** : extrait MP3 par timeline ou fichier audio complet, avec progression
-- **Routage Discord** : sortie vers `CABLE Input`, micro Windows basculé automatiquement sur `CABLE Output` à la lancement et restauré à la fermeture (même après crash)
+- **Routage Discord (Windows)** : sortie vers `CABLE Input`, micro Windows basculé automatiquement sur `CABLE Output` à la lancement et restauré à la fermeture (même après crash)
 - **Paramètres** : sortie Discord, écoute locale casque, mixage micro, surveillance automatique du micro
 - **Sauvegarde** : export/import de la configuration (références, catégories, découpes, raccourcis)
+- **Multilingue** : français, anglais, allemand, espagnol
+- **Rapports d'erreurs opt-in** : diagnostics anonymisés envoyés uniquement avec ton consentement explicite
 
 ## Prérequis
 
-- **Windows 10/11 64 bits**
-- **[VB-CABLE](https://vb-audio.com/Cable/)** (gratuit) — requis pour envoyer les sons dans Discord. **À installer toi-même** depuis la page officielle (SoundFart ne l'embarque pas, licence VB-Audio). L'app affiche un écran d'invitation s'il est absent.
+- **Windows 10/11 64 bits** ou **Linux x86_64** (AppImage, FUSE ou `--appimage-extract-and-run`)
+- **[VB-CABLE](https://vb-audio.com/Cable/)** (gratuit, **Windows uniquement**) — requis pour envoyer les sons dans Discord. **À installer toi-même** depuis la page officielle (SoundFart ne l'embarque pas, licence VB-Audio). L'app affiche un écran d'invitation s'il est absent.
 - Discord : en voix, choisis **« Défaut »** comme périphérique d'entrée pour suivre la bascule automatique du micro.
+
+## Linux (AppImage)
+
+```
+npm install
+npm run dist:linux   # -> dist\SoundFart-<version>-x86_64.AppImage (sous Linux)
+```
+
+- Le build AppImage **doit tourner sous Linux** (electron-builder exige des outils Linux : `mksquashfs`, etc.). Sur une machine Windows sans WSL, le build peut être produit par le workflow GitHub Actions `build-linux` (artifact `soundfart-appimage`).
+- Au premier usage d'une fonction qui en a besoin, l'app télécharge ses outils **vérifiés SHA-256** : `yt-dlp_linux` (release yt-dlp officielle) et un build statique `ffmpeg` linux64 (BtbN FFmpeg-Builds, tag épinglé) — jamais de binaire Windows.
+- **Indisponible sous Linux** (spécifique Windows, désactivé proprement sans bloquer le démarrage) : bascule micro automatique sur câble virtuel, AudioTap « audio du PC » (loopback WASAPI), VB-CABLE et son écran d'invitation, restauration micro Windows. Le routage audio Discord via PipeWire est un chantier futur.
+- **Disponible sous Linux** : interface multilingue, bibliothèque, lecture/édition des sons, favoris, enregistreur micro, import YouTube, coupe MP3, rapports d'erreurs opt-in.
 
 ## Utilisation
 
-1. Lance `SoundFart.exe` — au premier démarrage, choisis ton **dossier de sons** (les fichiers ajoutés y sont copiés ; les réglages restent dans `%APPDATA%\SoundFart`)
-2. Si VB-CABLE est absent, l'écran d'accueil t'invite à le télécharger ; installe-le, redémarre Windows si besoin, puis « J'ai installé, vérifier »
-3. Paramètres → Sortie audio : choisis **« CABLE Input »** (surligné ★) comme sortie Discord et ton casque comme écoute locale
+1. Lance `SoundFart.exe` (Windows) ou `./SoundFart-*.AppImage` (Linux) — au premier démarrage, choisis ton **dossier de sons** (les fichiers ajoutés y sont copiés ; les réglages restent dans le dossier utilisateur de la plateforme)
+2. Sous Windows, si VB-CABLE est absent, l'écran d'accueil t'invite à le télécharger ; installe-le, redémarre Windows si besoin, puis « J'ai installé, vérifier »
+3. Paramètres → Sortie audio : choisis **« CABLE Input »** (surligné ★) comme sortie Discord et ton casque comme écoute locale *(Windows)*
 4. Clique un son (ou son raccourci) pour le jouer
 
-> ⚠️ L'exe n'est **pas signé** → SmartScreen peut afficher un avertissement au 1er lancement (« Informations complémentaires » → Exécuter).
+> ⚠️ L'exe/AppImage n'est **pas signé** → Windows SmartScreen / les dépendances FUSE peuvent afficher un avertissement au 1er lancement.
 
 ## Développement
 
@@ -36,7 +53,8 @@ Soundboard Windows pour Discord : joue des sons dans tes appels, enregistre ta v
 npm install
 npm start          # lance en dev
 npm test           # tests unitaires (node:test)
-npm run dist       # build portable -> dist\SoundFart.exe
+npm run dist       # build Windows portable -> dist\SoundFart.exe
+npm run dist:linux # build Linux AppImage -> dist\SoundFart-<version>-x86_64.AppImage (sous Linux)
 ```
 
 - Stack : Electron 45, JS vanilla, C# compilé à la volée (`csc.exe`), yt-dlp + ffmpeg téléchargés et vérifiés (SHA-256)

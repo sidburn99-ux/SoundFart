@@ -8,6 +8,10 @@ const VIRTUAL_RE = window.SFUtils.VIRTUAL_RE;
 // window.plural) — utilisables dans tous les modules charges par index.html.
 // La cle de t() est le texte FRANCAIS source : le fallback est le francais.
 const SFI18n = window.SFI18n;
+// Plateforme exposee par preload (process.platform du main) : les
+// fonctions audio Windows-only (bascule micro CABLE, AudioTap WASAPI,
+// VB-CABLE) sont desactivees proprement sous Linux — voir main.js.
+const IS_LINUX = !!(window.sf && window.sf.platform === 'linux');
 const PALETTE = ['#8b5cf6', '#ec4899', '#f97316', '#22c55e', '#06b6d4', '#eab308', '#ef4444', '#3b82f6'];
 const THUMB_EMOJIS = ['💨', '🔊', '📢', '🎺', '🦖', '🤖', '👽', '🔥', '⚡', '🍕', '🎮', '🏆', '💣', '🧨', '🎉', '😱', '🤣', '🤡', '👻', '🐔', '🐸', '🐵', '🦁', '🐯', '🐙', '🚀', '🌈', '🍔', '🍿', '🎯', '🎲', '🃏', '🎰', '📯', '🎷', '🎸', '🥁', '🎻', '🎤', '📻', '🔔', '⏰', '💎', '🪙', '🎁', '🍩', '🧃', '🥤', '👑', '🃏'];
 
@@ -759,7 +763,9 @@ function resolveDevices() {
     if (!d && fallbackId) d = list.find((x) => x.deviceId === fallbackId);
     if (d) { s[idKey] = d.deviceId; s[lblKey] = d.label; } else { s[idKey] = ''; s[lblKey] = ''; }
   };
-  pick('cableId', 'cableLabel', audio.devices.out, /CABLE Input/i, null);
+  // Linux : le « câble » est le null-sink PulseAudio/PipeWire créé via pactl.
+  // Windows garde VB-CABLE (CABLE Input).
+  pick('cableId', 'cableLabel', audio.devices.out, IS_LINUX ? /soundfart/i : /CABLE Input/i, null);
   pick('monId', 'monLabel', audio.devices.out, null, 'default');
   pick('micId', 'micLabel', audio.devices.inp, null, 'default');
 }
@@ -775,23 +781,29 @@ function resolveDevices() {
 // un etat coincide (entrees deja sur CABLE Output sans marqueur) merite une
 // proposition de reparation explicite — sans ca Discord restait sans micro.
 async function runAutoSetup() {
+  // Bascule micro : Windows = AudioEndpoint (CABLE Output), Linux = pactl
+  // set-default-source sur le monitor du null-sink — même canal IPC.
   try {
     const r = await window.sf.audioAutoSetup({ enabled: cfg.settings.autoSwitchMic, cableLabel: cfg.settings.cableLabel });
     if (!r) return;
     if (r.changed) toast(t('Entrée micro basculée sur {dev} (restaurée à la fermeture).', { dev: r.device }));
     else if (r.stuckCable) {
       uiLog('entrees deja sur le cable sans marqueur — proposition de reparation');
-      if (await confirmBox(t('Entrée micro coincée sur CABLE Output'),
-        t('Windows envoie déjà le micro sur « CABLE Output » sans bascule SoundFart (crash ou ancienne session). Discord risque de ne recevoir aucun micro.\n\nRéparer = rebascule l\'entrée Windows sur ton micro (Logitech G930).'),
+      if (await confirmBox(t(IS_LINUX ? 'Entrée micro coincée sur le câble' : 'Entrée micro coincée sur CABLE Output'),
+        t(IS_LINUX
+          ? 'Linux envoie déjà le micro sur le monitor du câble SoundFart sans bascule SoundFart (crash ou ancienne session). Discord risque de ne recevoir aucun micro.\n\nRéparer = rebascule la source micro par défaut sur ton vrai micro.'
+          : 'Windows envoie déjà le micro sur « CABLE Output » sans bascule SoundFart (crash ou ancienne session). Discord risque de ne recevoir aucun micro.\n\nRéparer = rebascule l\'entrée Windows sur ton micro (Logitech G930).'),
         t('Réparer'))) {
         window.sf.restoreMic(true);
-        toast(t('Entrée micro Windows : restauration demandée…'));
+        toast(t(IS_LINUX ? 'Source micro Linux : restauration demandée…' : 'Entrée micro Windows : restauration demandée…'));
       }
     } else if (!r.ok) toast(t('Bascule micro auto impossible : {err}', { err: r.err }), 'warn');
   } catch (e) { logErr('audioAutoSetup', e); }
 }
 
-const cablePresent = () => audio.devicesDegraded || audio.devices.out.some((d) => /cable/i.test(d.label));
+// Sous Linux aucun cable virtuel VB-CABLE n'est gere : on retourne
+// toujours « absent » pour ne jamais declencher l'ecran d'installation.
+const cablePresent = () => !IS_LINUX && (audio.devicesDegraded || audio.devices.out.some((d) => /cable/i.test(d.label)));
 let cableScreenEl = null;
 
 function cableScreen() {
@@ -832,12 +844,14 @@ function cableScreen() {
 function updateCableUi() {
   const present = cablePresent();
   const banner = $('#cable-banner');
-  if (banner) banner.hidden = present;
-  if (present && cableScreenEl) { cableScreenEl.remove(); cableScreenEl = null; }
+  // Linux : la banniere « VB-CABLE requis » n'a pas de sens — masquee.
+  if (banner) banner.hidden = IS_LINUX ? true : present;
+  if ((present || IS_LINUX) && cableScreenEl) { cableScreenEl.remove(); cableScreenEl = null; }
   return present;
 }
 
 function showCableScreen() {
+  if (IS_LINUX) return; // VB-CABLE est un pilote Windows
   if (!cablePresent()) cableScreen();
   updateCableUi();
 }
@@ -1774,6 +1788,17 @@ async function init() {
   }
 
   renderAll();
+  // Linux : garantit le null-sink PulseAudio/PipeWire AVANT l'énumération
+  // (idempotent — le sink persiste entre lancements, ensure = no-op si
+  // déjà présent). No-op sous Windows ; une erreur pactl ne bloque pas
+  // le démarrage — le réglage audio reste utilisable sans le câble.
+  if (IS_LINUX && window.sf && window.sf.linuxAudioEnsure) {
+    try {
+      const r = await window.sf.linuxAudioEnsure();
+      if (r && r.ok && r.created) uiLog('linux-cable: null-sink créé');
+      else if (r && !r.ok) uiLog('linux-cable: ' + (r.error || 'ensure KO'));
+    } catch (e) { logErr('linuxAudioEnsure', e); }
+  }
   await refreshDevices(true);
   resolveDevices();
   save();
@@ -1807,7 +1832,7 @@ async function init() {
     if (s) play(s);
   });
   if (!cfg.settings.cableId) {
-    toast(t('Choisis ta sortie Discord (CABLE Input) dans les réglages audio.'), 'warn');
+    toast(t(IS_LINUX ? 'Choisis ta sortie Discord (SoundFart Cable) dans les réglages audio.' : 'Choisis ta sortie Discord (CABLE Input) dans les réglages audio.'), 'warn');
     settingsModal();
   } else if (ok) {
     updateRoutes();
