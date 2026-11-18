@@ -1111,7 +1111,7 @@ async function applyShortcuts() {
   for (const s of cfg.sounds) if (s.shortcut) entries.push({ key: s.id, accel: s.shortcut });
   try {
     const failed = await window.sf.applyShortcuts(entries);
-    if (failed && failed.length) toast(t('Raccourcis refusés par Windows : {list}', { list: failed.map(fmtAccel).join(', ') }), 'warn');
+    if (failed && failed.length) toast(t('Raccourcis refusés par le système : {list}', { list: failed.map(fmtAccel).join(', ') }), 'warn');
   } catch (e) {
     logErr('shortcuts', e);
   }
@@ -1142,7 +1142,9 @@ function pushSound(s) {
 async function ensureStorageDir() {
   if (cfg.settings.storageDir) return true;
   if (!(await confirmBox(t('Choisis ton dossier de sons'),
-    t('SoundFart y range les fichiers qu\'il crée : sons ajoutés (copiés), imports YouTube, enregistrements et extraits MP3.\n\nExemples : Documents\\SoundFart, E:\\Soundfart, une partition dédiée.'),
+    t(IS_LINUX
+      ? 'SoundFart y range les fichiers qu\'il crée : sons ajoutés (copiés), imports YouTube, enregistrements et extraits MP3.\n\nExemples : ~/SoundFart, /mnt/data/Soundfart, une partition dédiée.'
+      : 'SoundFart y range les fichiers qu\'il crée : sons ajoutés (copiés), imports YouTube, enregistrements et extraits MP3.\n\nExemples : Documents\\SoundFart, E:\\Soundfart, une partition dédiée.'),
     t('Choisir un dossier')))) {
     toast(t('Action annulée : aucun dossier de sons choisi.'), 'warn'); return false;
   }
@@ -1565,7 +1567,7 @@ function crashConsentModal() {
   modal(t('Rapports d\'erreurs anonymisés'), [
     el('p', { text: t('Quand SoundFart plante (erreur JS, crash du moteur audio, fenêtre gelée), il peut envoyer un petit rapport de diagnostic pour m\'aider à corriger les bugs.') }),
     el('ul', {}, [
-      el('li', { text: t('Envoyé : version de SoundFart et de Windows, type d\'erreur, message, stack trace, code de sortie.') }),
+      el('li', { text: t('Envoyé : version de SoundFart et du système, type d\'erreur, message, stack trace, code de sortie.') }),
       el('li', { text: t('Jamais envoyé : tes sons, tes fichiers audio, tes chemins, ta configuration, ton nom d\'utilisateur — les chemins sont remplacés par des placeholders avant tout envoi.') }),
       el('li', { text: t('Utilisation : correction de bugs uniquement. Destination : serveur de collecte privé en HTTPS.') }),
       el('li', { text: t('Facultatif : tu peux refuser ou changer d\'avis à tout moment dans Paramètres → Général. En cas de refus, rien n\'est collecté ni conservé pour envoi.') }),
@@ -1662,7 +1664,9 @@ async function init() {
               el('div', { class: 'about-ver', text: t('Version {v}', { v }) }),
             ]),
           ]),
-          el('p', { class: 'about-desc', text: t('Soundboard pour Discord — joue tes sons dans tes appels vocaux via VB-CABLE.') }),
+          el('p', { class: 'about-desc', text: t(IS_LINUX
+            ? 'Soundboard pour Discord — joue tes sons dans tes appels vocaux via le câble virtuel.'
+            : 'Soundboard pour Discord — joue tes sons dans tes appels vocaux via VB-CABLE.') }),
           el('p', { class: 'about-credit', text: t('Développé par Benoit Prudent') }),
           el('p', { class: 'about-copy', text: t('© {year} Benoit Prudent — Tous droits réservés', { year }) }),
           el('p', { class: 'hint', text: t('Propulsé par Electron · VB-CABLE par VB-Audio · yt-dlp & ffmpeg (outils libres)') }),

@@ -220,7 +220,7 @@ function settingsModal() {
     if (!s.storageDir) dirLbl.textContent = t('Non choisi — sera demandé à la prochaine création de fichier');
   }).catch((e) => logErr('getDataDir', e));
   const dirLbl = el('div', { class: 'hint path', text: (s.storageDir || t('Non choisi — sera demandé à la prochaine création de fichier')) + t(' — sons ajoutés dans sons/, YouTube dans imports/, micro dans recordings/, extraits dans cuts/') });
-  const openDirBtn = el('button', { class: 'ghost', text: t('Ouvrir'), title: t('Ouvre le dossier de stockage dans l\'Explorateur'), onclick: () => window.sf.openDir(s.storageDir || '').catch((e) => logErr('openDir', e)) });
+  const openDirBtn = el('button', { class: 'ghost', text: t('Ouvrir'), title: t(IS_LINUX ? 'Ouvre le dossier de stockage dans le gestionnaire de fichiers' : 'Ouvre le dossier de stockage dans l\'Explorateur'), onclick: () => window.sf.openDir(s.storageDir || '').catch((e) => logErr('openDir', e)) });
   const pickDirBtn = el('button', { text: t('Choisir…'), title: t('Choisit le dossier racine où SoundFart range ses fichiers (imports/, recordings/, cuts/).'), onclick: async () => {
     try {
       const d = await window.sf.pickDir();
@@ -243,7 +243,9 @@ function settingsModal() {
   // par « Appliquer » (applyAudio). Persister ici enregistrait une valeur
   // SANS effet jusqu'au prochain apply — no-op silencieux. Appliquer
   // relit voiceLvl.value (ligne ~380).
-  const autoMic = el('input', { type: 'checkbox', checked: !!s.autoSwitchMic, title: t('Au lancement, l\'entrée micro Windows bascule sur « CABLE Output » (pour que Discord capte ta voix via le câble), puis revient à ton vrai micro à la fermeture ou en cas de crash.') });
+  const autoMic = el('input', { type: 'checkbox', checked: !!s.autoSwitchMic, title: t(IS_LINUX
+    ? 'Au lancement, la source micro Linux bascule sur « SoundFart Cable » (monitor) — Discord capte ta voix via le câble — puis revient à ta source à la fermeture ou en cas de crash.'
+    : 'Au lancement, l\'entrée micro Windows bascule sur « CABLE Output » (pour que Discord capte ta voix via le câble), puis revient à ton vrai micro à la fermeture ou en cas de crash.') });
   const watchMic = el('input', { type: 'checkbox', checked: s.watchdogMic !== false, title: t('Revérifie périodiquement que l\'entrée micro est toujours sur le câble. Se met en pause pour la session si tu changes le micro toi-même (Discord inclus).') });
 
   const normLufsIn = el('input', { type: 'number', min: -40, max: 0, step: 1, value: normLufsTarget(), title: t('Loudness cible en LUFS (volume perçu, pas le pic). -18 LUFS par défaut. Plus haut (proche de 0) = plus fort, plus bas = plus doux. Le limiteur en aval absorbe les dépassements.') });
@@ -345,7 +347,21 @@ function settingsModal() {
       await applyAudio().catch((e) => logErr('applyAudio', e));
     } catch (e) { logErr('linuxAudioEnsure', e); toast(t('Création du câble impossible.'), 'warn'); }
     finally { linuxEnsureBtn.disabled = false; linuxEnsureBtn.textContent = t('Créer/vérifier le câble'); }
+    refreshLinuxStatus().catch((e) => logErr('linuxStatus', e));
   }});
+  const linuxStatusEl = el('div', { class: 'hint' });
+  const refreshLinuxStatus = async () => {
+    if (!IS_LINUX || !window.sf.linuxAudioStatus) return;
+    try {
+      const st = await window.sf.linuxAudioStatus();
+      const state = !st.pactl ? t('pactl absent')
+        : !st.server ? t('serveur PulseAudio/PipeWire injoignable')
+        : (st.sink && st.monitor) ? t('opérationnel')
+        : t('câble absent — « Créer/vérifier le câble »');
+      linuxStatusEl.textContent = t('État du câble : {state}', { state });
+    } catch (e) { logErr('linuxStatus', e); }
+  };
+  refreshLinuxStatus().catch((e) => logErr('linuxStatus', e));
 
   // Panneau « Paramètres » style Discord : navigation laterale groupee
   // par categorie + sections detaillees (titre + description + champs).
@@ -360,7 +376,7 @@ function settingsModal() {
     { cat: t('Audio'), icon: '🔊', label: t('Sortie audio'), desc: t('Par où sortent les sons de la soundboard : la sortie Discord (câble virtuel VB-CABLE) et ton écoute locale. La voix du micro a son propre chemin — voir « Micro & voix ».'), nodes: [
       ...(IS_LINUX ? [
         el('div', { class: 'hint', text: t('★ = choix recommandé · ⚠ = à éviter. SoundFart crée un périphérique virtuel PulseAudio/PipeWire : choisis-le comme sortie Discord, ton écoute locale reste sur ton casque.') }),
-        field(t('Sortie vers Discord (câble virtuel)'), el('div', { class: 'row' }, cableSel, linuxEnsureBtn),
+        field(t('Sortie vers Discord (câble virtuel)'), el('div', { class: 'row' }, cableSel, linuxEnsureBtn, linuxStatusEl),
           t('Clique « Créer/vérifier le câble » : SoundFart crée (une seule fois) le périphérique virtuel « SoundFart Cable ». Ensuite, dans Discord : Paramètres → Voix et vidéo → Entrée → choisis « SoundFart Cable » (monitor).')),
       ] : [
         el('div', { class: 'hint', text: t('★ = choix recommandé (bordure rose) · ⚠ = à éviter (bordure rouge). Pour faire fonctionner la soundboard : sortie Discord = CABLE Input, écoute locale = ton casque, micro = ton vrai micro.') }),
@@ -372,10 +388,10 @@ function settingsModal() {
         ? t('⚠ Écoute locale = sortie Discord : tu risks une boucle/écho — choisis un périphérique différent.')
         : t('Choisis ton casque/écoute habituelle — pas un périphérique « CABLE » (boucle).')),
     ]},
-    { cat: t('Audio'), icon: '🎙', label: t('Micro & voix'), desc: t('Le micro est capté séparément des sons : son volume ne suit PAS le curseur master (réglage Windows/Discord). Le traitement vocal n\'agit que sur ta voix, jamais sur les sons.'), nodes: [
-      field(t('Mon micro'), micSel, t('Le vrai micro est ★ ; les périphériques virtuels (CABLE Output, Voicemeeter…) sont ⚠ déconseillés ici.')),
+    { cat: t('Audio'), icon: '🎙', label: t('Micro & voix'), desc: t('Le micro est capté séparément des sons : son volume ne suit PAS le curseur master (réglage système/Discord). Le traitement vocal n\'agit que sur ta voix, jamais sur les sons.'), nodes: [
+      field(t('Mon micro'), micSel, t('Le vrai micro est ★ ; les périphériques virtuels (CABLE Output, Voicemeeter, monitors…) sont ⚠ déconseillés ici.')),
       el('label', { class: 'check' }, mix,
-        el('span', { text: t('Mixer mon micro dans la sortie Discord (sinon tes potes n\'entendent que les sons). Décoche si tu utilises « Écouter ce périphérique » de Windows.') })),
+        el('span', { text: t('Mixer mon micro dans la sortie Discord (sinon tes potes n\'entendent que les sons). Décoche si tu utilises « Écouter ce périphérique » de ton système.') })),
       ...(IS_LINUX ? [
         field(t('Bascule micro automatique'), el('label', { class: 'check' }, autoMic,
           el('span', { text: t('Au lancement, la source micro par défaut de Linux passe sur « SoundFart Cable » (monitor) et revient à ta source à la fermeture — Discord capte alors tes sons ET ta voix. Dans Discord, choisis « Défaut » comme périphérique d\'entrée.') }))),
@@ -416,7 +432,7 @@ function settingsModal() {
       field(t('Imports non ajoutés'), orphanBtn2,
         t('Fichiers présents dans imports/ mais pas encore dans ta bibliothèque (téléchargements YouTube dont la fenêtre a été fermée sans « Ajouter »).')),
     ]},
-    { cat: t('Bibliothèque'), icon: '🗄', label: t('Données & stockage'), desc: t('Où SoundFart range les fichiers qu\'il crée et où sont ses réglages. Ton dossier de sons est choisi une fois ; les réglages restent dans %APPDATA%\\SoundFart.'), nodes: [
+    { cat: t('Bibliothèque'), icon: '🗄', label: t('Données & stockage'), desc: t('Où SoundFart range les fichiers qu\'il crée et où sont ses réglages. Ton dossier de sons est choisi une fois ; les réglages restent dans le dossier de données de l\'application.'), nodes: [
       field(t('Dossier de sons'), el('div', { class: 'row' }, dirLbl, pickDirBtn, openDirBtn, resetDirBtn),
         t('Tous les fichiers créés par SoundFart vont dans ce dossier : sons ajoutés copiés dans sons/, imports YouTube dans imports/, enregistrements dans recordings/, extraits MP3 dans cuts/. Obligatoire dès le premier ajout — un choix est aussi proposé à chaque action.')),
     ]},
