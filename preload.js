@@ -43,7 +43,7 @@ contextBridge.exposeInMainWorld('sf', {
   reportError: (r) => ipcRenderer.send('report:error', r),
   reportConsent: (v) => ipcRenderer.send('report:consent', v),
   desktopSource: () => ipcRenderer.invoke('desktop:source'),
-  audioTapStart: () => ipcRenderer.invoke('audio:tapStart'),
+  audioTapStart: (sources) => ipcRenderer.invoke('audio:tapStart', sources),
   audioTapStop: () => ipcRenderer.invoke('audio:tapStop'),
   cableDownload: () => ipcRenderer.invoke('cable:openPage'),
   linuxAudioStatus: () => ipcRenderer.invoke('linux:audioStatus'),
@@ -52,6 +52,7 @@ contextBridge.exposeInMainWorld('sf', {
   seedSounds: () => ipcRenderer.invoke('sounds:seed'),
   onTapDead: on('sf:tapDead'),
   onTapPcm: on('sf:tapPcm'),
+  onTapPcmCable: on('sf:tapPcmCable'),
   onMicWatchOff: on('sf:micWatchOff'),
   onPowerResume: on('sf:powerResume'),
 });

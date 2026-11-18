@@ -106,13 +106,19 @@ test('linux : status() pactl absent -> ENOENT message + retour anticipé', async
   assert.ok(logs.some((m) => m.includes(ERR_PACTL)));
 });
 
-test('linux : status() serveur injoignable -> erreur générique + détail', async () => {
+test('linux : status() serveur injoignable -> pactl présent, serveur KO + détail', async () => {
   const exec = makeExec({ 'info': new Error('Connection refused'), });
   const { cable } = makeCable(exec, 'linux');
   const st = await cable.status();
-  assert.equal(st.pactl, false);
+  assert.equal(st.pactl, true);
   assert.equal(st.server, false);
   assert.equal(st.error, ERR_SERVER + ' — Connection refused');
+});
+
+test('linux : defaultSink() renvoie le sink par défaut', async () => {
+  const exec = makeExec({ 'get-default-sink': { stdout: 'alsa_output.analog-stereo' + String.fromCharCode(10), stderr: '' } });
+  const { cable } = makeCable(exec, 'linux');
+  assert.equal(await cable.defaultSink(), 'alsa_output.analog-stereo');
 });
 
 test('linux : ensure() crée le null-sink quand absent', async () => {

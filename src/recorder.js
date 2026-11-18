@@ -16,7 +16,11 @@ async function recorderModal() {
   let recordedSound = null, recTimer = null, recStart = 0, looseTracks = [];
   let dead = false; // passe a true a la fermeture : avorte les startBtn encore en vol
   let closedDuringRec = false; // modale fermee PENDANT une prise : pas de modale resultat (elle detruirait une modale ouverte entre-temps)
-  let tapNode = null, pcmQ = [], pcmSeen = false, tapLost = false, pcmDrops = 0, pcmQBytes = 0;
+  const tapNodes = {};    // src ('system'|'cable') -> AudioWorkletNode
+  const pcmQs = {};       // src -> [ArrayBuffer] PCM en attente du worklet
+  const pcmQBytes = {};   // src -> octets en file
+  const pcmSeenBy = {};   // src -> true des le 1er chunk PCM
+  let tapLost = false, pcmDrops = 0;
   let analyser = null, meterRaf = 0;
   // Pas de disconnect() ni d'analyser=null : le noeud reste dans le graphe
   // comp -> analyser -> dest jusqu'a actx.close() — le couper ici
@@ -38,7 +42,10 @@ async function recorderModal() {
     };
     meterRaf = requestAnimationFrame(tick);
   };
-  const killTapNode = () => { if (tapNode) { try { tapNode.disconnect(); } catch {} tapNode = null; } pcmQ = []; pcmQBytes = 0; };
+  const killTapNode = () => {
+    for (const k of Object.keys(tapNodes)) { try { tapNodes[k].disconnect(); } catch {} delete tapNodes[k]; }
+    for (const k of Object.keys(pcmQs)) { delete pcmQs[k]; delete pcmQBytes[k]; }
+  };
   // N'arrete le tap que s'il appartient a la session la plus recente :
   // sinon le cleanup d'une vieille modale tuerait l'enregistrement d'une
   // nouvelle session (silencieux, sans tapDead car arret volontaire).
@@ -54,15 +61,22 @@ async function recorderModal() {
     toast(t('Source « Audio du PC » perdue — enregistrement arrêté.'), 'warn');
     try { rec.stop(); } catch (e) { window.sf.uiLog('recorder rec.stop (tapDead): ' + (e && e.message)); }
   }) : null;
-  const offTapPcm = window.sf.onTapPcm ? window.sf.onTapPcm((ab) => {
-    if (!pcmSeen) { pcmSeen = true; window.sf.uiLog('tapPcm: premier flux recu (' + ab.byteLength + 'o)'); }
+  const feedTap = (src) => (ab) => {
+    if (!pcmSeenBy[src]) { pcmSeenBy[src] = true; window.sf.uiLog('tapPcm ' + src + ': premier flux recu (' + ab.byteLength + 'o)'); }
     // transfer [ab] : evite le clone structure de chaque chunk PCM (frequence elevee)
-    if (tapNode) { try { tapNode.port.postMessage(ab, [ab]); } catch {} }
+    const node = tapNodes[src];
+    if (node) { try { node.port.postMessage(ab, [ab]); } catch {} }
     // Borne en octets AUSSI : 600 chunks PCM 48 kHz stereo ≈ 115 Mo si le
     // worklet tarde — la limite en nombre seul ne bornait rien.
-    else if (pcmQ.length < 600 && pcmQBytes + ab.byteLength < 64 * 1024 * 1024) { pcmQ.push(ab); pcmQBytes += ab.byteLength; }
-    else if (!pcmDrops) { pcmDrops = 1; window.sf.uiLog('pcmQ saturee : chunks AudioTap jetes (renderer occupe)'); }
-  }) : null;
+    else {
+      const q = (pcmQs[src] = pcmQs[src] || []);
+      const nb = (pcmQBytes[src] || 0) + ab.byteLength;
+      if (q.length < 600 && nb < 64 * 1024 * 1024) { q.push(ab); pcmQBytes[src] = nb; }
+      else if (!pcmDrops) { pcmDrops = 1; window.sf.uiLog('pcmQ saturee : chunks AudioTap jetes (renderer occupe)'); }
+    }
+  };
+  const offTapPcm = window.sf.onTapPcm ? window.sf.onTapPcm(feedTap('system')) : null;
+  const offTapPcmCable = window.sf.onTapPcmCable ? window.sf.onTapPcmCable(feedTap('cable')) : null;
 
   // « default » exclu : apres la bascule micro auto, il pointerait sur CABLE Output (on enregistrerait la soundboard, pas le micro)
   // Si enumerateDevices jette, les handlers IPC enregistres plus haut fuiraient
@@ -77,6 +91,7 @@ async function recorderModal() {
   } catch (e) {
     if (offTapDead) offTapDead();
     if (offTapPcm) offTapPcm();
+    if (offTapPcmCable) offTapPcmCable();
     throw e;
   }
   // matched : sans ca, un select sans option « selected » prend devs[0]
@@ -136,6 +151,7 @@ async function recorderModal() {
     stopMeter();
     if (offTapDead) offTapDead();
     if (offTapPcm) offTapPcm();
+    if (offTapPcmCable) offTapPcmCable();
     // Enregistrement existant : on laisse onstop faire la sauvegarde + tout le
     // menage — l'annuler ici perdrait silencieusement l'enregistrement.
     // Si rec.stop() echoue (ou rec inactif sans onstop a venir), on nettoie
@@ -231,18 +247,28 @@ async function recorderModal() {
       // stdout -> IPC -> AudioWorklet -> enregistreur. Ne passe PLUS par le cable :
       // la voix des amis Discord n'est plus reinjectee dans l'appel (anti-echo).
       // Repli sur getDisplayMedia si le tap echoue.
-      let tapOn = false, pcConnected = false;
-      pcmSeen = false; tapLost = false;
-      // Sous Linux, « câble SoundFart » et « audio du PC » capturent le MEME
-      // monitor (soundfart_cable.monitor via parec) : une seule capture
-      // suffit, cocher les deux ne double pas le signal.
-      const wantTap = pcOn.checked || (IS_LINUX && cableOn.checked);
-      if (wantTap) {
+      let tapOn = false, pcConnected = false, cableConnected = false;
+      tapLost = false;
+      for (const k of Object.keys(pcmSeenBy)) delete pcmSeenBy[k];
+      for (const k of Object.keys(pcmQs)) { delete pcmQs[k]; delete pcmQBytes[k]; }
+      // Sources de capture PCM : 'system' = audio du PC (sortie par
+      // defaut — voix Discord, musique), 'cable' = monitor SoundFart
+      // (Linux uniquement ; sous Windows le câble passe par getUserMedia).
+      const wantTapSources = [];
+      if (pcOn.checked) wantTapSources.push('system');
+      if (IS_LINUX && cableOn.checked) wantTapSources.push('cable');
+      let tapStarted = new Set(), tapShared = new Set();
+      if (wantTapSources.length) {
         try {
-          const r = await window.sf.audioTapStart();
+          const r = await window.sf.audioTapStart(wantTapSources);
           tapOn = !!(r && r.ok);
-          if (tapOn) { myTapGen = ++tapGenCounter; lastTapGen = myTapGen; }
+          if (tapOn) {
+            tapStarted = new Set(r.started || []);
+            tapShared = new Set(r.shared || []);
+            myTapGen = ++tapGenCounter; lastTapGen = myTapGen;
+          }
           if (!tapOn) window.sf.uiLog('audioTapStart: ' + (r && r.err));
+          else if (r.missed && r.missed.length) window.sf.uiLog('audioTapStart missed: ' + r.missed.join(' | '));
         } catch (e) { window.sf.uiLog('audioTapStart: ' + e.message); }
         if (dead) { deadCleanup(); return; }
       }
@@ -255,11 +281,11 @@ async function recorderModal() {
       if (micOn.checked && micSel.value) want.push(['micro', () => navigator.mediaDevices.getUserMedia({
         audio: { deviceId: { exact: micSel.value }, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       })]);
-      if (pcOn.checked && !tapOn) want.push([t('audio du PC'), systemStream]);
-      if (cableOn.checked && !(IS_LINUX && tapOn)) want.push([t('câble SoundFart'), cableStream]);
+      if (pcOn.checked && !tapStarted.has('system')) want.push([t('audio du PC'), systemStream]);
+      if (cableOn.checked && !(IS_LINUX && (tapStarted.has('cable') || tapShared.has('cable')))) want.push([t('câble SoundFart'), cableStream]);
       // tapOn = source « audio du PC » active via PCM/worklet (pas de getUserMedia) :
       // elle compte comme une source meme si want est vide.
-      if (!want.length && !(wantTap && tapOn)) throw new Error(t('coche au moins une source'));
+      if (!want.length && !(wantTapSources.length && tapOn)) throw new Error(t('coche au moins une source'));
       for (const [label, fn] of want) {
         try {
           const st = await fn();
@@ -267,6 +293,7 @@ async function recorderModal() {
           watchEnded(st);
           streams.push(st);
           if (label === t('audio du PC')) pcConnected = true;
+          if (label === t('câble SoundFart')) cableConnected = true;
         }
         catch (e) { window.sf.uiLog('recorder src ' + label + ': ' + (e && e.name) + ' ' + (e && e.message)); streams.forEach((st) => st.getTracks().forEach((t) => t.stop())); streams = []; throw new Error(label + ' : ' + e.message); }
       }
@@ -294,15 +321,18 @@ async function recorderModal() {
       comp.connect(analyser);
       analyser.connect(dest);
       streams.forEach((st) => actx.createMediaStreamSource(st).connect(comp));
-      if (tapOn) {
+      if (tapStarted.size) {
         try {
           await actx.audioWorklet.addModule('tap-processor.js');
           // outputChannelCount [2] : sans ca la sortie du worklet peut etre mono
           // (seul le canal gauche serait enregistre). numberOfInputs 0 : inutilise.
-          tapNode = new AudioWorkletNode(actx, 'tap-processor', { numberOfInputs: 0, outputChannelCount: [2] });
-          pcConnected = true;
-          pcmQ.forEach((ab) => tapNode.port.postMessage(ab, [ab]));
-          pcmQ = []; pcmQBytes = 0;
+          for (const src of tapStarted) {
+            tapNodes[src] = new AudioWorkletNode(actx, 'tap-processor', { numberOfInputs: 0, outputChannelCount: [2] });
+            (pcmQs[src] || []).forEach((ab) => tapNodes[src].port.postMessage(ab, [ab]));
+            delete pcmQs[src]; pcmQBytes[src] = 0;
+          }
+          if (tapStarted.has('system')) pcConnected = true;
+          if (tapStarted.has('cable') || tapShared.has('cable')) cableConnected = true;
         } catch (e) {
           window.sf.uiLog('tap worklet: ' + (e && e.message));
           killTapNode();
@@ -310,12 +340,26 @@ async function recorderModal() {
           // systeme pendant tout l'enregistrement (CPU + capture inutile).
           stopTapIfMine();
           try {
-            const st = await systemStream();
-            if (dead) { deadCleanup(st); return; }
-            watchEnded(st);
-            streams.push(st);
-            pcConnected = true;
-            actx.createMediaStreamSource(st).connect(comp);
+            if (pcOn.checked) {
+              const st = await systemStream();
+              if (dead) { deadCleanup(st); return; }
+              watchEnded(st);
+              streams.push(st);
+              pcConnected = true;
+              actx.createMediaStreamSource(st).connect(comp);
+            }
+            // Repli câble sous Linux : getUserMedia ne voit pas le
+            // monitor — cableStream leve son erreur explicite.
+            if (IS_LINUX && cableOn.checked && (tapStarted.has('cable') || tapShared.has('cable'))) {
+              try {
+                const st2 = await cableStream();
+                if (dead) { deadCleanup(st2); return; }
+                watchEnded(st2);
+                streams.push(st2);
+                cableConnected = true;
+                actx.createMediaStreamSource(st2).connect(comp);
+              } catch (e3) { window.sf.uiLog('recorder src câble (repli): ' + (e3 && e3.message)); }
+            }
           } catch (e2) { window.sf.uiLog('recorder src audio du PC (repli): ' + (e2 && e2.message)); }
         }
       }
@@ -547,31 +591,35 @@ async function recorderModal() {
       // fichier silencieux — on refuse avec un message clair. Uniquement si le
       // worklet PCM est la source retenue : si le repli systemStream a pris le
       // relais, tapLost est sans objet.
-      if (tapNode && tapLost) throw new Error(t('audio du PC : flux AudioTap interrompu avant le démarrage'));
-      if (tapNode && !pcmSeen) {
-        // audioTapStart a repondu ok mais aucun chunk PCM n'est arrive :
-        // demarrer enregistrerait du silence indetectable. Attente bornee
-        // (~2 s) des premiers frames — le loopback emet toujours des frames.
-        for (let i = 0; i < 40 && !pcmSeen; i++) await new Promise((r) => setTimeout(r, 50));
-        if (!pcmSeen) throw new Error(t('audio du PC : aucun flux PCM reçu d\'AudioTap'));
+      const tapSrcList = Object.keys(tapNodes);
+      if (tapSrcList.length && tapLost) throw new Error(t('enregistrement : flux de capture interrompu avant le démarrage'));
+      const pendingPcm = tapSrcList.filter((src) => !pcmSeenBy[src]);
+      if (pendingPcm.length) {
+        // tapStart a repondu ok mais aucun chunk PCM n'est arrive sur une
+        // source : demarrer enregistrerait du silence indetectable. Attente
+        // bornee (~2 s) — le monitor emet toujours des frames.
+        for (let i = 0; i < 40 && pendingPcm.some((src) => !pcmSeenBy[src]); i++) await new Promise((r) => setTimeout(r, 50));
+        const missingPcm = pendingPcm.filter((src) => !pcmSeenBy[src]);
+        if (missingPcm.length) throw new Error(t('enregistrement : aucun flux PCM reçu pour {src}', { src: missingPcm.map((src) => src === 'system' ? t('audio du PC') : t('câble SoundFart')).join(', ') }));
       }
       // L'attente PCM a pu chevaucher une fermeture de modale.
       if (dead) { deadCleanup(); if (actx) { actx.close().catch(() => {}); actx = null; } return; }
       // « Audio du PC » coche mais ni worklet PCM ni repli systeme n'ont
       // abouti : demarrer produirait un fichier silencieux indetectable.
       if (pcOn.checked && !pcConnected) throw new Error(t('audio du PC : aucune source disponible (capture et repli système en échec)'));
+      if (IS_LINUX && cableOn.checked && !cableConnected) throw new Error(t('câble SoundFart : aucune source disponible (capture PCM et repli en échec)'));
       // Source acquise puis morte PENDANT la preparation (micro debranche
       // entre getUserMedia et rec.start — watchEnded ne couvre que
       // l'etat 'recording') : demarrer produirait un fichier partiellement
       // silencieux sans aucune alerte.
       const deadSrc = streams.some((st) => st.getAudioTracks().some((t) => t.readyState !== 'live'));
       if (deadSrc) throw new Error(t('une source audio est morte avant le démarrage'));
-      if (tapNode) {
-        // Flush du ring buffer : le PCM arrive des l'audioTapStart, avant les
-        // getUserMedia -> sans ca le debut du fichier contiendrait de l'audio
-        // capture AVANT le clic sur « Enregistrer ».
-        tapNode.port.postMessage('flush');
-        tapNode.connect(comp);
+      for (const src of Object.keys(tapNodes)) {
+        // Flush du ring buffer : le PCM arrive des le debut de la session,
+        // avant les getUserMedia -> sans ca le debut du fichier contiendrait
+        // de l'audio capture AVANT le clic sur « Enregistrer ».
+        tapNodes[src].port.postMessage('flush');
+        tapNodes[src].connect(comp);
       }
       rec.start(250);
       recStart = Date.now();

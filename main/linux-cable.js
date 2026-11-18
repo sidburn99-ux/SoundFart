@@ -56,6 +56,7 @@ function createLinuxCable(deps) {
       st.pactl = st.server = true;
     } catch (e) {
       st.error = pactlErr(e);
+      st.pactl = !(e && e.code === 'ENOENT'); // pactl présent, serveur KO
       log('[linux-cable] status: ' + st.error);
       return st;
     }
@@ -126,6 +127,10 @@ function createLinuxCable(deps) {
 
   async function defaultSource() {
     const out = await pactl(['get-default-source']);
+    return String((out && out.stdout) || '').trim() || null;
+  }
+  async function defaultSink() {
+    const out = await pactl(['get-default-sink']);
     return String((out && out.stdout) || '').trim() || null;
   }
   const setDefaultSource = (name) => pactl(['set-default-source', String(name)], 10000);
@@ -242,7 +247,7 @@ function createLinuxCable(deps) {
 
   H('linux:audioStatus', () => status());
   H('linux:ensureCable', () => ensure());
-  return { status, ensure, switchMic, restore, restoreSync, forceOffCable, defaultSource, hasMarker: () => !!readMarker(), SINK_NAME, SINK_DESC, MONITOR };
+  return { status, ensure, switchMic, restore, restoreSync, forceOffCable, defaultSource, defaultSink, hasMarker: () => !!readMarker(), SINK_NAME, SINK_DESC, MONITOR };
 }
 
 module.exports = { createLinuxCable };

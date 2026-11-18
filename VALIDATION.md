@@ -153,6 +153,7 @@
 - [x] `soundfart_cable.monitor` énuméré comme **sortie** Chromium ; lecture Web Audio vers le sink (signal non nul mesuré).
 - [x] **Bascule micro** : `audio:autoSetup` → `pactl get-default-source` = `soundfart_cable.monitor` ; marqueur `linux-mic-restore.json` `{source:"RDPSource"}` ; guard `sh` détaché actif ; `enabled:false` → restauration effective, marqueur consommé.
 - [x] **Capture « audio du PC »** : `parec --device=soundfart_cable.monitor --format=float32le --rate=48000 --channels=2` → `sf:tapPcm` → worklet ; ~1,8 Mo PCM reçus par le renderer pendant une lecture (débit ≈ float32 stéréo 48 kHz).
+- [x] **Tap multi-sources** (refonte « audio du PC » = monitor du sink par défaut, « câble » = `soundfart_cable.monitor`) : `audio:tapStart(['system','cable'])` → `{ok,started:[system,cable]}`, 2 processus `parec`, canaux `sf:tapPcm`/`sf:tapPcmCable` ; mesure du signal par canal — sinus 440 Hz sur RDPSink → `system` sum=959, `cable`=0 ; sinus sur `soundfart_cable` → `cable` sum=901, `system` inchangé → **aucune fuite croisée** ; flux silence = ~384 Ko/s par canal ; `tapStop` → aucun `parec` orphelin ; sink conservé **[WSLg]**.
 - [x] `yt-dlp_linux`/`ffmpeg` : chemins Linux sans `.exe`, téléchargement SHA-256 + `chmod 755` implémentés — **exécution réelle NON testée** (pas de téléchargement lancé sous WSL).
 - [x] **AppImage CI (commit `616af82`)** : `platform=linux`, `ensure {ok,created:false}`, `status` tout vrai, `tapStart` OK, lecture 1,5 s vers le sink pendant le tap, `tapStop` OK, bascule micro enable/disable OK — smoke CDP complet **[WSLg]**.
 
