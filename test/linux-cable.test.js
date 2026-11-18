@@ -173,3 +173,163 @@ test('linux : ensure() single-flight — appels concurrents partagent la promess
   assert.deepEqual(r2, { ok: true, created: true });
   assert.equal(calls.filter((c) => c.startsWith('load-module')).length, 1);
 });
+
+// ---------- bascule micro (source par défaut -> monitor) ----------
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+const MON = 'soundfart_cable.monitor';
+const SRC_OK = '0\tsoundfart_cable.monitor\tmodule-null-sink.c\ts16le 2ch 48000Hz\n'
+  + '1\tRDPSource\talsa_input\ts16le 2ch 48000Hz\n'
+  + '2\talsa_input.usb\talsa_input\ts16le 2ch 48000Hz\n';
+
+function makeCableMic(exec, opts = {}) {
+  const logs = [];
+  const handlers = {};
+  const spawned = [];
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-linmic-'));
+  const marker = path.join(dir, 'linux-mic-restore.json');
+  const cable = createLinuxCable({
+    log: (m) => logs.push(m),
+    execFileTracked: exec,
+    H: (ch, fn) => { handlers[ch] = fn; },
+    platform: 'linux',
+    markerFile: () => marker,
+    pid: 4242,
+    spawn: (bin, args, o) => {
+      const g = { pid: 9000 + spawned.length, args, unref() {}, on() {} };
+      spawned.push(g);
+      return g;
+    },
+    execFileSync: opts.execFileSync,
+  });
+  return { cable, logs, marker, spawned, dir };
+}
+
+// Table pactl pour le scénario nominal : sink présent, monitor présent,
+// source par défaut = RDPSource.
+function micTable(defaultSource) {
+  return {
+    'info': { stdout: 'ok', stderr: '' },
+    'list short sinks': { stdout: SINK_LIST, stderr: '' },
+    'list short sources': { stdout: SRC_OK, stderr: '' },
+    'get-default-source': { stdout: defaultSource + '\n', stderr: '' },
+  };
+}
+
+test('linux : switchMic(true) bascule la source par défaut + marqueur + guard', async () => {
+  const exec = makeExec(micTable('RDPSource'));
+  const { cable, marker, spawned } = makeCableMic(exec);
+  const r = await cable.switchMic(true);
+  assert.deepEqual(r, { ok: true, changed: true, device: MON });
+  const set = exec.calls.find((c) => c.args[0] === 'set-default-source');
+  assert.deepEqual(set.args, ['set-default-source', MON]);
+  const m = JSON.parse(fs.readFileSync(marker, 'utf-8'));
+  assert.deepEqual(m, { source: 'RDPSource', owner: 4242 });
+  assert.equal(spawned.length, 1);
+  assert.equal(spawned[0].args[0], '-c');
+  assert.ok(spawned[0].args[1].includes('pactl set-default-source'));
+  assert.deepEqual(spawned[0].args.slice(2), ['sf-linux-mic-guard', '4242', 'RDPSource']);
+});
+
+test('linux : switchMic(false) restaure la source mémorisée et consomme le marqueur', async () => {
+  const exec = makeExec(micTable('soundfart_cable.monitor'));
+  const { cable, marker } = makeCableMic(exec);
+  fs.writeFileSync(marker, JSON.stringify({ source: 'RDPSource', owner: 4242 }));
+  const r = await cable.switchMic(false);
+  assert.deepEqual(r, { ok: true, changed: true });
+  const set = exec.calls.find((c) => c.args[0] === 'set-default-source');
+  assert.deepEqual(set.args, ['set-default-source', 'RDPSource']);
+  assert.equal(fs.existsSync(marker), false);
+});
+
+test('linux : switchMic(false) sans marqueur -> changed:false', async () => {
+  const exec = makeExec(micTable('RDPSource'));
+  const { cable } = makeCableMic(exec);
+  const r = await cable.switchMic(false);
+  assert.deepEqual(r, { ok: true, changed: false });
+  assert.ok(!exec.calls.some((c) => c.args[0] === 'set-default-source'));
+});
+
+test('linux : switchMic(true) déjà sur monitor sans marqueur -> stuckCable', async () => {
+  const exec = makeExec(micTable('soundfart_cable.monitor'));
+  const { cable, spawned } = makeCableMic(exec);
+  const r = await cable.switchMic(true);
+  assert.deepEqual(r, { ok: true, changed: false, device: MON, stuckCable: true });
+  assert.ok(!exec.calls.some((c) => c.args[0] === 'set-default-source'));
+  assert.equal(spawned.length, 0);
+});
+
+test('linux : switchMic(true) adopte un marqueur orphelin (owner mort)', async () => {
+  const exec = makeExec(micTable('soundfart_cable.monitor'));
+  const { cable, marker, spawned } = makeCableMic(exec);
+  fs.writeFileSync(marker, JSON.stringify({ source: 'RDPSource', owner: 1111 }));
+  const r = await cable.switchMic(true);
+  assert.deepEqual(r, { ok: true, changed: false, device: MON });
+  const m = JSON.parse(fs.readFileSync(marker, 'utf-8'));
+  assert.equal(m.owner, 4242);
+  assert.equal(spawned.length, 1);
+});
+
+test('linux : switchMic(true) monitor absent -> erreur explicite', async () => {
+  const exec = makeExec({
+    'info': { stdout: 'ok', stderr: '' },
+    'list short sinks': { stdout: SINK_LIST, stderr: '' },
+    'list short sources': { stdout: '1\tRDPSource\talsa_input\ts16le 2ch 48000Hz\n', stderr: '' },
+  });
+  const { cable } = makeCableMic(exec);
+  const r = await cable.switchMic(true);
+  assert.equal(r.ok, false);
+  assert.ok(/monitor du câble absent/.test(r.err));
+});
+
+test('linux : forceOffCable débloque une source coincée sur le monitor', async () => {
+  const exec = makeExec(micTable('soundfart_cable.monitor'));
+  const { cable } = makeCableMic(exec);
+  const r = await cable.forceOffCable();
+  assert.deepEqual(r, { ok: true, changed: true, device: 'RDPSource' });
+  const set = exec.calls.find((c) => c.args[0] === 'set-default-source');
+  assert.deepEqual(set.args, ['set-default-source', 'RDPSource']);
+});
+
+test('linux : forceOffCable sans monitor par défaut -> no-op', async () => {
+  const exec = makeExec(micTable('RDPSource'));
+  const { cable } = makeCableMic(exec);
+  const r = await cable.forceOffCable();
+  assert.deepEqual(r, { ok: true, changed: false });
+  assert.ok(!exec.calls.some((c) => c.args[0] === 'set-default-source'));
+});
+
+test('linux : restoreSync restaure via execFileSync et consomme le marqueur', () => {
+  const exec = makeExec({});
+  const syncCalls = [];
+  const { cable, marker } = makeCableMic(exec, {
+    execFileSync: (bin, args) => { syncCalls.push({ bin, args }); },
+  });
+  fs.writeFileSync(marker, JSON.stringify({ source: 'RDPSource', owner: 4242 }));
+  assert.equal(cable.restoreSync(), true);
+  assert.deepEqual(syncCalls[0], { bin: 'pactl', args: ['set-default-source', 'RDPSource'] });
+  assert.equal(fs.existsSync(marker), false);
+});
+
+test('linux : restoreSync sans marqueur -> false, aucun appel', () => {
+  const exec = makeExec({});
+  const syncCalls = [];
+  const { cable } = makeCableMic(exec, { execFileSync: (...a) => syncCalls.push(a) });
+  assert.equal(cable.restoreSync(), false);
+  assert.equal(syncCalls.length, 0);
+});
+
+test('win32 : switchMic refuse proprement', async () => {
+  const exec = makeExec({});
+  const logs = [];
+  const handlers = {};
+  const cable = createLinuxCable({
+    log: (m) => logs.push(m), execFileTracked: exec,
+    H: (ch, fn) => { handlers[ch] = fn; }, platform: 'win32',
+  });
+  const r = await cable.switchMic(true);
+  assert.deepEqual(r, { ok: false, err: 'réservé à Linux' });
+  assert.equal(exec.calls.length, 0);
+});

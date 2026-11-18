@@ -42,10 +42,10 @@ const killTree = (pid) => {
 // execFile avec handle suivi (promisify ne donne pas le ChildProcess).
 function execFileTracked(file, args, opts = {}) {
   return new Promise((resolve, reject) => {
-    // detached sur Linux : nouveau groupe de process -> killTree(-pid)
+    // detached sur POSIX : nouveau groupe de process -> killTree(-pid)
     // peut tuer l'arbre yt-dlp/ffmpeg sans toucher au groupe de l'app.
     // Sans effet sur Windows (windowsHide y reste la norme).
-    const p = trackChild(spawn(file, args, { ...opts, windowsHide: true, detached: IS_LINUX }));
+    const p = trackChild(spawn(file, args, { ...opts, windowsHide: true, detached: !IS_WIN }));
     // opts.rec : objet externe recevant le ChildProcess des le spawn —
     // permet a yt:cancel de tuer un yt:info en vol comme un runYt.
     if (opts.rec) opts.rec.p = p;
@@ -1276,7 +1276,7 @@ H('audio:tapStart', async () => {
       if (audioTapKilling) return { ok: false, err: 'arrêt de l\'ancien processus de capture en cours' };
     }
     if (ep !== tapEpoch) return { ok: false, err: 'arrêt demandé pendant le démarrage' };
-    const proc = spawn(spec.file, spec.args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, detached: IS_LINUX });
+    const proc = spawn(spec.file, spec.args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, detached: !IS_WIN });
     attachTapProc(proc);
     await new Promise((r) => setTimeout(r, 700));
     if (!audioTapProc || audioTapProc.exitCode !== null || audioTapFailed)

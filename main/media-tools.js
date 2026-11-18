@@ -14,7 +14,7 @@ function createMediaTools(deps) {
   // ffmpeg, release yt-dlp .exe) ; sous Linux ce sont des binaires
   // sans extension (build statique BtbN ffmpeg / yt-dlp_linux), toujours
   // telecharges avec verification SHA-256 — jamais de binaire Windows.
-  const IS_WIN = process.platform === 'win32';
+  const IS_WIN = deps.IS_WIN !== undefined ? deps.IS_WIN : process.platform === 'win32';
   const EXE = IS_WIN ? '.exe' : '';
   const FFMPEG_BIN = 'ffmpeg' + EXE;
 // ---------- ffmpeg : coupe physique des extraits (MP3) ----------
